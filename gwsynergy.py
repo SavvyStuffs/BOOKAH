@@ -927,6 +927,12 @@ class MainWindow(QMainWindow):
         self.check_show_others.setToolTip("If checked, suggest skills from ALL professions.\nIf unchecked, strictly limits suggestions to the current Primary/Secondary professions.")
         self.check_show_others.toggled.connect(self.update_suggestions)
         container_layout.addWidget(self.check_show_others)
+
+        # Lock Suggestions
+        self.check_lock_suggestions = QCheckBox("Lock")
+        self.check_lock_suggestions.setToolTip("Lock the current suggestions list.\nNew suggestions will not be generated when equipping skills.")
+        self.check_lock_suggestions.toggled.connect(self.update_suggestions)
+        container_layout.addWidget(self.check_lock_suggestions)
         
         container_layout.addStretch(1)
 
@@ -1044,6 +1050,7 @@ class MainWindow(QMainWindow):
         self.combo_team.setCurrentIndex(0) # All
         self.check_pvp.setChecked(False)
         self.check_show_others.setChecked(False)
+        self.check_lock_suggestions.setChecked(False)
         self.edit_search.clear()
         self.edit_code.clear()
         
@@ -1366,6 +1373,10 @@ class MainWindow(QMainWindow):
         self.display_suggestions()
 
     def update_suggestions(self):
+        # Lock check
+        if hasattr(self, 'check_lock_suggestions') and self.check_lock_suggestions.isChecked():
+            return
+            
         # 1. Get currently active skills (excluding None)
         active_ids = [sid for sid in self.bar_skills if sid is not None]
         
