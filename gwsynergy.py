@@ -5,6 +5,7 @@ import sqlite3
 from dataclasses import dataclass
 from typing import List, Optional, Dict, Set
 from collections import Counter
+from PyQt6.QtCore import QThread, pyqtSignal
 import math
 
 # GUI Imports
@@ -36,9 +37,9 @@ def resource_path(relative_path):
         base_path = os.path.abspath(".")
     return os.path.join(base_path, relative_path)
 
-DB_FILE = resource_path('skills2.db')
+DB_FILE = resource_path('master.db') 
 JSON_FILE = resource_path('all_skills.json')
-ICON_DIR = resource_path('icons/skill_icons')  # Folder containing {id}.png images
+ICON_DIR = resource_path('icons/skill_icons')
 ICON_SIZE = 64
 
 PROF_MAP = {
@@ -67,7 +68,6 @@ ATTR_MAP = {
     41: "Scythe Mastery", 42: "Wind Prayers", 43: "Earth Prayers", 44: "Mysticism"
 }
 
-# Mapping of Profession ID to its primary attribute ID for the 11 points logic
 PROF_PRIMARY_ATTR = {
     1: 17, 2: 23, 3: 16, 5: 3, 6: 12, 
     4: 6, 7: 30, 8: 36, 10: 44, 9: 40
@@ -91,6 +91,11 @@ class Skill:
     adrenaline: int = 0
     is_elite: bool = False
     is_pve_only: bool = False
+    health_cost: int = 0
+    aftercast: float = 0.75  # Default standard aftercast
+    combo_req: int = 0       # 0=None, 1=Lead, 2=Offhand, 3=Dual (Assassin)
+    is_touch: bool = False   # Requires melee range
+    campaign: int = 0        # 0=Core, 1=Prophecies, etc.
 
     def get_profession_str(self):
         return PROF_MAP.get(self.profession, f"Unknown ({self.profession})")
@@ -98,7 +103,6 @@ class Skill:
     def get_attribute_str(self):
         if self.attribute == -1: return "None"
         return ATTR_MAP.get(self.attribute, f"Unknown ({self.attribute})")
-
 @dataclass
 class Build:
     code: str
@@ -107,7 +111,396 @@ class Build:
     skill_ids: List[int]
     category: str
     team: str
-    attributes: List[List[int]] = None # List of [id, points]
+    attributes: List[List[int]] = None 
+
+# =============================================================================
+# HAMILTONIAN PHYSICS ENGINE (v2.0)
+# =============================================================================
+
+class SystemContext:
+    """
+    Represents the instantaneous state of the build (The 'Scratchpad').
+    Tracks entropy, resource flow, and mechanic states (occupancy).
+    """
+    def __init__(self, primary_prof_id=0):
+        # --- Profession Physics Config ---
+        # Casters: Monk(3), Necro(4), Mesmer(5), Ele(6), Rit(8)
+        self.is_caster = primary_prof_id in [3, 4, 5, 6, 8]
+        
+        # Energy Capacity
+        self.max_energy_capacity = 60 if self.is_caster else 30
+        self.base_regen = 1.33 if self.is_caster else 0.66
+        
+        # --- Real-time State ---
+        self.net_energy_cost = 0
+        self.energy_drain_per_sec = 0.0
+        
+        self.stance_count = 0
+        self.weapon_spell_count = 0
+        self.hex_count = 0
+        self.active_enchantments = 0
+        self.knockdowns = False
+        self.hexes_applied = False
+        
+        self.combo_stages = set()
+        self.conditions_applied = set()
+        
+        # --- Weapon Tracking ---
+        self.primary_weapon = None
+        self.WEAPON_MAP = {
+            18: "Axe", 19: "Hammer", 20: "Sword",      # Warrior
+            25: "Bow",                                 # Ranger
+            29: "Dagger",                              # Assassin
+            37: "Spear",                               # Paragon
+            41: "Scythe"                               # Dervish
+        }
+
+    def ingest_skill(self, skill):
+        """
+        Reads a skill row from the DB and updates the System Context.
+        DB Index: 0:id, 1:name, 2:desc, 3:nrg, 4:act, 5:rech, 6:adr, 7:hp, 8:aft, 9:combo, 10:elite, 11:attr
+        """
+        name = skill[1].lower()
+        desc = skill[2].lower() if skill[2] else ""
+        nrg = skill[3] or 0
+        rech = skill[5] or 0.0
+        attr = skill[11] or -1
+        
+        # 1. Physics: Energy Entropy
+        if rech > 0:
+            self.energy_drain_per_sec += (nrg / rech)
+            
+        # 2. Law of Occupancy & Mechanics
+        if "stance" in desc and "form" not in name: self.stance_count += 1
+        if "weapon spell" in desc: self.weapon_spell_count += 1
+        if "hex" in desc and "spell" in desc: 
+            self.hex_count += 1
+            self.hexes_applied = True
+        if "enchantment" in desc: self.active_enchantments += 1
+        if "knock down" in desc or "knocks down" in desc: self.knockdowns = True
+        
+        # 3. Causal Detection (With Negative Lookbehind)
+        conditions = ['burning', 'bleeding', 'dazed', 'deep wound', 'weakness', 'poison']
+        for c in conditions:
+            if c in desc and ("target" in desc or "foe" in desc):
+                idx = desc.find(c)
+                if idx != -1:
+                    start = max(0, idx - 20)
+                    pre_text = desc[start:idx]
+                    negatives = ["remove", "end", "lose", "cure", "reduced", "less"]
+                    if not any(neg in pre_text for neg in negatives):
+                        self.conditions_applied.add(c)
+                
+        # 4. Combo Stages
+        if skill[9]: self.combo_stages.add(skill[9])
+        
+        # 5. Weapon Locking
+        if attr in self.WEAPON_MAP:
+            if self.primary_weapon is None:
+                self.primary_weapon = self.WEAPON_MAP[attr]
+
+    def calculate_efficiency(self, candidate_skill):
+        """ Calculates variable efficiency modifiers (Smart Logic). """
+        name = candidate_skill[1].lower()
+        
+        # Logic: Mystic Regeneration
+        if "mystic regeneration" in name:
+            if self.active_enchantments == 0: return 0.1, "Useless (No Enchants)"
+            if self.active_enchantments < 3: return 0.5, "Weak Heal"
+            return 1.5, "Strong Synergy"
+            
+        return 1.0, "OK"
+
+class HamiltonianEngine:
+    """
+    Connects to master.db to perform causal analysis and system dynamics checks.
+    Treats the build as a thermodynamic system of Energy, Health, and Time.
+    """
+    def __init__(self, db_path):
+        self.db_path = db_path
+        self.mode = "pve"
+
+    def set_mode(self, mode_str):
+        self.mode = mode_str.lower()
+
+    def _get_table(self):
+        return "skills_pvp" if self.mode == 'pvp' else "skills"
+
+    # --- MECHANIC CHECKS ---
+    def check_weapon_compatibility(self, candidate_attr, context):
+        if context.primary_weapon is None: return True, "OK"
+        if candidate_attr not in context.WEAPON_MAP: return True, "OK"
+        candidate_weapon = context.WEAPON_MAP[candidate_attr]
+        if candidate_weapon != context.primary_weapon:
+            return False, f"Weapon Conflict ({candidate_weapon} vs {context.primary_weapon})"
+        return True, "OK"
+
+    def check_combo_viability(self, candidate_req, active_stages):
+        if candidate_req == 0: return True
+        if candidate_req == 1: return True
+        if candidate_req == 2: return 1 in active_stages
+        if candidate_req == 3: return (1 in active_stages) or (2 in active_stages)
+        return True
+
+    def check_occupancy_viability(self, candidate_row, context):
+        desc = candidate_row[2].lower()
+        if "stance" in desc and context.stance_count >= 1: return False, "Stance Clog"
+        if "weapon spell" in desc and context.weapon_spell_count >= 1: return False, "Weapon Spell Clog"
+        return True, "OK"
+
+    def check_causal_viability(self, candidate_row, context):
+        desc = candidate_row[2].lower()
+        if "remove a hex" in desc and not context.hexes_applied: return False, "No Hexes to Shatter"
+        if "knocked down foe" in desc and not context.knockdowns: return False, "No Knockdowns present"
+        return True, "OK"
+
+    def check_energy_entropy(self, candidate_row, context):
+        nrg = candidate_row[3] or 0
+        rech = candidate_row[5] or 0.0
+        if nrg > 30: return False, "Skill Cost > 30 (Impossible)"
+        if rech > 0:
+            candidate_eps = nrg / rech
+            total_drain = context.energy_drain_per_sec + candidate_eps
+            limit = 4.0 if context.is_caster else 2.5
+            if total_drain > limit: return True, f"⚠️ High Drain ({total_drain:.1f} EPS)"
+        return True, "OK"
+
+    def check_hamiltonian_stability(self, skill_a_data, skill_b_data, context):
+        e_a, rech_a, hp_a = skill_a_data[3] or 0, skill_a_data[5] or 0.0, skill_a_data[7] or 0
+        e_b, act_b, hp_b = skill_b_data[3] or 0, skill_b_data[4] or 0.0, skill_b_data[7] or 0
+        rech_b = skill_b_data[5] or 0.0
+        aft_b = skill_b_data[8] or 0.75
+
+        burst_cost = e_a + e_b
+        cap = context.max_energy_capacity
+        if burst_cost > cap: return False, f"Burst > Capacity ({burst_cost}/{cap})"
+        if burst_cost > (cap * 0.8): return True, f"⚠️ Heavy Burst ({burst_cost}e)"
+
+        total_hp = hp_a + hp_b
+        if total_hp > 50 and (rech_a < 8 or rech_b < 8): return False, f"Suicide Loop (-{total_hp} HP)"
+
+        cycle_b = act_b + aft_b
+        if rech_a > 0 and (rech_a + 0.25) < cycle_b: return False, f"Timing Clog (Wait {cycle_b - rech_a:.1f}s)"
+
+        return True, "Stable"
+
+    # --- MAIN LOOP ---
+    def find_synergies(self, active_skill_ids: List[int], primary_prof_id: int = 0, debug_mode: bool = False, stop_check=None) -> List[tuple[int, str]]:
+        if not active_skill_ids: return []
+
+        try:
+            conn = sqlite3.connect(self.db_path)
+            table = self._get_table()
+            
+            cols = "skill_id, name, description, energy_cost, activation, recharge, adrenaline, health_cost, aftercast, combo_req, is_elite, attribute"
+            placeholders = ','.join(['?'] * len(active_skill_ids))
+            
+            q_active = f"SELECT {cols} FROM {table} WHERE skill_id IN ({placeholders})"
+            cursor = conn.execute(q_active, active_skill_ids)
+            active_skills_data = cursor.fetchall()
+            
+            context = SystemContext(primary_prof_id)
+            for s in active_skills_data:
+                context.ingest_skill(s)
+
+            synergies = []
+            conditions = ['Burning', 'Bleeding', 'Dazed', 'Deep Wound', 'Weakness', 'Poison', 'Knockdown', 'Hexed', 'Enchanted']
+            existing_ids = set(active_skill_ids)
+
+            for root in active_skills_data:
+                if stop_check and stop_check(): return []
+                
+                root_desc = root[2].lower() if root[2] else ""
+                root_hp_cost = root[7] or 0
+                
+                # --- A. HEALTH & MECHANICS SEARCH ---
+                
+                # 1. LAW OF PRESERVATION (Upstream)
+                # If we sacrifice health, we NEED healing.
+                if root_hp_cost > 0 or "sacrifice" in root_desc:
+                     q_heal = f"""
+                        SELECT {cols} FROM {table}
+                        WHERE (description LIKE '%heal%' OR description LIKE '%regeneration%')
+                        AND description NOT LIKE '%sacrifice%'
+                        AND skill_id NOT IN ({','.join(['?']*len(existing_ids))})
+                     """
+                     self._process_matches(conn, q_heal, list(existing_ids), root, context, synergies, debug_mode, "Mitigates Sacrifice", stop_check)
+
+                # 2. LAW OF AUGMENTATION (Downstream)
+                # If we Heal, look for skills that boost Healing.
+                if "heal" in root_desc and ("target ally" in root_desc or "party" in root_desc):
+                    q_boost = f"""
+                        SELECT {cols} FROM {table}
+                        WHERE (description LIKE '%whenever you heal%' OR description LIKE '%healing prayers%' OR description LIKE '%50% extra health%')
+                        AND skill_id NOT IN ({','.join(['?']*len(existing_ids))})
+                    """
+                    self._process_matches(conn, q_boost, list(existing_ids), root, context, synergies, debug_mode, "Boosts Healing", stop_check)
+
+                # 3. LAW OF ENCHANTMENT (Downstream)
+                # If we cast an Enchantment, look for things that use/count Enchantments.
+                if "enchantment" in root_desc and "spell" in root_desc:
+                    q_ench = f"""
+                        SELECT {cols} FROM {table}
+                        WHERE (description LIKE '%for each enchantment%' OR description LIKE '%while you are enchanted%' OR description LIKE '%extend%enchantment%')
+                        AND description NOT LIKE '%remove%'
+                        AND skill_id NOT IN ({','.join(['?']*len(existing_ids))})
+                    """
+                    self._process_matches(conn, q_ench, list(existing_ids), root, context, synergies, debug_mode, "Uses Enchantment", stop_check)
+
+                # --- B. CONDITION SEARCH ---
+                for cond in conditions:
+                    cond_l = cond.lower()
+                    
+                    # DOWNSTREAM (Forward)
+                    if cond_l in root_desc and ("target" in root_desc or "foe" in root_desc):
+                        q_down = f"""
+                            SELECT {cols} FROM {table}
+                            WHERE description LIKE ? 
+                            AND (description LIKE '%bonus%' OR description LIKE '%additional%' OR description LIKE '%if target%')
+                            AND skill_id NOT IN ({','.join(['?']*len(existing_ids))})
+                        """
+                        self._process_matches(conn, q_down, [f'%{cond}%'] + list(existing_ids), 
+                                           root, context, synergies, debug_mode, f"Feeds on {cond}", stop_check, 
+                                           check_negative_context=False)
+
+                    # UPSTREAM (Reverse)
+                    is_consumer = False
+                    if cond_l in root_desc and ("bonus" in root_desc or "if target" in root_desc or "additional" in root_desc):
+                        is_consumer = True
+                    
+                    if is_consumer:
+                        q_up = f"""
+                            SELECT {cols} FROM {table}
+                            WHERE description LIKE ? 
+                            AND description NOT LIKE '%bonus%' 
+                            AND description NOT LIKE '%if target%'
+                            AND description NOT LIKE '%remove%'  
+                            AND description NOT LIKE '%lose%'
+                            AND description NOT LIKE '%cure%'
+                            AND skill_id NOT IN ({','.join(['?']*len(existing_ids))})
+                        """
+                        self._process_matches(conn, q_up, [f'%{cond}%'] + list(existing_ids), 
+                                           root, context, synergies, debug_mode, f"Provides {cond}", stop_check, 
+                                           check_negative_context=True, target_cond=cond_l)
+
+        except Exception as e:
+            print(f"Physics Engine Error: {e}")
+            return []
+        finally:
+            if 'conn' in locals(): conn.close()
+
+        return synergies
+
+    def _process_matches(self, conn, query, params, root, context, results_list, debug_mode, reason_prefix, stop_check, check_negative_context=False, target_cond=""):
+        matches = conn.execute(query, params).fetchall()
+        
+        for m in matches:
+            if stop_check and stop_check(): return 
+            
+            fail_reasons = []
+
+            # Negative Context Check
+            if check_negative_context and target_cond:
+                desc = m[2].lower()
+                idx = desc.find(target_cond)
+                if idx != -1:
+                    start = max(0, idx - 20)
+                    pre_text = desc[start:idx]
+                    negatives = ["remove", "end", "lose", "cure", "reduced", "less"]
+                    if any(neg in pre_text for neg in negatives):
+                        continue
+
+            # A. Mechanic Checks
+            if not self.check_combo_viability(m[9], context.combo_stages): fail_reasons.append("Combo Invalid")
+            
+            valid, r = self.check_weapon_compatibility(m[11], context)
+            if not valid: fail_reasons.append(r)
+            
+            valid, r = self.check_occupancy_viability(m, context)
+            if not valid: fail_reasons.append(r)
+            
+            valid, r = self.check_causal_viability(m, context)
+            if not valid: fail_reasons.append(r)
+            
+            valid, r = self.check_energy_entropy(m, context)
+            if not valid: fail_reasons.append(r)
+            
+            # B. Physics Checks
+            stable, phys_r = self.check_hamiltonian_stability(root, m, context)
+            if not stable: fail_reasons.append(phys_r)
+
+            # C. Output
+            if not fail_reasons:
+                eff, eff_r = context.calculate_efficiency(m)
+                if eff < 0.5: 
+                    if debug_mode: results_list.append((m[0], f"[DEBUG: Low Eff] {eff_r}"))
+                    continue
+                
+                reason_str = reason_prefix
+                if "⚠️" in phys_r: reason_str += f" | {phys_r}"
+                results_list.append((m[0], reason_str))
+            
+            elif debug_mode:
+                reason_str = f"[DEBUG] {', '.join(fail_reasons)}"
+                results_list.append((m[0], reason_str))
+
+    def _process_matches(self, conn, query, params, root, context, results_list, debug_mode, reason_prefix, stop_check, check_negative_context=False, target_cond=""):
+        matches = conn.execute(query, params).fetchall()
+        
+        for m in matches:
+            if stop_check and stop_check(): return 
+            
+            fail_reasons = []
+
+            # --- NEW: Negative Context Check (Python Side) ---
+            # If we are looking for a Provider, ensure it's not a "Fake" provider (e.g. "duration of burning is reduced")
+            if check_negative_context and target_cond:
+                desc = m[2].lower()
+                # Find the condition word
+                idx = desc.find(target_cond)
+                if idx != -1:
+                    # Look at the 20 chars BEFORE the condition
+                    start = max(0, idx - 20)
+                    pre_text = desc[start:idx]
+                    # Words that indicate this is NOT a source
+                    negatives = ["remove", "end", "lose", "cure", "reduced", "less"]
+                    if any(neg in pre_text for neg in negatives):
+                        # Skip this skill silently (it's a false positive)
+                        continue
+
+            # A. Mechanic Checks
+            if not self.check_combo_viability(m[9], context.combo_stages): fail_reasons.append("Combo Invalid")
+            
+            valid, r = self.check_weapon_compatibility(m[11], context)
+            if not valid: fail_reasons.append(r)
+            
+            valid, r = self.check_occupancy_viability(m, context)
+            if not valid: fail_reasons.append(r)
+            
+            valid, r = self.check_causal_viability(m, context)
+            if not valid: fail_reasons.append(r)
+            
+            valid, r = self.check_energy_entropy(m, context)
+            if not valid: fail_reasons.append(r)
+            
+            # B. Physics Checks
+            stable, phys_r = self.check_hamiltonian_stability(root, m, context)
+            if not stable: fail_reasons.append(phys_r)
+
+            # C. Output
+            if not fail_reasons:
+                eff, eff_r = context.calculate_efficiency(m)
+                if eff < 0.5: 
+                    if debug_mode: results_list.append((m[0], f"[DEBUG: Low Eff] {eff_r}"))
+                    continue
+                
+                reason_str = reason_prefix
+                if "⚠️" in phys_r: reason_str += f" | {phys_r}"
+                results_list.append((m[0], reason_str))
+            
+            elif debug_mode:
+                reason_str = f"[DEBUG] {', '.join(fail_reasons)}"
+                results_list.append((m[0], reason_str))
 
 class GuildWarsTemplateDecoder:
     def __init__(self, code):
@@ -227,47 +620,105 @@ class SkillRepository:
         if cache_key in self._cache:
             return self._cache[cache_key]
         
-        table = "skills_pvp" if is_pvp else "skills"
+        target_table = "skills_pvp" if is_pvp else "skills"
+        
+        # 1. ATTEMPT: Fetch Everything (Optimistic)
+        # This works if the table has all columns.
+        query_full = f"""
+            SELECT skill_id, name, profession, attribute, 
+                   energy_cost, activation, recharge, adrenaline, is_pve_only,
+                   description, is_elite,
+                   health_cost, aftercast, combo_req, is_touch, campaign
+            FROM {target_table}
+            WHERE skill_id=?
+        """
         
         try:
-            self.cursor.execute(f"""
-                SELECT name, id, profession,
-                       description, attribute, energy, activation,
-                       recharge, adrenaline, is_elite, is_pve_only
-                FROM {table}
-                WHERE id=?
-            """, (skill_id,))
+            self.cursor.execute(query_full, (skill_id,))
             row = self.cursor.fetchone()
+            
             if row:
-                # Ensure the icon filename has .jpg extension
-                # In DB, icon was stored in skills_index, but we can assume {id}.jpg
-                icon_val = f"{skill_id}.jpg"
+                return self._create_skill_object(row, is_pvp, cache_key)
                 
-                # Safely handle potential None values for integers
-                prof_val = row[2] if row[2] is not None else 0
-                attr_val = row[4] if row[4] is not None else -1
-                elite_val = int(row[9]) if row[9] is not None else 0
-                pve_val = int(row[10]) if row[10] is not None else 0
+        except sqlite3.OperationalError:
+            # 2. FALLBACK: HYBRID FETCH
+            # The PvP table is missing columns. We must stitch data together.
+            if is_pvp:
+                return self._fetch_hybrid_skill(skill_id, cache_key)
+            else:
+                print(f"Critical DB Error: Main 'skills' table corrupted.")
                 
-                skill = Skill(
-                    id=skill_id, 
-                    name=row[0], 
-                    icon_filename=icon_val, 
-                    profession=prof_val,
-                    description=row[3] or "",
-                    attribute=attr_val,
-                    energy=row[5] or 0,
-                    activation=row[6] or 0.0,
-                    recharge=row[7] or 0.0,
-                    adrenaline=row[8] or 0,
-                    is_elite=(elite_val == 1), # Strict check for 1
-                    is_pve_only=bool(pve_val)
-                )
-                self._cache[cache_key] = skill
-                return skill
-        except sqlite3.Error as e:
-            print(f"Database error: {e}")
         return None
+
+    def _fetch_hybrid_skill(self, skill_id, cache_key):
+        """
+        Fetches Text/Basic Stats from PvP table (for UI),
+        but fills missing Physics Data from PvE table (for Engine).
+        """
+        # A. Get Display Data from PvP Table (Safe Columns Only)
+        query_safe = """
+            SELECT skill_id, name, profession, attribute, 
+                   energy_cost, activation, recharge, adrenaline, is_pve_only,
+                   description, is_elite
+            FROM skills_pvp
+            WHERE skill_id=?
+        """
+        self.cursor.execute(query_safe, (skill_id,))
+        pvp_row = self.cursor.fetchone()
+        
+        if not pvp_row:
+            return self.get_skill(skill_id, is_pvp=False) # Total fallback if missing in PvP
+
+        # B. Get Physics Data from PvE Table
+        query_physics = """
+            SELECT health_cost, aftercast, combo_req, is_touch, campaign
+            FROM skills
+            WHERE skill_id=?
+        """
+        self.cursor.execute(query_physics, (skill_id,))
+        pve_row = self.cursor.fetchone()
+        
+        # Defaults if PvE is also missing (unlikely)
+        phys_data = pve_row if pve_row else (0, 0.75, 0, 0, 0)
+        
+        # C. Stitch it together
+        # pvp_row has indices 0-10. phys_data has 0-4.
+        # We construct a "fake" full row to pass to the object creator.
+        merged_row = list(pvp_row) + list(phys_data)
+        
+        return self._create_skill_object(merged_row, True, cache_key)
+
+    def _create_skill_object(self, row, is_pvp, cache_key):
+        skill = Skill(
+            id=row[0], 
+            name=row[1], 
+            icon_filename=f"{row[0]}.jpg", 
+            profession=int(row[2] or 0),
+            attribute=int(row[3] or -1),
+            energy=int(row[4] or 0),
+            activation=float(row[5] or 0.0),
+            recharge=float(row[6] or 0.0),
+            adrenaline=int(row[7] or 0),
+            is_pve_only=bool(row[8]),
+            description=row[9] or "",
+            is_elite=bool(row[10]),
+            # Physics Columns
+            health_cost=int(row[11] or 0),
+            aftercast=float(row[12] or 0.75), 
+            combo_req=int(row[13] or 0),
+            is_touch=bool(row[14]),
+            campaign=int(row[15] or 0)
+        )
+        self._cache[cache_key] = skill
+        return skill
+
+    def get_all_skills_by_ids(self, ids: List[int], is_pvp: bool = False) -> List[Skill]:
+        skills = []
+        for sid in ids:
+            s = self.get_skill(sid, is_pvp=is_pvp)
+            if s:
+                skills.append(s)
+        return skills
 
     def get_all_skills_by_ids(self, ids: List[int], is_pvp: bool = False) -> List[Skill]:
         skills = []
@@ -292,7 +743,6 @@ class SynergyEngine:
                 for entry in data:
                     code = entry.get('build_code', '')
                     attrs = []
-                    # Decode to get accurate attributes and professions if possible
                     if code:
                         decoded = GuildWarsTemplateDecoder(code).decode()
                         if decoded:
@@ -318,23 +768,16 @@ class SynergyEngine:
             print("JSON file not found.")
 
     def get_suggestions(self, active_skill_ids: List[int], limit=100, category=None, team=None, min_overlap=None) -> List[tuple[int, float]]:
-        # Pre-filter builds based on category and team
         candidate_builds = self.builds
         if category and category != "All":
             candidate_builds = [b for b in candidate_builds if b.category == category]
         if team and team != "All":
             candidate_builds = [b for b in candidate_builds if b.team == team]
 
-        # Modified Logic: "Relaxed Matching"
-        # If we have < 2 active skills, just match builds containing ANY of them.
-        # If we have >= 2 active skills, match builds containing AT LEAST 2 of them.
-        # min_overlap override: allows forcing a lower threshold (e.g. 1) to broaden search.
-        
         active_set = set(active_skill_ids)
         if not active_set:
             matching_builds = candidate_builds
         else:
-            # Determine threshold
             threshold = 1
             if min_overlap is not None:
                 threshold = min_overlap
@@ -342,10 +785,8 @@ class SynergyEngine:
                 threshold = 2
             
             if threshold == 1:
-                 # Fast path for intersection >= 1
                  matching_builds = [b for b in candidate_builds if not active_set.isdisjoint(set(b.skill_ids))]
             else:
-                 # Match if at least 'threshold' shared skills
                  matching_builds = []
                  for b in candidate_builds:
                      shared = active_set.intersection(set(b.skill_ids))
@@ -367,7 +808,6 @@ class SynergyEngine:
         return results
 
     def filter_skills(self, prof=None, category=None, team=None) -> Set[int]:
-        """Returns a set of Skill IDs appearing in builds matching the filters"""
         valid_ids = set()
         for b in self.builds:
             if prof and prof != "All" and b.primary_prof != prof:
@@ -380,8 +820,6 @@ class SynergyEngine:
             valid_ids.update(b.skill_ids)
         return valid_ids
 
-
-
 # =============================================================================
 # GUI COMPONENTS
 # =============================================================================
@@ -393,7 +831,7 @@ class DraggableSkillIcon(QFrame):
     def __init__(self, skill: Skill, parent=None):
         super().__init__(parent)
         self.skill = skill
-        self.setFixedSize(ICON_SIZE + 10, ICON_SIZE + 60) # Increased height for text
+        self.setFixedSize(ICON_SIZE + 10, ICON_SIZE + 60)
         self.setCursor(Qt.CursorShape.OpenHandCursor)
         self.setStyleSheet("""
             QFrame {
@@ -411,14 +849,12 @@ class DraggableSkillIcon(QFrame):
         layout.setContentsMargins(4, 4, 4, 4)
         layout.setSpacing(4)
         
-        # Icon Label
         self.icon_lbl = QLabel()
         self.icon_lbl.setFixedSize(ICON_SIZE, ICON_SIZE)
         self.icon_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.icon_lbl.setStyleSheet("border: none; background: transparent;")
         layout.addWidget(self.icon_lbl, alignment=Qt.AlignmentFlag.AlignCenter)
         
-        # Name Label
         self.name_lbl = QLabel(skill.name)
         self.name_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.name_lbl.setWordWrap(True)
@@ -433,7 +869,6 @@ class DraggableSkillIcon(QFrame):
             pix = QPixmap(path)
             self.icon_lbl.setPixmap(pix.scaled(ICON_SIZE, ICON_SIZE, Qt.AspectRatioMode.KeepAspectRatio))
         else:
-            # Fallback: Generate an icon with text
             pix = QPixmap(ICON_SIZE, ICON_SIZE)
             pix.fill(QColor("#333"))
             painter = QPainter(pix)
@@ -451,7 +886,7 @@ class DraggableSkillIcon(QFrame):
             mime_data = QMimeData()
             mime_data.setText(str(self.skill.id))
             drag.setMimeData(mime_data)
-            drag.setPixmap(self.icon_lbl.pixmap()) # Drag the icon image
+            drag.setPixmap(self.icon_lbl.pixmap()) 
             drag.setHotSpot(event.position().toPoint())
             drag.exec(Qt.DropAction.CopyAction)
 
@@ -460,9 +895,9 @@ class DraggableSkillIcon(QFrame):
             self.double_clicked.emit(self.skill)
 
 class SkillSlot(QFrame):
-    skill_equipped = pyqtSignal(int, int) # slot_index, skill_id
-    skill_removed = pyqtSignal(int)       # slot_index
-    clicked = pyqtSignal(int)             # skill_id
+    skill_equipped = pyqtSignal(int, int) 
+    skill_removed = pyqtSignal(int)       
+    clicked = pyqtSignal(int)             
 
     def __init__(self, index, parent=None):
         super().__init__(parent)
@@ -480,11 +915,10 @@ class SkillSlot(QFrame):
             }
         """)
         
-        # Label to hold the image
         self.icon_label = QLabel(self)
         self.icon_label.setGeometry(2, 2, ICON_SIZE, ICON_SIZE)
         self.icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.icon_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents) # Let drops pass through label
+        self.icon_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents) 
 
     def dragEnterEvent(self, event):
         if event.mimeData().hasText():
@@ -498,8 +932,6 @@ class SkillSlot(QFrame):
 
     def dropEvent(self, event):
         skill_id = int(event.mimeData().text())
-        # The main window will handle the actual logic via the signal
-        # but we need to emit it here.
         self.skill_equipped.emit(self.index, skill_id)
         event.accept()
 
@@ -507,15 +939,11 @@ class SkillSlot(QFrame):
         if event.button() == Qt.MouseButton.LeftButton:
             if self.current_skill_id is not None:
                 self.clicked.emit(self.current_skill_id)
-        # Right click to remove
         elif event.button() == Qt.MouseButton.RightButton:
             if self.current_skill_id is not None:
                 self.clear_slot()
 
     def mouseDoubleClickEvent(self, event):
-        # Double click behavior:
-        # If ghost (suggestion): Confirm it (equip it)
-        # If solid (equipped): Remove it
         if self.current_skill_id is not None:
             if self.is_ghost:
                 self.skill_equipped.emit(self.index, self.current_skill_id)
@@ -526,7 +954,6 @@ class SkillSlot(QFrame):
         self.current_skill_id = skill_id
         self.is_ghost = ghost
         
-        # Visuals
         icon_file = skill_obj.icon_filename if skill_obj else f"{skill_id}.jpg"
         if not icon_file.lower().endswith('.jpg'):
             icon_file += '.jpg'
@@ -537,7 +964,6 @@ class SkillSlot(QFrame):
         if os.path.exists(path):
             pix.load(path)
         else:
-            # Fallback text gen
             pix = QPixmap(ICON_SIZE, ICON_SIZE)
             pix.fill(QColor("#333"))
             p = QPainter(pix)
@@ -546,7 +972,6 @@ class SkillSlot(QFrame):
             p.end()
 
         if ghost:
-            # Make semi-transparent
             transparent_pix = QPixmap(pix.size())
             transparent_pix.fill(Qt.GlobalColor.transparent)
             p = QPainter(transparent_pix)
@@ -554,7 +979,12 @@ class SkillSlot(QFrame):
             p.drawPixmap(0, 0, pix)
             p.end()
             self.icon_label.setPixmap(transparent_pix)
-            self.setToolTip(f"Suggestion: {skill_obj.name}\nSynergy: {confidence:.0%}")
+            
+            # Formatted tooltip based on confidence type
+            if isinstance(confidence, str):
+                self.setToolTip(f"Smart Synergy: {skill_obj.name}\n{confidence}")
+            else:
+                self.setToolTip(f"Suggestion: {skill_obj.name}\nSynergy: {confidence:.0%}")
         else:
             self.icon_label.setPixmap(pix)
             self.setToolTip(skill_obj.name if skill_obj else "")
@@ -619,23 +1049,30 @@ class SkillInfoPanel(QFrame):
         info.append(f"Profession: {skill.get_profession_str()}")
         info.append(f"Attribute: {skill.get_attribute_str()}")
         if skill.energy: info.append(f"Energy: {skill.energy}")
-        if skill.activation: info.append(f"Activation: {skill.activation}s")
-        if skill.recharge: info.append(f"Recharge: {skill.recharge}s")
+        if skill.health_cost: info.append(f"<b>Sacrifice: {skill.health_cost} HP</b>") # NEW
         if skill.adrenaline: info.append(f"Adrenaline: {skill.adrenaline}")
+        
+        # Combined Timing Display
+        total_time = skill.activation + skill.aftercast
+        info.append(f"Cast: {skill.activation}s + {skill.aftercast}s ({total_time}s)") # NEW
+        
+        if skill.recharge: info.append(f"Recharge: {skill.recharge}s")
+        
         if skill.is_elite: info.append("<b>Elite Skill</b>")
         if skill.is_pve_only: info.append("<i>PvE Only</i>")
+        if skill.combo_req > 0: info.append(f"Combo Stage: {skill.combo_req}") # NEW
         
         self.details.setText("<br>".join(info))
 
 class BuildPreviewWidget(QFrame):
-    clicked = pyqtSignal(str) # Emits build code (Load)
-    skill_clicked = pyqtSignal(Skill) # Emits skill for info panel
+    clicked = pyqtSignal(str) 
+    skill_clicked = pyqtSignal(Skill) 
 
     def __init__(self, build: Build, repo: SkillRepository, is_pvp=False, parent=None):
         super().__init__(parent)
         self.build = build
         self.repo = repo
-        self.setFixedHeight(ICON_SIZE + 80) # Adjusted height
+        self.setFixedHeight(ICON_SIZE + 80) 
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.setStyleSheet("""
             QFrame {
@@ -653,7 +1090,6 @@ class BuildPreviewWidget(QFrame):
         layout.setContentsMargins(4, 4, 4, 4)
         layout.setSpacing(10)
         
-        # Display Professions
         p1_name = PROF_MAP.get(int(build.primary_prof) if build.primary_prof.isdigit() else 0, "No Profession")
         p2_name = PROF_MAP.get(int(build.secondary_prof) if build.secondary_prof.isdigit() else 0, "No Profession")
         p1 = PROF_SHORT_MAP.get(p1_name, "X")
@@ -665,23 +1101,18 @@ class BuildPreviewWidget(QFrame):
         lbl_prof.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(lbl_prof)
         
-        # Display 8 Skills
         for sid in build.skill_ids:
             skill_widget = None
             if sid != 0:
                 skill = repo.get_skill(sid, is_pvp=is_pvp)
                 if skill:
-                    # Reuse DraggableSkillIcon
                     skill_widget = DraggableSkillIcon(skill)
-                    # Reset style to avoid double borders
                     skill_widget.setStyleSheet("background: transparent; border: none;")
-                    # Connect click for preview
                     skill_widget.clicked.connect(self.skill_clicked.emit)
             
             if skill_widget:
                 layout.addWidget(skill_widget)
             else:
-                # Placeholder
                 placeholder = QFrame()
                 placeholder.setFixedSize(ICON_SIZE + 10, ICON_SIZE + 60)
                 placeholder.setStyleSheet("background: transparent; border: 1px dashed #444;")
@@ -689,7 +1120,6 @@ class BuildPreviewWidget(QFrame):
             
         layout.addStretch()
         
-        # Load Button
         btn_load = QPushButton("Load")
         btn_load.setFixedSize(60, 40)
         btn_load.setStyleSheet("""
@@ -707,6 +1137,42 @@ class BuildPreviewWidget(QFrame):
         btn_load.clicked.connect(lambda: self.clicked.emit(self.build.code))
         layout.addWidget(btn_load)
 
+class SynergyWorker(QThread):
+    results_ready = pyqtSignal(list)
+
+    def __init__(self, engine, active_skill_ids, prof_id=0, mode="legacy", debug=False):
+        super().__init__()
+        self.engine = engine
+        self.active_skill_ids = active_skill_ids
+        self.prof_id = prof_id 
+        self.mode = mode
+        self.debug = debug
+        self._is_interrupted = False
+
+    def run(self):
+        try:
+            results = []
+            if self.mode == "smart":
+                # PASS A LAMBDA THAT CHECKS IF THIS THREAD IS INTERRUPTED
+                results = self.engine.find_synergies(
+                    self.active_skill_ids, 
+                    self.prof_id, 
+                    debug_mode=self.debug,
+                    stop_check=lambda: self.isInterruptionRequested()
+                )
+            else:
+                results = self.engine.get_suggestions(self.active_skill_ids, limit=5000)
+            
+            if not self.isInterruptionRequested():
+                self.results_ready.emit(results)
+        except Exception as e:
+            print(f"Worker Error: {e}")
+
+    def stop(self):
+        self.requestInterruption() # New standard PyQt6 way
+        self.quit()
+        self.wait()
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -715,31 +1181,27 @@ class MainWindow(QMainWindow):
         
         # Load Data
         self.repo = SkillRepository(DB_FILE)
-        self.engine = SynergyEngine(JSON_FILE)
+        self.engine = SynergyEngine(JSON_FILE) # Legacy
+        self.smart_engine = HamiltonianEngine(DB_FILE) # NEW: Physics Engine
         
         # State
-        self.bar_skills = [None] * 8 # Array of skill_ids or None
+        self.bar_skills = [None] * 8 
         self.suggestion_offset = 0
-        self.current_suggestions = [] # Store filtered list for cycling
-        self.is_swapped = False # Track if primary/secondary are swapped
-        self.template_path = "" # Start empty to force selection
+        self.current_suggestions = [] 
+        self.is_swapped = False 
+        self.template_path = "" 
         
         self.init_ui()
-        self.apply_filters() # Initial population
+        self.apply_filters() 
 
     def init_ui(self):
-        # Create Tab Widget
         self.tabs = QTabWidget()
         self.setCentralWidget(self.tabs)
 
-        # --- Tab 1: Builder ---
         self.builder_tab = QWidget()
         self.tabs.addTab(self.builder_tab, "Builder")
-        
-        # Initialize builder UI on the builder_tab
         self.init_builder_ui(self.builder_tab)
 
-        # --- Tab 2: Synergy Map ---
         self.map_tab = QWidget()
         self.tabs.addTab(self.map_tab, "Synergy Map")
         self.init_map_ui(self.map_tab)
@@ -749,20 +1211,18 @@ class MainWindow(QMainWindow):
         if HAS_WEBENGINE:
             try:
                 view = QWebEngineView()
-                # Load local file
                 file_path = resource_path("synergy_map.html")
                 view.load(QUrl.fromLocalFile(file_path))
                 layout.addWidget(view)
             except Exception as e:
                 layout.addWidget(QLabel(f"Error loading map: {e}"))
         else:
-            layout.addWidget(QLabel("PyQt6-WebEngine is not installed. Please install it to view the map.\n\npip install PyQt6-WebEngine"))
+            layout.addWidget(QLabel("PyQt6-WebEngine is not installed."))
 
     def update_team_dropdown(self):
         selected_cat = self.combo_cat.currentText()
         current_team = self.combo_team.currentText()
         
-        # Collect valid teams
         valid_teams = set()
         if selected_cat == "All":
             valid_teams = self.engine.teams
@@ -771,13 +1231,11 @@ class MainWindow(QMainWindow):
                 if b.category == selected_cat:
                     valid_teams.add(b.team)
         
-        # Update Dropdown
-        self.combo_team.blockSignals(True) # Prevent triggering apply_filters multiple times
+        self.combo_team.blockSignals(True) 
         self.combo_team.clear()
         self.combo_team.addItem("All")
         self.combo_team.addItems(sorted(list(valid_teams)))
         
-        # Restore selection if possible, otherwise default to All
         index = self.combo_team.findText(current_team)
         if index != -1:
             self.combo_team.setCurrentIndex(index)
@@ -785,8 +1243,6 @@ class MainWindow(QMainWindow):
             self.combo_team.setCurrentIndex(0)
             
         self.combo_team.blockSignals(False)
-        
-        # Refresh grid
         self.apply_filters()
 
     def init_builder_ui(self, parent_widget):
@@ -797,7 +1253,6 @@ class MainWindow(QMainWindow):
         
         self.combo_prof = QComboBox()
         self.combo_prof.addItem("All")
-        # Use PROF_MAP for display
         for pid in sorted(PROF_MAP.keys()):
             self.combo_prof.addItem(f"{pid} - {PROF_MAP[pid]}")
         self.combo_prof.currentTextChanged.connect(self.apply_filters)
@@ -819,24 +1274,16 @@ class MainWindow(QMainWindow):
         filter_layout.addWidget(QLabel("Team:"))
         filter_layout.addWidget(self.combo_team)
         
-        # Add PvP Checkbox
         filter_layout.addSpacing(20)
         self.check_pvp = QCheckBox("PvP?")
-        # When checked: Filter OUT PvE-only skills
-        # When unchecked: Show everything (PvE Mode)
-        self.check_pvp.toggled.connect(self.apply_filters)
-        self.check_pvp.toggled.connect(self.update_suggestions)
-        self.check_pvp.toggled.connect(self.refresh_equipped_skills)
+        self.check_pvp.toggled.connect(self.on_pvp_toggled) # Updated handler
         filter_layout.addWidget(self.check_pvp)
 
-        # Add Elites Filters
         filter_layout.addSpacing(20)
         self.check_elites_only = QCheckBox("Elites")
         self.check_no_elites = QCheckBox("No Elites")
-        
         self.check_elites_only.toggled.connect(self.toggle_elites)
         self.check_no_elites.toggled.connect(self.toggle_no_elites)
-        
         filter_layout.addWidget(self.check_elites_only)
         filter_layout.addWidget(self.check_no_elites)
 
@@ -848,7 +1295,6 @@ class MainWindow(QMainWindow):
         filter_layout.addWidget(self.edit_search)
         
         filter_layout.addStretch()
-        
         main_layout.addLayout(filter_layout)
 
         # --- 1b. Export Controls ---
@@ -871,41 +1317,54 @@ class MainWindow(QMainWindow):
         
         main_layout.addLayout(export_layout)
 
-        # --- 2. Center Splitter (Grid + Info) ---
+        # --- 2. Center Splitter ---
         self.splitter = QSplitter(Qt.Orientation.Horizontal)
         
-        # Skill Browser (Left)
         self.scroll_area = QScrollArea()
         self.scroll_area.setWidgetResizable(True)
         self.skill_grid_widget = QWidget()
         self.skill_grid_layout = QGridLayout(self.skill_grid_widget)
-        self.skill_grid_layout.setHorizontalSpacing(20) # Increased spacing
+        self.skill_grid_layout.setHorizontalSpacing(20) 
         self.skill_grid_layout.setVerticalSpacing(10)
-        # AlignTop is fine, remove AlignLeft to allow full width expansion
         self.skill_grid_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
         self.scroll_area.setWidget(self.skill_grid_widget)
         
         self.splitter.addWidget(self.scroll_area)
-        
-        # Info Panel (Right)
         self.info_panel = SkillInfoPanel()
         self.splitter.addWidget(self.info_panel)
-        
         main_layout.addWidget(self.splitter, stretch=1)
 
-        # --- 3. Build Bar (Bottom) ---
+        # --- 3. Build Bar (Updated Layout) ---
         bar_container = QFrame()
-        bar_container.setFixedHeight(120)
+        bar_container.setFixedHeight(140) # Increased height slightly to fit checkbox
         bar_container.setStyleSheet("background-color: #111; border-top: 1px solid #444;")
         container_layout = QHBoxLayout(bar_container)
 
-        # Cycle Button (Left of skills)
-        self.btn_cycle = QPushButton("Cycle\nSuggestions")
-        self.btn_cycle.setFixedSize(80, 60)
-        self.btn_cycle.clicked.connect(self.cycle_suggestions)
-        container_layout.addWidget(self.btn_cycle)
+        # --- NEW: Cycle & Debug Column ---
+        cycle_container = QWidget()
+        cycle_layout = QVBoxLayout(cycle_container)
+        cycle_layout.setContentsMargins(0, 5, 0, 5)
+        cycle_layout.setSpacing(5)
 
-        # Left/Center: The Skills
+        self.btn_cycle = QPushButton("Cycle\nSuggestions")
+        self.btn_cycle.setFixedSize(90, 50)
+        self.btn_cycle.setStyleSheet("""
+            QPushButton { background-color: #444; color: white; border-radius: 4px; font-weight: bold; }
+            QPushButton:hover { background-color: #555; }
+            QPushButton:pressed { background-color: #666; }
+        """)
+        self.btn_cycle.clicked.connect(self.cycle_suggestions)
+        cycle_layout.addWidget(self.btn_cycle)
+
+        self.check_debug = QCheckBox("Debug Mode")
+        self.check_debug.setStyleSheet("color: #FF5555; font-size: 10px; font-weight: bold;")
+        self.check_debug.setToolTip("Show rejected suggestions in tooltips.\nHover over ghost icons to see why they failed.")
+        self.check_debug.toggled.connect(self.update_suggestions)
+        cycle_layout.addWidget(self.check_debug, alignment=Qt.AlignmentFlag.AlignCenter)
+        
+        container_layout.addWidget(cycle_container)
+
+        # --- Skill Slots ---
         bar_layout = QHBoxLayout()
         bar_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
         
@@ -920,28 +1379,32 @@ class MainWindow(QMainWindow):
             
         container_layout.addStretch(1)
         container_layout.addLayout(bar_layout)
-        container_layout.addSpacing(20) # Spacing
+        container_layout.addSpacing(20) 
         
-        # Show Other Professions (Moved here)
+        # --- Control Layout (Right Side) ---
+        control_layout = QVBoxLayout()
+        
         self.check_show_others = QCheckBox("Show Other\nProfessions")
-        self.check_show_others.setToolTip("If checked, suggest skills from ALL professions.\nIf unchecked, strictly limits suggestions to the current Primary/Secondary professions.")
         self.check_show_others.toggled.connect(self.update_suggestions)
-        container_layout.addWidget(self.check_show_others)
+        control_layout.addWidget(self.check_show_others)
 
-        # Lock Suggestions
         self.check_lock_suggestions = QCheckBox("Lock")
-        self.check_lock_suggestions.setToolTip("Lock the current suggestions list.\nNew suggestions will not be generated when equipping skills.")
         self.check_lock_suggestions.toggled.connect(self.update_suggestions)
-        container_layout.addWidget(self.check_lock_suggestions)
+        control_layout.addWidget(self.check_lock_suggestions)
         
+        self.check_smart_mode = QCheckBox("Smart Mode\n(Physics)")
+        self.check_smart_mode.setStyleSheet("color: #FFD700; font-weight: bold;")
+        self.check_smart_mode.toggled.connect(self.update_suggestions)
+        control_layout.addWidget(self.check_smart_mode)
+
+        container_layout.addLayout(control_layout)
         container_layout.addStretch(1)
 
-        # Right: Build Code Section
+        # --- Build Code Box (Rightmost) ---
         code_box = QFrame()
         code_box.setFixedWidth(250)
         code_layout = QVBoxLayout(code_box)
         
-        # Header Row: "Build Code: [W/Mo] [Swap]"
         header_layout = QHBoxLayout()
         header_layout.addWidget(QLabel("Build Code:"))
         
@@ -983,9 +1446,16 @@ class MainWindow(QMainWindow):
         btn_layout.addWidget(self.btn_reset)
         
         code_layout.addLayout(btn_layout)
-        
         container_layout.addWidget(code_box)
         main_layout.addWidget(bar_container)
+
+    def on_pvp_toggled(self, checked):
+        # Update both engines and refresh
+        mode = "pvp" if checked else "pve"
+        self.smart_engine.set_mode(mode)
+        self.apply_filters()
+        self.update_suggestions()
+        self.refresh_equipped_skills()
 
     def import_build_to_db(self):
         code = self.edit_code.text().strip()
@@ -1000,7 +1470,6 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Import Error", "Invalid Build Code.")
             return
             
-        # Construct Entry
         entry = {
             "build_code": code,
             "primary_profession": str(decoded['profession']['primary']),
@@ -1010,7 +1479,6 @@ class MainWindow(QMainWindow):
             "team": "User Imported"
         }
         
-        # Save to JSON
         try:
             if os.path.exists(JSON_FILE):
                 with open(JSON_FILE, 'r', encoding='utf-8') as f:
@@ -1018,7 +1486,6 @@ class MainWindow(QMainWindow):
             else:
                 data = []
                 
-            # Check for duplicate
             if any(d.get('build_code') == code for d in data):
                 QMessageBox.information(self, "Import", "This build is already in the database.")
                 return
@@ -1028,10 +1495,9 @@ class MainWindow(QMainWindow):
             with open(JSON_FILE, 'w', encoding='utf-8') as f:
                 json.dump(data, f, indent=4)
                 
-            # Reload Engine
             self.engine = SynergyEngine(JSON_FILE)
             self.apply_filters()
-            self.update_team_dropdown() # Refresh team list in case "User Imported" is new
+            self.update_team_dropdown() 
             
             QMessageBox.information(self, "Success", "Build successfully imported into the synergy database!")
             
@@ -1039,26 +1505,24 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Error", f"Failed to save build: {e}")
 
     def reset_build(self):
-        # 1. Reset State
         self.bar_skills = [None] * 8
         self.suggestion_offset = 0
         self.is_swapped = False
         
-        # 2. Reset UI Controls
-        self.combo_prof.setCurrentIndex(0) # All
-        self.combo_cat.setCurrentIndex(0) # All
-        self.combo_team.setCurrentIndex(0) # All
+        self.combo_prof.setCurrentIndex(0) 
+        self.combo_cat.setCurrentIndex(0) 
+        self.combo_team.setCurrentIndex(0) 
         self.check_pvp.setChecked(False)
         self.check_show_others.setChecked(False)
         self.check_lock_suggestions.setChecked(False)
+        if hasattr(self, 'check_smart_mode'):
+             self.check_smart_mode.setChecked(False)
         self.edit_search.clear()
         self.edit_code.clear()
         
-        # 3. Clear Slots
         for slot in self.slots:
             slot.clear_slot(silent=True)
             
-        # 4. Refresh
         self.apply_filters()
         self.update_suggestions()
 
@@ -1069,18 +1533,16 @@ class MainWindow(QMainWindow):
             self.lbl_path.setText(f"Path: {path}")
 
     def export_team_builds(self):
-        # Force path selection if empty
         if not self.template_path:
             self.choose_template_path()
             if not self.template_path:
-                return # Abort if user still didn't select
+                return 
                 
         team_name = self.combo_team.currentText()
         if team_name == "All":
             QMessageBox.warning(self, "Export Error", "Please select a specific Team to export.")
             return
             
-        # Identify builds to export (same logic as apply_filters)
         cat = self.combo_cat.currentText()
         matching_builds = [b for b in self.engine.builds if b.team == team_name]
         if cat != "All":
@@ -1090,7 +1552,6 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "Export", "No builds found to export.")
             return
 
-        # Deduplicate
         unique_builds = []
         seen_codes = set()
         for b in matching_builds:
@@ -1100,7 +1561,6 @@ class MainWindow(QMainWindow):
         
         saved_count = 0
         for b in unique_builds:
-            # Generate Name: "TeamName P1-P2.txt"
             p1_id = int(b.primary_prof) if b.primary_prof.isdigit() else 0
             p2_id = int(b.secondary_prof) if b.secondary_prof.isdigit() else 0
             
@@ -1109,13 +1569,11 @@ class MainWindow(QMainWindow):
             p1 = PROF_SHORT_MAP.get(p1_name, "X")
             p2 = PROF_SHORT_MAP.get(p2_name, "X")
             
-            # Sanitize filename
             safe_team = "".join(c for c in team_name if c.isalnum() or c in (' ', '-', '_')).strip()
             filename = f"{safe_team} {p1}-{p2}.txt"
             
             full_path = os.path.join(self.template_path, filename)
             
-            # Handle collisions (e.g. two Warriors in same team)
             counter = 1
             base_filename = filename
             while os.path.exists(full_path):
@@ -1141,7 +1599,7 @@ class MainWindow(QMainWindow):
             code = self.edit_code.text().strip()
         else:
             code = code_str.strip()
-            self.edit_code.setText(code) # Update UI to match
+            self.edit_code.setText(code) 
             
         if not code:
             return
@@ -1150,12 +1608,9 @@ class MainWindow(QMainWindow):
         build_data = decoder.decode()
         
         if not build_data or "error" in build_data:
-            # Could add a status bar message here if desired
             print("Failed to decode build code.")
             return
 
-        # 1. Update Profession
-        # Try to match the primary profession ID to the ComboBox
         primary_prof_id = build_data.get("profession", {}).get("primary", 0)
         if primary_prof_id != 0:
             for i in range(self.combo_prof.count()):
@@ -1164,14 +1619,11 @@ class MainWindow(QMainWindow):
                     self.combo_prof.setCurrentIndex(i)
                     break
         
-        # 2. Update Skills
         skills = build_data.get("skills", [])
-        # Ensure we have exactly 8 skills (pad or trim)
         if len(skills) < 8:
             skills.extend([0] * (8 - len(skills)))
         skills = skills[:8]
         
-        # Get PvP Status
         is_pvp = self.check_pvp.isChecked()
         
         for i, skill_id in enumerate(skills):
@@ -1183,11 +1635,9 @@ class MainWindow(QMainWindow):
                 skill_obj = self.repo.get_skill(skill_id, is_pvp=is_pvp)
                 self.slots[i].set_skill(skill_id, skill_obj, ghost=False)
 
-        # 3. Trigger updates (Suggestions + Code regeneration to normalize)
         self.update_suggestions()
 
     def handle_skill_double_clicked(self, skill: Skill):
-        # Find first empty slot
         empty_index = -1
         for i, s_id in enumerate(self.bar_skills):
             if s_id is None:
@@ -1196,10 +1646,6 @@ class MainWindow(QMainWindow):
         
         if empty_index != -1:
             self.handle_skill_equipped(empty_index, skill.id)
-        else:
-            # Optional: Replace the currently selected slot or notify user?
-            # For now, just ignore if full
-            pass
 
     def toggle_elites(self, checked):
         if checked:
@@ -1223,17 +1669,14 @@ class MainWindow(QMainWindow):
         cat = self.combo_cat.currentText()
         team = self.combo_team.currentText()
         
-        # Clear current grid
         for i in reversed(range(self.skill_grid_layout.count())): 
             self.skill_grid_layout.itemAt(i).widget().setParent(None)
 
-        # TEAM VIEW MODE: Show Build Bars instead of Skills
         if team != "All":
             matching_builds = [b for b in self.engine.builds if b.team == team]
             if cat != "All":
                 matching_builds = [b for b in matching_builds if b.category == cat]
             
-            # Deduplicate builds based on code
             unique_builds = []
             seen_codes = set()
             for b in matching_builds:
@@ -1241,30 +1684,24 @@ class MainWindow(QMainWindow):
                     unique_builds.append(b)
                     seen_codes.add(b.code)
             
-            # Use a vertical list layout style within the grid
             row = 0
-            cols_wide = 8 # Match standard grid width
+            cols_wide = 8
             for b in unique_builds:
                 widget = BuildPreviewWidget(b, self.repo, is_pvp=self.check_pvp.isChecked())
                 widget.clicked.connect(lambda code=b.code: self.load_code(code_str=code))
-                widget.skill_clicked.connect(self.info_panel.update_info) # Connect info panel
-                self.skill_grid_layout.addWidget(widget, row, 0, 1, cols_wide) # Span full width
+                widget.skill_clicked.connect(self.info_panel.update_info)
+                self.skill_grid_layout.addWidget(widget, row, 0, 1, cols_wide) 
                 row += 1
             return
 
-        # SKILL VIEW MODE (Standard)
         search_text = self.edit_search.text().lower()
         is_pvp = self.check_pvp.isChecked()
         is_elites_only = self.check_elites_only.isChecked()
         is_no_elites = self.check_no_elites.isChecked()
         
-        # Get valid skill IDs from engine filters
         valid_ids = self.engine.filter_skills(prof, cat, team)
         
-        # Filter by search text and Profession strictly
         filtered_skills = []
-        
-        # Parse prof ID once
         target_prof_id = -1
         if prof != "All":
             try:
@@ -1277,34 +1714,24 @@ class MainWindow(QMainWindow):
             if skill:
                 if search_text and search_text not in skill.name.lower():
                     continue
-                # PvP Filter logic: If Checked, hide PvE-only skills.
                 if is_pvp and skill.is_pve_only:
                     continue
-                
-                # Elite Filters
                 if is_elites_only and not skill.is_elite:
                     continue
                 if is_no_elites and skill.is_elite:
                     continue
-                
-                # Strict Profession Filter (Fix for "Warrior seeing Monk skills")
                 if target_prof_id != -1:
-                    # Allow Common (0) or strict match? Usually strict for "Warrior".
-                    # Common skills are usually fine to show, but if I ask for Warrior I probably want Warrior.
-                    # Let's strict match.
                     if skill.profession != target_prof_id:
                         continue
                     
                 filtered_skills.append(skill)
 
-        # Limit display count for performance
         if len(filtered_skills) > 500:
              filtered_skills = filtered_skills[:500]
 
         row, col = 0, 0
-        cols_wide = 8 # Changed from 10 to 8
+        cols_wide = 8 
         
-        # Sort by Name
         for skill in sorted(filtered_skills, key=lambda x: x.name):
             icon = DraggableSkillIcon(skill)
             icon.clicked.connect(self.info_panel.update_info)
@@ -1323,9 +1750,8 @@ class MainWindow(QMainWindow):
 
     def handle_skill_equipped(self, index, skill_id):
         self.bar_skills[index] = skill_id
-        self.suggestion_offset = 0 # Reset cycling
+        self.suggestion_offset = 0 
         
-        # Fetch skill object to render solidly
         is_pvp = self.check_pvp.isChecked()
         skill_obj = self.repo.get_skill(skill_id, is_pvp=is_pvp)
         self.slots[index].set_skill(skill_id, skill_obj, ghost=False)
@@ -1334,135 +1760,139 @@ class MainWindow(QMainWindow):
 
     def handle_skill_removed(self, index):
         self.bar_skills[index] = None
-        self.suggestion_offset = 0 # Reset cycling
+        self.suggestion_offset = 0 
         self.update_suggestions()
         
     def refresh_equipped_skills(self):
-        """Reloads the equipped skills in the bar to match current PvE/PvP mode."""
         is_pvp = self.check_pvp.isChecked()
         for i, sid in enumerate(self.bar_skills):
             if sid is not None:
                 skill_obj = self.repo.get_skill(sid, is_pvp=is_pvp)
                 self.slots[i].set_skill(sid, skill_obj, ghost=False)
-        # Also refresh suggestions as they might need to update tooltips/icons if versions differ
         self.update_suggestions()
 
     def cycle_suggestions(self):
-        # Increment offset by the number of empty slots (or a fixed amount like 4 or 8)
-        # We want to show the NEXT batch of suggestions.
-        # Count empty slots
         empty_slots = sum(1 for s in self.bar_skills if s is None)
-        if empty_slots == 0: return
+        if empty_slots == 0: 
+            print("Cycle: No empty slots.")
+            return
 
         if self.current_suggestions:
+            old_offset = self.suggestion_offset
+            # Shift offset by number of visible slots
             self.suggestion_offset = (self.suggestion_offset + empty_slots) % len(self.current_suggestions)
-            self.refresh_ghosts_only()
+            print(f"Cycling: Offset {old_offset} -> {self.suggestion_offset} (Total: {len(self.current_suggestions)})")
+            self.display_suggestions()
+        else:
+            print("Cycle: No suggestions to cycle.")
 
-    def refresh_ghosts_only(self):
-        # Helper to just update the ghost slots without re-querying everything if we have the list
-        # But for simplicity, we can just call update_suggestions logic part.
-        # Actually, let's just make cycle call update_suggestions but WITHOUT resetting offset?
-        # No, update_suggestions does the query.
-        # Let's split logic or just re-run update_suggestions.
-        # Since the query is fast (memory), re-running is fine, but we need to PERSIST the list for consistent cycling?
-        # Actually, if the active skills haven't changed, the query result is deterministic.
-        # So we can just re-run update_suggestions.
-        # But wait, I added self.suggestion_offset reset in the handlers.
-        # So cycle_suggestions just changes offset and calls update_suggestions? Yes.
-        # BUT update_suggestions needs to USE the offset.
-        self.display_suggestions()
-
-    def update_suggestions(self):
-        # Lock check
-        if hasattr(self, 'check_lock_suggestions') and self.check_lock_suggestions.isChecked():
-            return
-            
-        # 1. Get currently active skills (excluding None)
-        active_ids = [sid for sid in self.bar_skills if sid is not None]
-        
-        # 2. Get suggestions from engine 
-        # Deep pool search (5000 limit) without category/team filters.
-        suggestions = self.engine.get_suggestions(active_ids, limit=5000)
-        
+    def on_synergies_loaded(self, suggestions):
+        self.current_suggestions = []
         is_pvp = self.check_pvp.isChecked()
         show_others = self.check_show_others.isChecked()
         
-        # Determine current professions (Bar ONLY - ignore dropdown)
+        active_ids = [sid for sid in self.bar_skills if sid is not None]
         profs_in_bar = set()
-        
         for sid in active_ids:
             if sid != 0:
                 s = self.repo.get_skill(sid, is_pvp=is_pvp)
                 if s and s.profession != 0:
                     profs_in_bar.add(s.profession)
         
-        # Logic for filtering
-        filtered_suggestions = []
-        
-        # Define allowed professions if we are in "Strict Mode" (not showing others)
         allowed_profs = set()
         enforce_prof_limit = False
         
         if not show_others:
-            # If we aren't explicitly showing others, check if we have hit the 2-prof limit
             if len(profs_in_bar) >= 2:
                 enforce_prof_limit = True
                 allowed_profs.update(profs_in_bar)
-                allowed_profs.add(0) # Always allow Common skills in strict mode
+                allowed_profs.add(0)
 
         for sid, conf in suggestions:
             skill = self.repo.get_skill(sid, is_pvp=is_pvp)
             if not skill: continue
             
-            # PvP Filter
-            if is_pvp and skill.is_pve_only:
-                continue
+            if is_pvp and skill.is_pve_only: continue
             
-            # Profession Filter
             if enforce_prof_limit:
                 if skill.profession not in allowed_profs:
                     continue
             
-            filtered_suggestions.append((sid, conf))
-        
-        self.current_suggestions = filtered_suggestions
-        # Reset offset because the list has changed
+            self.current_suggestions.append((sid, conf))
+
         self.suggestion_offset = 0
-             
         self.display_suggestions()
 
+    def update_suggestions(self):
+        # Prevent updates if "Lock" is checked
+        if hasattr(self, 'check_lock_suggestions') and self.check_lock_suggestions.isChecked():
+            return
+            
+        # Clean up existing thread if running
+        if hasattr(self, 'worker') and self.worker.isRunning():
+            self.worker.stop()
+            
+        active_ids = [sid for sid in self.bar_skills if sid is not None]
+        
+        # Get Profession ID
+        prof_text = self.combo_prof.currentText()
+        try:
+            pid = int(prof_text.split(' ')[0])
+        except:
+            pid = 0
+
+        # Check Debug
+        is_debug = False
+        if hasattr(self, 'check_debug'):
+            is_debug = self.check_debug.isChecked()
+
+        if hasattr(self, 'check_smart_mode') and self.check_smart_mode.isChecked():
+            mode = "smart"
+            engine = self.smart_engine
+        else:
+            mode = "legacy"
+            engine = self.engine
+
+        self.worker = SynergyWorker(engine, active_ids, pid, mode, debug=is_debug)
+        self.worker.results_ready.connect(self.on_synergies_loaded)
+        self.worker.start()
+
     def display_suggestions(self):
-        # Slice the current suggestions based on offset
-        # We need enough to fill empty slots
         empty_indices = [i for i, s in enumerate(self.bar_skills) if s is None]
         
-        # Get slice
-        # We need len(empty_indices) suggestions starting from offset
-        # Handle wrapping? Or just stop? "Cycle" implies wrapping.
-        
         display_list = []
-        count_needed = len(empty_indices)
         is_pvp = self.check_pvp.isChecked()
 
         if self.current_suggestions:
-            total = len(self.current_suggestions)
-            for i in range(count_needed):
-                idx = (self.suggestion_offset + i) % total
-                display_list.append(self.current_suggestions[idx])
+            total_suggestions = len(self.current_suggestions)
+            needed = len(empty_indices)
+            
+            # LOGIC FIX: Do not wrap around. Stop if we run out of unique items.
+            # We take a slice of the list starting at the offset.
+            # If the offset + needed exceeds the list, we just take what's left.
+            
+            for i in range(needed):
+                idx = self.suggestion_offset + i
+                if idx < total_suggestions:
+                    display_list.append(self.current_suggestions[idx])
+                else:
+                    # We ran out of suggestions to show. Stop filling.
+                    break
         
-        # Fill empty slots
         s_idx = 0
         for slot_idx in empty_indices:
             slot = self.slots[slot_idx]
+            
             if s_idx < len(display_list):
+                # Fill slot with suggestion
                 s_id, conf = display_list[s_idx]
                 skill_obj = self.repo.get_skill(s_id, is_pvp=is_pvp)
                 slot.set_skill(s_id, skill_obj, ghost=True, confidence=conf)
                 s_idx += 1
             else:
+                # Ran out of suggestions? Clear the slot.
                 slot.clear_slot(silent=True)
                 
-        # Also update the code section based on ACTUAL skills only
         self.update_build_code()
 
     def swap_professions(self):
@@ -1470,12 +1900,8 @@ class MainWindow(QMainWindow):
         self.update_build_code()
 
     def update_build_code(self):
-        # Determine full skill bar (Active only, ignore ghosts for code?)
-        # Standard GW templates usually don't include empty slots unless explicitly 0.
-        
         active_bar = [s if s is not None else 0 for s in self.bar_skills]
         
-        # Profession Logic for code generation
         profs_in_bar = set()
         for sid in active_bar:
             if sid != 0:
@@ -1486,34 +1912,25 @@ class MainWindow(QMainWindow):
         primary_id = 0
         secondary_id = 0
         
-        # 1. Try to get Primary from Dropdown
         try: 
             combo_val = int(self.combo_prof.currentText().split(' ')[0])
             if combo_val != 0:
                 primary_id = combo_val
         except: pass
         
-        # 2. Get Secondary from Skills (excluding primary)
-        # Or if Primary is 0, infer both from skills
-        
         profs_sorted = sorted(list(profs_in_bar))
         
-        # If no primary selected, take first available
         if primary_id == 0:
             if len(profs_sorted) >= 1: primary_id = profs_sorted[0]
         
-        # Find secondary
-        # It's the first prof in list that isn't primary
         for pid in profs_sorted:
             if pid != primary_id:
                 secondary_id = pid
                 break
         
-        # Apply Swap if requested
         if self.is_swapped:
             primary_id, secondary_id = secondary_id, primary_id
             
-        # Update Display Label
         p1_name = PROF_MAP.get(primary_id, "No Profession")
         p2_name = PROF_MAP.get(secondary_id, "No Profession")
         p1_str = PROF_SHORT_MAP.get(p1_name, "X")
@@ -1542,15 +1959,17 @@ class MainWindow(QMainWindow):
         except:
             pass
 
+    def closeEvent(self, event):
+        if hasattr(self, 'worker') and self.worker.isRunning():
+            self.worker.stop()
+        event.accept()
+
 # =============================================================================
 # MAIN
 # =============================================================================
 if __name__ == "__main__":
     app = QApplication(sys.argv)
-    
-    # Dark Mode Theme
     app.setStyle("Fusion")
-    
     window = MainWindow()
     window.show()
     sys.exit(app.exec())

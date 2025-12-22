@@ -34100,5 +34100,22 @@
         ],
         "category": "SC",
         "team": "VFSC Norn Rep Farm"
+    },
+    {
+        "build_code": "OAAAAAAAAAAAAAAA",
+        "primary_profession": "0",
+        "secondary_profession": "0",
+        "skill_ids": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+        ],
+        "category": "User Imported",
+        "team": "User Imported"
     }
 ]
