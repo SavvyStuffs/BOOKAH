@@ -2,7 +2,7 @@ import sys
 import os
 import json
 import sqlite3
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import List, Optional, Dict, Set
 from collections import Counter
 from PyQt6.QtCore import QThread, pyqtSignal
@@ -14,9 +14,9 @@ from PyQt6.QtWidgets import (
     QHBoxLayout, QComboBox, QLabel, QScrollArea, 
     QFrame, QGridLayout, QLineEdit, QSplitter, 
     QTabWidget, QCheckBox, QPushButton, QSizePolicy,
-    QFileDialog, QMessageBox
+    QFileDialog, QMessageBox, QLayout, QStyle, QDialog, QListWidget, QInputDialog
 )
-from PyQt6.QtCore import Qt, QMimeData, QSize, pyqtSignal, QPoint, QUrl
+from PyQt6.QtCore import Qt, QMimeData, QSize, pyqtSignal, QPoint, QUrl, QRect
 from PyQt6.QtGui import QDrag, QPixmap, QPainter, QColor, QFont, QAction
 
 # Attempt to import WebEngine for the Map Tab
@@ -26,9 +26,418 @@ try:
 except ImportError:
     HAS_WEBENGINE = False
 
-# =============================================================================
-# CONFIGURATION
-# =============================================================================
+class FlowLayout(QLayout):
+    def __init__(self, parent=None, margin=0, spacing=-1):
+        super().__init__(parent)
+        if parent is not None:
+            self.setContentsMargins(margin, margin, margin, margin)
+        self.setSpacing(spacing)
+        self.itemList = []
+
+    def __del__(self):
+        item = self.takeAt(0)
+        while item:
+            item = self.takeAt(0)
+
+    def addItem(self, item):
+        self.itemList.append(item)
+
+    def count(self):
+        return len(self.itemList)
+
+    def itemAt(self, index):
+        if index >= 0 and index < len(self.itemList):
+            return self.itemList[index]
+        return None
+
+    def takeAt(self, index):
+        if index >= 0 and index < len(self.itemList):
+            return self.itemList.pop(index)
+        return None
+
+    def expandingDirections(self):
+        return Qt.Orientation(0)
+
+    def hasHeightForWidth(self):
+        return True
+
+    def heightForWidth(self, width):
+        height = self._doLayout(QRect(0, 0, width, 0), True)
+        return height
+
+    def setGeometry(self, rect):
+        super().setGeometry(rect)
+        self._doLayout(rect, False)
+
+    def sizeHint(self):
+        return self.minimumSize()
+
+    def minimumSize(self):
+        size = QSize()
+        for item in self.itemList:
+            size = size.expandedTo(item.minimumSize())
+        size += QSize(2 * self.contentsMargins().top(), 2 * self.contentsMargins().top())
+        return size
+
+    def _doLayout(self, rect, testOnly):
+        x = rect.x()
+        y = rect.y()
+        lineHeight = 0
+        spacing = self.spacing()
+
+        for item in self.itemList:
+            wid = item.widget()
+            spaceX = spacing + wid.style().layoutSpacing(QSizePolicy.ControlType.PushButton, QSizePolicy.ControlType.PushButton, Qt.Orientation.Horizontal)
+            spaceY = spacing + wid.style().layoutSpacing(QSizePolicy.ControlType.PushButton, QSizePolicy.ControlType.PushButton, Qt.Orientation.Vertical)
+            
+            nextX = x + item.sizeHint().width() + spaceX
+            if nextX - spaceX > rect.right() and lineHeight > 0:
+                x = rect.x()
+                y = y + lineHeight + spaceY
+                nextX = x + item.sizeHint().width() + spaceX
+                lineHeight = 0
+
+            if not testOnly:
+                item.setGeometry(QRect(QPoint(x, y), item.sizeHint()))
+
+            x = nextX
+            lineHeight = max(lineHeight, item.sizeHint().height())
+
+        return y + lineHeight - rect.y()
+
+class ClickableLabel(QLabel):
+    clicked = pyqtSignal()
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.clicked.emit()
+
+class TeamManagerDialog(QDialog):
+    def __init__(self, parent=None, engine=None):
+        super().__init__(parent)
+        self.setWindowTitle("Team Build Manager")
+        self.resize(400, 300)
+        self.engine = engine
+        self.parent_window = parent # Reference to MainWindow to get current build
+        
+        layout = QVBoxLayout(self)
+        
+        # Header with Plus button
+        header = QHBoxLayout()
+        header.addWidget(QLabel("<b>Teams:</b>"))
+        header.addStretch()
+        self.btn_add_folder = QPushButton("+")
+        self.btn_add_folder.setFixedSize(24, 24)
+        self.btn_add_folder.setToolTip("Import Team from Folder")
+        self.btn_add_folder.setStyleSheet("font-weight: bold; color: #00AAFF;")
+        self.btn_add_folder.clicked.connect(self.add_from_folder)
+        header.addWidget(self.btn_add_folder)
+        layout.addLayout(header)
+        
+        self.list_widget = QListWidget()
+        self.refresh_list()
+        layout.addWidget(self.list_widget)
+        
+        btn_layout = QHBoxLayout()
+        
+        self.btn_add = QPushButton("Add Current Build to Team")
+        self.btn_add.clicked.connect(self.add_team)
+        btn_layout.addWidget(self.btn_add)
+        
+        self.btn_edit = QPushButton("Edit Team")
+        self.btn_edit.clicked.connect(self.edit_team)
+        btn_layout.addWidget(self.btn_edit)
+        
+        self.btn_load = QPushButton("Load Team")
+        self.btn_load.clicked.connect(self.load_team)
+        btn_layout.addWidget(self.btn_load)
+        
+        self.btn_del = QPushButton("Delete Team")
+        self.btn_del.clicked.connect(self.remove_team)
+        self.btn_del.setStyleSheet("background-color: #552222;")
+        btn_layout.addWidget(self.btn_del)
+        
+        layout.addLayout(btn_layout)
+
+    def refresh_list(self):
+        self.list_widget.clear()
+        teams = sorted(list(self.engine.teams))
+        self.list_widget.addItems(teams)
+        
+    def add_from_folder(self):
+        # Open directory dialog
+        folder_path = QFileDialog.getExistingDirectory(self, "Select Team Build Folder")
+        if folder_path:
+            # Use logic from main window
+            self.parent_window.process_folder_drop(folder_path)
+            self.refresh_list()
+        
+    def edit_team(self):
+        item = self.list_widget.currentItem()
+        if not item: return
+        team_name = item.text()
+        dlg = TeamEditorDialog(team_name, self.engine, self)
+        dlg.exec()
+
+    def add_team(self):
+        # Save current build as a new Team Build entry
+        name, ok = QInputDialog.getText(self, "New Team Build", "Enter Team Name:")
+        if ok and name:
+            code = self.parent_window.edit_code.text()
+            if not code:
+                QMessageBox.warning(self, "Error", "No build code to save!")
+                return
+                
+            decoder = GuildWarsTemplateDecoder(code)
+            decoded = decoder.decode()
+            if not decoded: return
+
+            entry = {
+                "build_code": code,
+                "primary_profession": str(decoded['profession']['primary']),
+                "secondary_profession": str(decoded['profession']['secondary']),
+                "skill_ids": decoded['skills'],
+                "category": "User Team",
+                "team": name
+            }
+            
+            # Append to engine data and save
+            self.engine.builds.append(Build(
+                code=entry['build_code'],
+                primary_prof=entry['primary_profession'],
+                secondary_prof=entry['secondary_profession'],
+                skill_ids=entry['skill_ids'],
+                category=entry['category'],
+                team=entry['team']
+            ))
+            self.engine.teams.add(name)
+            
+            # Persist to JSON
+            self.save_to_json(entry)
+            self.refresh_list()
+            
+    def load_team(self):
+        # Load selected team build into main window
+        item = self.list_widget.currentItem()
+        if not item: return
+        team_name = item.text()
+        
+        # Load first build found
+        for b in self.engine.builds:
+            if b.team == team_name:
+                self.parent_window.load_code(code_str=b.code)
+                self.close()
+                return
+
+    def remove_team(self):
+        item = self.list_widget.currentItem()
+        if not item: return
+        team_name = item.text()
+        
+        confirm = QMessageBox.question(self, "Confirm", f"Delete all builds for team '{team_name}'?", QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        if confirm == QMessageBox.StandardButton.Yes:
+            # Remove from memory
+            self.engine.builds = [b for b in self.engine.builds if b.team != team_name]
+            self.engine.teams.discard(team_name)
+            
+            # Remove from JSON
+            self.remove_from_json(team_name)
+            self.refresh_list()
+
+    def save_to_json(self, entry):
+        try:
+            data = []
+            if os.path.exists(JSON_FILE):
+                with open(JSON_FILE, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+            data.append(entry)
+            with open(JSON_FILE, 'w', encoding='utf-8') as f:
+                json.dump(data, f, indent=4)
+        except Exception as e:
+            print(f"Error saving: {e}")
+
+    def remove_from_json(self, team_name):
+        try:
+            if os.path.exists(JSON_FILE):
+                with open(JSON_FILE, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                
+                new_data = [d for d in data if d.get('team') != team_name]
+                
+                with open(JSON_FILE, 'w', encoding='utf-8') as f:
+                    json.dump(new_data, f, indent=4)
+        except Exception as e:
+            print(f"Error removing: {e}")
+
+class TeamEditorDialog(QDialog):
+    def __init__(self, team_name, engine, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(f"Edit Team: {team_name}")
+        self.resize(500, 400)
+        self.team_name = team_name
+        self.engine = engine
+        
+        layout = QVBoxLayout(self)
+        
+        self.list_widget = QListWidget()
+        self.refresh_list()
+        layout.addWidget(self.list_widget)
+        
+        btn_layout = QHBoxLayout()
+        self.btn_del = QPushButton("Remove Selected Build")
+        self.btn_del.clicked.connect(self.remove_build)
+        btn_layout.addWidget(self.btn_del)
+        
+        layout.addLayout(btn_layout)
+
+    def refresh_list(self):
+        self.list_widget.clear()
+        self.team_builds = [b for b in self.engine.builds if b.team == self.team_name]
+        
+        for i, b in enumerate(self.team_builds):
+            # Try to describe the build
+            p1 = PROF_MAP.get(int(b.primary_prof), "X")
+            p2 = PROF_MAP.get(int(b.secondary_prof), "X")
+            item_text = f"#{i+1}: {p1}/{p2} - {b.code}"
+            self.list_widget.addItem(item_text)
+
+        def remove_build(self):
+
+            row = self.list_widget.currentRow()
+
+            if row < 0: return
+
+            
+
+            build_to_remove = self.team_builds[row]
+
+            
+
+            # Remove from engine
+
+            if build_to_remove in self.engine.builds:
+
+                self.engine.builds.remove(build_to_remove)
+
+                
+
+            # Remove from JSON
+
+            self.remove_specific_build_from_json(build_to_remove.code)
+
+            
+
+            self.refresh_list()
+
+            
+
+        def remove_specific_build_from_json(self, code):
+
+            try:
+
+                if os.path.exists(JSON_FILE):
+
+                    with open(JSON_FILE, 'r', encoding='utf-8') as f:
+
+                        data = json.load(f)
+
+                    
+
+                    # Remove FIRST match of code and team (in case of dupes)
+
+                    new_data = []
+
+                    removed = False
+
+                    for d in data:
+
+                        if not removed and d.get('build_code') == code and d.get('team') == self.team_name:
+
+                            removed = True # Skip this one
+
+                        else:
+
+                            new_data.append(d)
+
+                    
+
+                    with open(JSON_FILE, 'w', encoding='utf-8') as f:
+
+                        json.dump(new_data, f, indent=4)
+
+            except Exception as e:
+
+                print(f"Error removing build: {e}")
+
+    
+
+class LocationManagerDialog(QDialog):
+    def __init__(self, parent=None, db_path=None):
+        super().__init__(parent)
+        self.setWindowTitle("Locations")
+        self.resize(450, 600)
+        self.db_path = db_path
+        
+        layout = QVBoxLayout(self)
+        
+        self.tabs = QTabWidget()
+        
+        self.list_zones = QListWidget()
+        self.list_missions = QListWidget()
+        
+        self.tabs.addTab(self.list_zones, "Explorable Zones")
+        self.tabs.addTab(self.list_missions, "Missions")
+        
+        layout.addWidget(self.tabs)
+        
+        btn_layout = QHBoxLayout()
+        self.btn_select = QPushButton("Select Location")
+        self.btn_select.clicked.connect(self.accept)
+        btn_layout.addWidget(self.btn_select)
+        
+        self.btn_cancel = QPushButton("Cancel")
+        self.btn_cancel.clicked.connect(self.reject)
+        btn_layout.addWidget(self.btn_cancel)
+        
+        layout.addLayout(btn_layout)
+        
+        self.refresh_list()
+
+    def refresh_list(self):
+        self.list_zones.clear()
+        self.list_missions.clear()
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            # Load Explorable Zones
+            cursor.execute("SELECT name FROM locations WHERE type = 'Location' ORDER BY name ASC")
+            zones = [row[0] for row in cursor.fetchall()]
+            self.list_zones.addItems(zones)
+            
+            # Load Missions
+            cursor.execute("SELECT name FROM locations WHERE type = 'Mission' ORDER BY name ASC")
+            missions = [row[0] for row in cursor.fetchall()]
+            self.list_missions.addItems(missions)
+            
+            conn.close()
+        except Exception as e:
+            print(f"Error loading locations: {e}")
+
+    def get_selected_location(self):
+        # Check active tab
+        if self.tabs.currentIndex() == 0:
+            item = self.list_zones.currentItem()
+        else:
+            item = self.list_missions.currentItem()
+        return item.text() if item else None
+
+    
+
+    # =============================================================================
+
+    # CONFIGURATION
+
+    # =============================================================================
 def resource_path(relative_path):
     """ Get absolute path to resource, works for dev and for PyInstaller """
     try:
@@ -55,6 +464,9 @@ PROF_SHORT_MAP = {
 }
 
 ATTR_MAP = {
+    -9: "Norn Rank", -8: "Ebon Vanguard Rank", -7: "Dwarven Rank", -6: "Asuran Rank",
+    -5: "Kurzick Rank", -4: "Luxon Rank", -3: "Lightbringer Rank", -2: "Sunspear Rank",
+    -1: "No Attribute",
     0: "Fast Casting", 1: "Illusion Magic", 2: "Domination Magic", 3: "Inspiration Magic",
     4: "Blood Magic", 5: "Death Magic", 6: "Soul Reaping", 7: "Curses",
     8: "Air Magic", 9: "Earth Magic", 10: "Fire Magic", 11: "Water Magic",
@@ -96,6 +508,12 @@ class Skill:
     combo_req: int = 0       # 0=None, 1=Lead, 2=Offhand, 3=Dual (Assassin)
     is_touch: bool = False   # Requires melee range
     campaign: int = 0        # 0=Core, 1=Prophecies, etc.
+    stats: List = field(default_factory=list)
+    original_description: str = ""
+
+    def __post_init__(self):
+        if not self.original_description:
+            self.original_description = self.description
 
     def get_profession_str(self):
         return PROF_MAP.get(self.profession, f"Unknown ({self.profession})")
@@ -103,6 +521,55 @@ class Skill:
     def get_attribute_str(self):
         if self.attribute == -1: return "None"
         return ATTR_MAP.get(self.attribute, f"Unknown ({self.attribute})")
+
+    def get_description_for_rank(self, rank: int) -> str:
+        """
+        Dynamically substitutes variables in the description based on the provided attribute rank.
+        Uses self.stats to find patterns and values.
+        """
+        if not self.stats:
+            return self.description
+            
+        # Ensure rank is within bounds (0-21)
+        rank = max(0, min(rank, 21))
+        
+        # Start with the ORIGINAL description, not the potentially already modified one
+        current_desc = self.original_description
+        
+        for stat in self.stats:
+            # Helper to safely convert to int
+            def safe_int(val):
+                try:
+                    return int(val)
+                except (ValueError, TypeError):
+                    return 0
+
+            val_0 = safe_int(stat[2])
+            val_15 = safe_int(stat[17])
+            val_target = safe_int(stat[2 + rank]) # rank 0 is at index 2
+            
+            # Identify the pattern in the text
+            pattern = ""
+            if val_0 == val_15:
+                pattern = str(val_0)
+            else:
+                pattern = f"{val_0}..{val_15}"
+            
+            # Prepare replacement string with blue color
+            # Using basic HTML color attribute which works in QT labels
+            replacement = f'<span style="color: #55AAFF;">{val_target}</span>'
+            
+            # Find and replace ONLY the first occurrence
+            if pattern in current_desc:
+                current_desc = current_desc.replace(pattern, replacement, 1)
+            else:
+                # Fallback: Try checking up to rank 21 if rank 15 didn't match
+                val_21 = safe_int(stat[23])
+                alt_pattern = f"{val_0}..{val_21}"
+                if alt_pattern in current_desc:
+                    current_desc = current_desc.replace(alt_pattern, replacement, 1)
+                    
+        return current_desc
 @dataclass
 class Build:
     code: str
@@ -280,7 +747,9 @@ class HamiltonianEngine:
         if total_hp > 50 and (rech_a < 8 or rech_b < 8): return False, f"Suicide Loop (-{total_hp} HP)"
 
         cycle_b = act_b + aft_b
-        if rech_a > 0 and (rech_a + 0.25) < cycle_b: return False, f"Timing Clog (Wait {cycle_b - rech_a:.1f}s)"
+        # Relaxed Timing Clog to a Warning to prevent empty suggestion lists
+        if rech_a > 0 and (rech_a + 0.25) < cycle_b: 
+            return True, f"⚠️ Timing Clog (Wait {cycle_b - rech_a:.1f}s)"
 
         return True, "Stable"
 
@@ -292,41 +761,87 @@ class HamiltonianEngine:
             conn = sqlite3.connect(self.db_path)
             table = self._get_table()
             
-            cols = "skill_id, name, description, energy_cost, activation, recharge, adrenaline, health_cost, aftercast, combo_req, is_elite, attribute"
+            cols = "skill_id, name, description, energy_cost, activation, recharge, adrenaline, health_cost, aftercast, combo_req, is_elite, attribute, target_type"
             placeholders = ','.join(['?'] * len(active_skill_ids))
             
             q_active = f"SELECT {cols} FROM {table} WHERE skill_id IN ({placeholders})"
             cursor = conn.execute(q_active, active_skill_ids)
             active_skills_data = cursor.fetchall()
             
+            # Fetch Tags for active skills
+            q_tags = f"SELECT skill_id, tag FROM skill_tags WHERE skill_id IN ({placeholders})"
+            cursor = conn.execute(q_tags, active_skill_ids)
+            skill_tags_map = {}
+            for sid, tag in cursor.fetchall():
+                if sid not in skill_tags_map: skill_tags_map[sid] = set()
+                skill_tags_map[sid].add(tag)
+            
             context = SystemContext(primary_prof_id)
             for s in active_skills_data:
                 context.ingest_skill(s)
 
             synergies = []
-            conditions = ['Burning', 'Bleeding', 'Dazed', 'Deep Wound', 'Weakness', 'Poison', 'Knockdown', 'Hexed', 'Enchanted']
+            # REMOVED 'Knockdown', 'Hexed' (Covered by Laws of Gravity & Hexes)
+            conditions = ['Burning', 'Bleeding', 'Dazed', 'Deep Wound', 'Weakness', 'Poison', 'Enchanted']
             existing_ids = set(active_skill_ids)
 
             for root in active_skills_data:
                 if stop_check and stop_check(): return []
                 
+                root_id = root[0]
+                root_name = root[1].lower()
                 root_desc = root[2].lower() if root[2] else ""
                 root_hp_cost = root[7] or 0
+                root_target_type = root[12] if len(root) > 12 else 0
+                root_tags = skill_tags_map.get(root_id, set())
                 
-                # --- A. HEALTH & MECHANICS SEARCH ---
+                # --- Mechanic Identification ---
+                is_hex_prov = 'Type_Hex' in root_tags
+                # Hex Consumer: Must not target ally (Type 3) unless it's a specific mechanic that uses ally hexes offensively?
+                # "Shatter Hex" (Target Ally, Type 3) -> Defensive/Niche. Not a synergy for "Empathy".
+                is_hex_cons = ("hexed foe" in root_desc or "remove a hex" in root_desc or "shatter" in root_desc) and root_target_type != 3
                 
-                # 1. LAW OF PRESERVATION (Upstream)
-                # If we sacrifice health, we NEED healing.
-                if root_hp_cost > 0 or "sacrifice" in root_desc:
-                     q_heal = f"""
-                        SELECT {cols} FROM {table}
-                        WHERE (description LIKE '%heal%' OR description LIKE '%regeneration%')
-                        AND description NOT LIKE '%sacrifice%'
-                        AND skill_id NOT IN ({','.join(['?']*len(existing_ids))})
-                     """
-                     self._process_matches(conn, q_heal, list(existing_ids), root, context, synergies, debug_mode, "Mitigates Sacrifice", stop_check)
+                is_ench_prov = 'Type_Enchantment' in root_tags
+                is_ench_cons = "while you are enchanted" in root_desc or "for each enchantment" in root_desc or "extend" in root_desc and "enchantment" in root_desc
+                
+                is_spirit_prov = 'Type_Spirit' in root_tags
+                is_spirit_cons = "near a spirit" in root_desc or "earshot of a spirit" in root_desc or "destroy" in root_desc and "spirit" in root_desc
+                
+                is_signet_prov = 'Type_Signet' in root_tags
+                is_signet_cons = "equipped signet" in root_desc or "signet you control" in root_desc or "recharge" in root_desc and "signet" in root_desc
+                
+                is_corpse_cons = 'Type_Corpse_Exploit' in root_tags or "exploit" in root_desc and "corpse" in root_desc
+                
+                is_kd_prov = 'Control_Knockdown' in root_tags
+                is_kd_cons = "knocked down foe" in root_desc or "against a knocked down" in root_desc
+                
+                is_int_prov = 'Control_Interrupt' in root_tags
+                is_int_cons = "if you interrupt" in root_desc or "whenever you interrupt" in root_desc or "after you interrupt" in root_desc
+                
+                is_heal_prov = 'Type_Healing' in root_tags
+                is_heal_cons = "whenever you heal" in root_desc or "heal bonus" in root_desc
+                
+                is_degen_prov = 'Type_Degeneration' in root_tags
+                is_degen_cons = "suffers from degeneration" in root_desc or "whenever target suffers degeneration" in root_desc # Rare but possible
+                
+                is_nrg_prov = 'Type_Energy_Management' in root_tags
+                is_nrg_cons = "energy lost" in root_desc # Or generally high cost, but user said handled elsewhere.
+                
+                is_phys_prov = 'Type_Attack_Physical' in root_tags
+                is_phys_cons = "physical damage" in root_desc and ("deal" not in root_desc) or "attack skill" in root_desc
+                
+                is_ranged_prov = 'Type_Attack_Ranged' in root_tags
+                is_ranged_cons = "projectile" in root_desc or "bow attack" in root_desc
+                
+                is_cond_prov = 'Type_Condition' in root_tags
+                is_cond_cons = "if target is" in root_desc or "against" in root_desc and any(x in root_desc for x in ["bleeding", "burning", "poison", "disease", "blinded", "dazed", "weakness", "cripple", "deep wound"])
+                
+                is_buff_prov = 'Type_Buff' in root_tags
+                is_stance_prov = 'Type_Stance' in root_tags
 
-                # 2. LAW OF AUGMENTATION (Downstream)
+                # --- 1. LAW OF AUGMENTATION (Heal Boost) ---
+                
+                # 1. LAW OF AUGMENTATION (Downstream)
                 # If we Heal, look for skills that boost Healing.
                 if "heal" in root_desc and ("target ally" in root_desc or "party" in root_desc):
                     q_boost = f"""
@@ -336,16 +851,236 @@ class HamiltonianEngine:
                     """
                     self._process_matches(conn, q_boost, list(existing_ids), root, context, synergies, debug_mode, "Boosts Healing", stop_check)
 
-                # 3. LAW OF ENCHANTMENT (Downstream)
-                # If we cast an Enchantment, look for things that use/count Enchantments.
-                if "enchantment" in root_desc and "spell" in root_desc:
-                    q_ench = f"""
+                # --- 2. LAW OF ENCHANTMENT ---
+                if is_ench_prov:
+                    q = f"SELECT {cols} FROM {table} WHERE (description LIKE '%for each enchantment%' OR description LIKE '%while you are enchanted%' OR description LIKE '%extend%enchantment%') AND description NOT LIKE '%remove%' AND skill_id NOT IN ({','.join(['?']*len(existing_ids))})"
+                    self._process_matches(conn, q, list(existing_ids), root, context, synergies, debug_mode, "Uses Enchantment", stop_check)
+                if is_ench_cons:
+                    q = f"SELECT {cols} FROM {table} WHERE skill_id IN (SELECT skill_id FROM skill_tags WHERE tag='Type_Enchantment') AND skill_id NOT IN ({','.join(['?']*len(existing_ids))})"
+                    self._process_matches(conn, q, list(existing_ids), root, context, synergies, debug_mode, "Provides Enchantment", stop_check)
+
+                # --- 3. LAW OF MULTIPLICATION (AoE Synergy) ---
+                if ("adjacent" in root_desc or "nearby" in root_desc) and ("attack" in root_desc or "strike" in root_desc or "shoot" in root_desc):
+                     q = f"SELECT {cols} FROM {table} WHERE (description LIKE '%adjacent%' OR description LIKE '%nearby%') AND (description LIKE '%deal%damage%' OR description LIKE '%strike%') AND (skill_id IN (SELECT skill_id FROM skill_tags WHERE tag='Type_Weapon_Spell' OR tag='Type_Enchantment')) AND skill_id NOT IN ({','.join(['?']*len(existing_ids))})"
+                     self._process_matches(conn, q, list(existing_ids), root, context, synergies, debug_mode, "AoE Payload", stop_check)
+
+                # --- 4. LAW OF SPIRITUALISM ---
+                if is_spirit_prov:
+                    q = f"SELECT {cols} FROM {table} WHERE (description LIKE '%near a spirit%' OR description LIKE '%earshot of a spirit%' OR description LIKE '%destroy%spirit%' OR description LIKE '%spirit%loses health%') AND skill_id NOT IN ({','.join(['?']*len(existing_ids))})"
+                    self._process_matches(conn, q, list(existing_ids), root, context, synergies, debug_mode, "Uses Spirits", stop_check)
+                if is_spirit_cons:
+                    q = f"SELECT {cols} FROM {table} WHERE skill_id IN (SELECT skill_id FROM skill_tags WHERE tag='Type_Spirit') AND skill_id NOT IN ({','.join(['?']*len(existing_ids))})"
+                    self._process_matches(conn, q, list(existing_ids), root, context, synergies, debug_mode, "Creates Spirits", stop_check)
+
+                # --- 5. LAW OF GRAVITY ---
+                if is_kd_prov:
+                    q = f"SELECT {cols} FROM {table} WHERE (description LIKE '%knocked down foe%' OR description LIKE '%against a knocked down%') AND skill_id NOT IN ({','.join(['?']*len(existing_ids))})"
+                    self._process_matches(conn, q, list(existing_ids), root, context, synergies, debug_mode, "Punishes Knockdown", stop_check)
+                if is_kd_cons:
+                    q = f"SELECT {cols} FROM {table} WHERE skill_id IN (SELECT skill_id FROM skill_tags WHERE tag='Control_Knockdown') AND skill_id NOT IN ({','.join(['?']*len(existing_ids))})"
+                    self._process_matches(conn, q, list(existing_ids), root, context, synergies, debug_mode, "Provides Knockdown", stop_check)
+
+                # --- 6. LAW OF DISRUPTION ---
+                if is_int_prov:
+                    q = f"SELECT {cols} FROM {table} WHERE (description LIKE '%if you interrupt%' OR description LIKE '%whenever you interrupt%' OR description LIKE '%after you interrupt%') AND skill_id NOT IN ({','.join(['?']*len(existing_ids))})"
+                    self._process_matches(conn, q, list(existing_ids), root, context, synergies, debug_mode, "Rewards Interrupt", stop_check)
+                if is_int_cons:
+                    q = f"SELECT {cols} FROM {table} WHERE skill_id IN (SELECT skill_id FROM skill_tags WHERE tag='Control_Interrupt') AND skill_id NOT IN ({','.join(['?']*len(existing_ids))})"
+                    self._process_matches(conn, q, list(existing_ids), root, context, synergies, debug_mode, "Provides Interrupt", stop_check)
+
+                # --- 7. LAW OF THE DEAD ---
+                if is_corpse_cons:
+                    q = f"SELECT {cols} FROM {table} WHERE (description LIKE '%death nova%' OR (description LIKE '%create%' AND description LIKE '%corpse%')) AND skill_id NOT IN ({','.join(['?']*len(existing_ids))})"
+                    self._process_matches(conn, q, list(existing_ids), root, context, synergies, debug_mode, "Provides Corpses", stop_check)
+
+                # --- 8. LAW OF HEXES ---
+                if is_hex_prov:
+                    q = f"SELECT {cols} FROM {table} WHERE (description LIKE '%hexed foe%' OR description LIKE '%remove a hex%' OR description LIKE '%shatter%') AND description NOT LIKE '%remove%hex%from%ally%' AND skill_id NOT IN ({','.join(['?']*len(existing_ids))})"
+                    self._process_matches(conn, q, list(existing_ids), root, context, synergies, debug_mode, "Shatters/Uses Hex", stop_check)
+                if is_hex_cons:
+                    q = f"SELECT {cols} FROM {table} WHERE skill_id IN (SELECT skill_id FROM skill_tags WHERE tag='Type_Hex') AND skill_id NOT IN ({','.join(['?']*len(existing_ids))})"
+                    self._process_matches(conn, q, list(existing_ids), root, context, synergies, debug_mode, "Provides Hex", stop_check)
+
+                # --- 9. LAW OF SIGNETS ---
+                if is_signet_prov:
+                    q = f"SELECT {cols} FROM {table} WHERE (description LIKE '%equipped signet%' OR description LIKE '%signet you control%' OR description LIKE '%recharge%signet%') AND skill_id NOT IN ({','.join(['?']*len(existing_ids))})"
+                    self._process_matches(conn, q, list(existing_ids), root, context, synergies, debug_mode, "Uses Signets", stop_check)
+                if is_signet_cons:
+                    q = f"SELECT {cols} FROM {table} WHERE skill_id IN (SELECT skill_id FROM skill_tags WHERE tag='Type_Signet') AND skill_id NOT IN ({','.join(['?']*len(existing_ids))})"
+                    self._process_matches(conn, q, list(existing_ids), root, context, synergies, debug_mode, "Provides Signet", stop_check)
+
+                # 5. LAW OF SPIRITUALISM
+                # Provider: Creates spirits -> Consumer: Uses spirits
+                if "spirit" in root[1].lower() or "create a" in root_desc and "spirit" in root_desc:
+                    q_spirit_down = f"""
                         SELECT {cols} FROM {table}
-                        WHERE (description LIKE '%for each enchantment%' OR description LIKE '%while you are enchanted%' OR description LIKE '%extend%enchantment%')
-                        AND description NOT LIKE '%remove%'
+                        WHERE (description LIKE '%near a spirit%' OR description LIKE '%earshot of a spirit%' OR description LIKE '%destroy%spirit%' OR description LIKE '%spirit%loses health%')
                         AND skill_id NOT IN ({','.join(['?']*len(existing_ids))})
                     """
-                    self._process_matches(conn, q_ench, list(existing_ids), root, context, synergies, debug_mode, "Uses Enchantment", stop_check)
+                    self._process_matches(conn, q_spirit_down, list(existing_ids), root, context, synergies, debug_mode, "Uses Spirits", stop_check)
+                
+                # Consumer: Uses spirits -> Provider: Creates spirits
+                if "near a spirit" in root_desc or "earshot of a spirit" in root_desc or "destroy" in root_desc and "spirit" in root_desc:
+                    q_spirit_up = f"""
+                        SELECT {cols} FROM {table}
+                        WHERE (name LIKE '%spirit%' OR (description LIKE '%create a%' AND description LIKE '%spirit%'))
+                        AND skill_id NOT IN ({','.join(['?']*len(existing_ids))})
+                    """
+                    self._process_matches(conn, q_spirit_up, list(existing_ids), root, context, synergies, debug_mode, "Creates Spirits", stop_check)
+
+                # 6. LAW OF GRAVITY (Knockdown Punishers)
+                # Provider: Knocks down -> Consumer: Strikes knocked down
+                if "knocks down" in root_desc or "knock down" in root_desc:
+                    q_kd_down = f"""
+                        SELECT {cols} FROM {table}
+                        WHERE (description LIKE '%knocked down foe%' OR description LIKE '%against a knocked down%')
+                        AND skill_id NOT IN ({','.join(['?']*len(existing_ids))})
+                    """
+                    self._process_matches(conn, q_kd_down, list(existing_ids), root, context, synergies, debug_mode, "Punishes Knockdown", stop_check)
+                
+                # Consumer -> Provider
+                if "knocked down foe" in root_desc or "against a knocked down" in root_desc:
+                    q_kd_up = f"""
+                        SELECT {cols} FROM {table}
+                        WHERE (description LIKE '%knocks down%' OR description LIKE '%knock down%')
+                        AND skill_id NOT IN ({','.join(['?']*len(existing_ids))})
+                    """
+                    self._process_matches(conn, q_kd_up, list(existing_ids), root, context, synergies, debug_mode, "Provides Knockdown", stop_check)
+
+                # 7. LAW OF DISRUPTION (Interrupt Rewards)
+                # Consumer: If you interrupt -> Provider: Interrupts
+                if "if you interrupt" in root_desc or "whenever you interrupt" in root_desc:
+                    q_int_up = f"""
+                        SELECT s.{cols.replace(', ', ', s.')} FROM {table} s
+                        JOIN skill_tags t ON s.skill_id = t.skill_id
+                        WHERE (t.tag = 'Control_Interrupt' OR s.description LIKE '%interrupts a skill%' OR s.description LIKE '%interruption%')
+                        AND s.skill_id NOT IN ({','.join(['?']*len(existing_ids))})
+                    """
+                    # Need to adjust _process_matches query or just use standard query if joining is complex in helper
+                    # Simplified: Use subquery for tag check or just text check + tag check in post-process?
+                    # Let's stick to text for simplicity in query string, but 'Control_Interrupt' is powerful.
+                    # Actually, I can join in the query string passed to _process_matches.
+                    
+                    q_int_up = f"""
+                        SELECT DISTINCT {cols} FROM {table} 
+                        WHERE (skill_id IN (SELECT skill_id FROM skill_tags WHERE tag='Control_Interrupt') 
+                               OR description LIKE '%interrupts a skill%' OR description LIKE '%interruption%')
+                        AND skill_id NOT IN ({','.join(['?']*len(existing_ids))})
+                    """
+                    self._process_matches(conn, q_int_up, list(existing_ids), root, context, synergies, debug_mode, "Provides Interrupt", stop_check)
+
+                # 8. LAW OF THE DEAD (Corpse Exploitation)
+                # Consumer: Exploit corpse -> Provider: Creates corpses (minions/deaths)
+                if "exploit" in root_desc and "corpse" in root_desc:
+                    q_dead_up = f"""
+                        SELECT {cols} FROM {table}
+                        WHERE (description LIKE '%death nova%' OR description LIKE '%create%' AND description LIKE '%corpse%')
+                        AND skill_id NOT IN ({','.join(['?']*len(existing_ids))})
+                    """
+                    self._process_matches(conn, q_dead_up, list(existing_ids), root, context, synergies, debug_mode, "Provides Corpses", stop_check)
+
+                # --- 9. LAW OF HEXES ---
+                if is_hex_prov: 
+                    q_hex_down = f"""
+                        SELECT {cols} FROM {table}
+                        WHERE (description LIKE '%hexed foe%' OR description LIKE '%remove a hex%' OR description LIKE '%shatter%')
+                        AND description NOT LIKE '%remove%hex%from%ally%'
+                        AND skill_id NOT IN ({','.join(['?']*len(existing_ids))})
+                    """
+                    self._process_matches(conn, q_hex_down, list(existing_ids), root, context, synergies, debug_mode, "Shatters/Uses Hex", stop_check)
+
+                # 10. LAW OF SIGNETS
+                # Provider: Is Signet -> Consumer: Uses Signets
+                if is_signet_prov:
+                    q_sig_down = f"""
+                        SELECT {cols} FROM {table}
+                        WHERE (description LIKE '%equipped signet%' OR description LIKE '%signet you control%' OR description LIKE '%recharge%signet%')
+                        AND skill_id NOT IN ({','.join(['?']*len(existing_ids))})
+                    """
+                    self._process_matches(conn, q_sig_down, list(existing_ids), root, context, synergies, debug_mode, "Uses Signets", stop_check)
+                
+                # Consumer -> Provider
+                if "equipped signet" in root_desc or "signet you control" in root_desc:
+                    q_sig_up = f"""
+                        SELECT {cols} FROM {table}
+                        WHERE name LIKE '%signet%'
+                        AND skill_id NOT IN ({','.join(['?']*len(existing_ids))})
+                    """
+                    self._process_matches(conn, q_sig_up, list(existing_ids), root, context, synergies, debug_mode, "Provides Signet", stop_check)
+
+                # 11. LAW OF HEALING (Standardized)
+                if is_heal_prov:
+                    q = f"SELECT {cols} FROM {table} WHERE (description LIKE '%whenever you heal%' OR description LIKE '%heal bonus%') AND skill_id NOT IN ({','.join(['?']*len(existing_ids))})"
+                    self._process_matches(conn, q, list(existing_ids), root, context, synergies, debug_mode, "Boosts Healing", stop_check)
+                    
+                    # LAW OF STACKING (Healers need multiple heals)
+                    q_stack = f"SELECT {cols} FROM {table} WHERE skill_id IN (SELECT skill_id FROM skill_tags WHERE tag='Type_Healing') AND skill_id NOT IN ({','.join(['?']*len(existing_ids))})"
+                    self._process_matches(conn, q_stack, list(existing_ids), root, context, synergies, debug_mode, "Healing Redundancy", stop_check)
+
+                # --- 12. LAW OF CHAINS (Combos) ---
+                root_combo = root[9] or 0
+                if "lead attack" in root_desc: # Root provides Lead
+                    q = f"SELECT {cols} FROM {table} WHERE combo_req = 1 AND skill_id NOT IN ({','.join(['?']*len(existing_ids))})"
+                    self._process_matches(conn, q, list(existing_ids), root, context, synergies, debug_mode, "Combo: Off-Hand", stop_check)
+                elif root_combo == 1: # Root is Off-Hand (provides Off-Hand state)
+                    q = f"SELECT {cols} FROM {table} WHERE combo_req = 2 AND skill_id NOT IN ({','.join(['?']*len(existing_ids))})"
+                    self._process_matches(conn, q, list(existing_ids), root, context, synergies, debug_mode, "Combo: Dual", stop_check)
+
+                # --- 13. LAW OF THE LEGION (Spirit Stacking) ---
+                if is_spirit_prov:
+                    q = f"SELECT {cols} FROM {table} WHERE skill_id IN (SELECT skill_id FROM skill_tags WHERE tag='Type_Spirit') AND skill_id NOT IN ({','.join(['?']*len(existing_ids))})"
+                    self._process_matches(conn, q, list(existing_ids), root, context, synergies, debug_mode, "Spirit Army", stop_check)
+
+                # 14. LAW OF DEGENERATION (Entropy)
+                if is_degen_prov:
+                    # Rare consumer? Just general pressure. Maybe skills that trigger on degen?
+                    pass 
+                if is_degen_cons: # e.g. "suffers from degeneration"
+                    q = f"SELECT {cols} FROM {table} WHERE skill_id IN (SELECT skill_id FROM skill_tags WHERE tag='Type_Degeneration') AND skill_id NOT IN ({','.join(['?']*len(existing_ids))})"
+                    self._process_matches(conn, q, list(existing_ids), root, context, synergies, debug_mode, "Causes Degeneration", stop_check)
+
+                # 13. LAW OF ENERGY
+                if is_nrg_prov:
+                    # Suggest expensive skills?
+                    q = f"SELECT {cols} FROM {table} WHERE skill_id IN (SELECT skill_id FROM skill_tags WHERE tag='Type_Energy_Consumer') AND skill_id NOT IN ({','.join(['?']*len(existing_ids))})"
+                    self._process_matches(conn, q, list(existing_ids), root, context, synergies, debug_mode, "Uses Energy", stop_check)
+                if is_nrg_cons:
+                    q = f"SELECT {cols} FROM {table} WHERE skill_id IN (SELECT skill_id FROM skill_tags WHERE tag='Type_Energy_Management') AND skill_id NOT IN ({','.join(['?']*len(existing_ids))})"
+                    self._process_matches(conn, q, list(existing_ids), root, context, synergies, debug_mode, "Provides Energy", stop_check)
+
+                # 14. LAW OF PHYSICAL ATTACKS
+                if is_phys_prov:
+                    q = f"SELECT {cols} FROM {table} WHERE (description LIKE '%physical damage%' OR description LIKE '%attack skill%') AND description LIKE '%bonus%' AND skill_id NOT IN ({','.join(['?']*len(existing_ids))})"
+                    self._process_matches(conn, q, list(existing_ids), root, context, synergies, debug_mode, "Boosts Physical", stop_check)
+                if is_phys_cons:
+                    q = f"SELECT {cols} FROM {table} WHERE skill_id IN (SELECT skill_id FROM skill_tags WHERE tag='Type_Attack_Physical') AND skill_id NOT IN ({','.join(['?']*len(existing_ids))})"
+                    self._process_matches(conn, q, list(existing_ids), root, context, synergies, debug_mode, "Physical Attack", stop_check)
+
+                # 15. LAW OF RANGED ATTACKS
+                if is_ranged_prov:
+                    q = f"SELECT {cols} FROM {table} WHERE (description LIKE '%projectile%' OR description LIKE '%bow attack%') AND description LIKE '%bonus%' AND skill_id NOT IN ({','.join(['?']*len(existing_ids))})"
+                    self._process_matches(conn, q, list(existing_ids), root, context, synergies, debug_mode, "Boosts Ranged", stop_check)
+                if is_ranged_cons:
+                    q = f"SELECT {cols} FROM {table} WHERE skill_id IN (SELECT skill_id FROM skill_tags WHERE tag='Type_Attack_Ranged') AND skill_id NOT IN ({','.join(['?']*len(existing_ids))})"
+                    self._process_matches(conn, q, list(existing_ids), root, context, synergies, debug_mode, "Ranged Attack", stop_check)
+
+                # --- 16. LAW OF CONDITIONS ---
+                if is_cond_prov:
+                    q = f"SELECT {cols} FROM {table} WHERE (description LIKE '%if target is%' OR description LIKE '%against%') AND skill_id NOT IN ({','.join(['?']*len(existing_ids))})"
+                    self._process_matches(conn, q, list(existing_ids), root, context, synergies, debug_mode, "Feeds on Conditions", stop_check)
+                if is_cond_cons:
+                    q = f"SELECT {cols} FROM {table} WHERE skill_id IN (SELECT skill_id FROM skill_tags WHERE tag='Type_Condition') AND skill_id NOT IN ({','.join(['?']*len(existing_ids))})"
+                    self._process_matches(conn, q, list(existing_ids), root, context, synergies, debug_mode, "Provides Conditions", stop_check)
+
+                # --- 17. LAW OF UTILITY ---
+                if is_buff_prov:
+                    q = f"SELECT {cols} FROM {table} WHERE skill_id IN (SELECT skill_id FROM skill_tags WHERE tag='Type_Buff') AND skill_id NOT IN ({','.join(['?']*len(existing_ids))})"
+                    self._process_matches(conn, q, list(existing_ids), root, context, synergies, debug_mode, "Buff Redundancy", stop_check)
+
+                # --- 18. LAW OF STANCES ---
+                if is_stance_prov:
+                    q = f"SELECT {cols} FROM {table} WHERE skill_id IN (SELECT skill_id FROM skill_tags WHERE tag='Type_Stance') AND skill_id NOT IN ({','.join(['?']*len(existing_ids))})"
+                    self._process_matches(conn, q, list(existing_ids), root, context, synergies, debug_mode, "Stance Choice", stop_check)
 
                 # --- B. CONDITION SEARCH ---
                 for cond in conditions:
@@ -367,6 +1102,16 @@ class HamiltonianEngine:
                     is_consumer = False
                     if cond_l in root_desc and ("bonus" in root_desc or "if target" in root_desc or "additional" in root_desc):
                         is_consumer = True
+                        
+                        # LOGIC FIX: If the skill actually APPLIES the condition, do not treat it as a consumer.
+                        # Look for provider phrases preceding the condition.
+                        idx = root_desc.find(cond_l)
+                        if idx != -1:
+                            start = max(0, idx - 40) # Look back ~40 chars
+                            pre_text = root_desc[start:idx]
+                            providers = ["begins", "suffers", "suffer", "causes", "inflicts", "induces"]
+                            if any(p in pre_text for p in providers):
+                                is_consumer = False
                     
                     if is_consumer:
                         q_up = f"""
@@ -709,6 +1454,18 @@ class SkillRepository:
             is_touch=bool(row[14]),
             campaign=int(row[15] or 0)
         )
+        
+        # Load stats if available (Phase 1)
+        try:
+            # Schema: skill_id, stat_name, ranks 0-21, variable_index
+            # We want to order by variable_index to ensure correct matching order
+            q_stats = "SELECT * FROM skill_stats WHERE skill_id=? ORDER BY variable_index"
+            self.cursor.execute(q_stats, (skill.id,))
+            stats = self.cursor.fetchall()
+            skill.stats = stats
+        except Exception as e:
+            print(f"Error loading stats for skill {skill.id}: {e}")
+            
         self._cache[cache_key] = skill
         return skill
 
@@ -720,13 +1477,161 @@ class SkillRepository:
                 skills.append(s)
         return skills
 
-    def get_all_skills_by_ids(self, ids: List[int], is_pvp: bool = False) -> List[Skill]:
-        skills = []
-        for sid in ids:
-            s = self.get_skill(sid, is_pvp=is_pvp)
-            if s:
-                skills.append(s)
-        return skills
+class AttributeEditor(QFrame):
+    """
+    GUI Panel for managing attribute point distribution.
+    Shows attributes for the current primary/secondary professions.
+    """
+    attributes_changed = pyqtSignal(dict) # Emits {attr_id: rank}
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFrameStyle(QFrame.Shape.StyledPanel | QFrame.Shadow.Raised)
+        self.setStyleSheet("background-color: #1a1a1a; border: 1px solid #333; border-radius: 4px;")
+        
+        self.layout = QVBoxLayout(self)
+        self.layout.setContentsMargins(5, 5, 5, 5)
+        self.layout.setSpacing(2)
+        
+        self.title = QLabel("Attributes (0/200)")
+        self.title.setStyleSheet("font-weight: bold; color: #aaa; border: none;")
+        self.layout.addWidget(self.title)
+        
+        self.scroll = QScrollArea()
+        self.scroll.setWidgetResizable(True)
+        self.scroll.setStyleSheet("border: none;")
+        self.scroll_content = QWidget()
+        self.grid = QGridLayout(self.scroll_content)
+        self.grid.setContentsMargins(0, 0, 0, 0)
+        self.grid.setSpacing(4)
+        self.scroll.setWidget(self.scroll_content)
+        self.layout.addWidget(self.scroll)
+        
+        self.attr_widgets = {} # {attr_id: (label, spinbox)}
+        self.current_points = 0
+        self.max_points = 200
+        self.current_distribution = {} # {attr_id: rank}
+        
+        # Mapping of profession to its attributes
+        self.PROF_ATTRS = {
+            1: [17, 18, 19, 20, 21],          # Warrior: Strength, Axe, Hammer, Sword, Tactics
+            2: [22, 23, 24, 25],              # Ranger: Beast, Expertise, Wild, Marks
+            3: [13, 14, 15, 16],              # Monk: Heal, Smiting, Prot, Divine
+            4: [4, 5, 6, 7],                  # Necro: Blood, Death, Soul, Curses
+            5: [0, 1, 2, 3],                  # Mesmer: Fast, Illusion, Dom, Insp
+            6: [8, 9, 10, 11, 12],            # Ele: Air, Earth, Fire, Water, Energy
+            7: [29, 30, 31, 35],              # Assassin: Dagger, Deadly, Shadow, Critical
+            8: [32, 33, 34, 36],              # Ritualist: Communing, Resto, Chan, Spawning
+            9: [37, 38, 39, 40],              # Paragon: Spear, Command, Motiv, Leadership
+            10: [41, 42, 43, 44]              # Dervish: Scythe, Wind, Earth, Mysticism
+        }
+
+    def set_professions(self, primary_id, secondary_id, active_skills: List[Skill] = None):
+        # Clear existing widgets
+        for i in reversed(range(self.grid.count())): 
+            self.grid.itemAt(i).widget().setParent(None)
+        self.attr_widgets.clear()
+        
+        relevant_attrs = []
+        if primary_id in self.PROF_ATTRS:
+            relevant_attrs.extend(self.PROF_ATTRS[primary_id])
+        if secondary_id in self.PROF_ATTRS:
+            # Add secondary attrs, skipping duplicates
+            for aid in self.PROF_ATTRS[secondary_id]:
+                if aid not in relevant_attrs:
+                    is_primary_of_another = False
+                    for pid, primary_aid in PROF_PRIMARY_ATTR.items():
+                        if aid == primary_aid and pid != secondary_id:
+                            is_primary_of_another = True
+                            break
+                    
+                    if not is_primary_of_another:
+                        relevant_attrs.append(aid)
+        
+        # Check for PvE attributes (negative IDs) in active skills
+        if active_skills:
+            for s in active_skills:
+                if s.attribute < 0 and s.attribute != -1: # -1 is None
+                    if s.attribute not in relevant_attrs:
+                        relevant_attrs.append(s.attribute)
+
+        # Sort: Standard attributes first (by name), then PvE attributes
+        # ATTR_MAP has names for negatives now
+        
+        # Split into standard and pve
+        std_attrs = [a for a in relevant_attrs if a >= 0]
+        pve_attrs = [a for a in relevant_attrs if a < 0]
+        
+        std_attrs.sort(key=lambda x: ATTR_MAP.get(x, ""))
+        pve_attrs.sort(key=lambda x: ATTR_MAP.get(x, ""))
+        
+        final_attrs = std_attrs + pve_attrs
+        
+        for row, aid in enumerate(final_attrs):
+            name = ATTR_MAP.get(aid, f"Attr {aid}")
+            lbl = QLabel(name)
+            lbl.setStyleSheet("color: #ccc; font-size: 11px; border: none;")
+            
+            spin = QComboBox()
+            
+            # Range: 0-12 for standard, 0-10 for PvE
+            limit = 12 if aid >= 0 else 10
+            spin.addItems([str(i) for i in range(limit + 1)])
+            
+            spin.setFixedWidth(45)
+            spin.setStyleSheet("background-color: #333; color: white; border: 1px solid #555;")
+            
+            # Set previous value if it existed
+            prev_val = self.current_distribution.get(aid, 0)
+            spin.setCurrentIndex(min(prev_val, limit))
+            
+            spin.currentIndexChanged.connect(lambda _, a=aid: self._on_attr_changed(a))
+            
+            # Highlight PvE attributes
+            if aid < 0:
+                lbl.setStyleSheet("color: #FFAA00; font-size: 11px; border: none; font-weight: bold;")
+            
+            self.grid.addWidget(lbl, row, 0)
+            self.grid.addWidget(spin, row, 1)
+            self.attr_widgets[aid] = (lbl, spin)
+            
+        self._update_total()
+
+    def _on_attr_changed(self, attr_id):
+        val = int(self.attr_widgets[attr_id][1].currentText())
+        self.current_distribution[attr_id] = val
+        self._update_total()
+        self.attributes_changed.emit(self.current_distribution)
+
+    def _update_total(self):
+        # Calculate point cost (GW formula)
+        costs = [0, 1, 3, 6, 10, 15, 21, 28, 37, 48, 61, 77, 97]
+        
+        total = 0
+        for aid, (lbl, spin) in self.attr_widgets.items():
+            if aid < 0: continue # PvE attributes cost 0 points
+            
+            rank = int(spin.currentText())
+            if rank < len(costs):
+                total += costs[rank]
+        
+        self.current_points = total
+        self.title.setText(f"Attributes ({total}/{self.max_points})")
+        
+        if total > self.max_points:
+            self.title.setStyleSheet("font-weight: bold; color: #ff5555; border: none;")
+        else:
+            self.title.setStyleSheet("font-weight: bold; color: #aaa; border: none;")
+
+    def get_distribution(self):
+        return {aid: int(spin.currentText()) for aid, (lbl, spin) in self.attr_widgets.items()}
+    
+    def set_distribution(self, dist):
+        self.current_distribution = dist
+        for aid, rank in dist.items():
+            if aid in self.attr_widgets:
+                self.attr_widgets[aid][1].setCurrentIndex(min(rank, 12))
+        self._update_total()
 
 class SynergyEngine:
     def __init__(self, json_path):
@@ -950,7 +1855,7 @@ class SkillSlot(QFrame):
             else:
                 self.clear_slot()
 
-    def set_skill(self, skill_id, skill_obj: Skill = None, ghost=False, confidence=0.0):
+    def set_skill(self, skill_id, skill_obj: Skill = None, ghost=False, confidence=0.0, rank=0):
         self.current_skill_id = skill_id
         self.is_ghost = ghost
         
@@ -979,15 +1884,27 @@ class SkillSlot(QFrame):
             p.drawPixmap(0, 0, pix)
             p.end()
             self.icon_label.setPixmap(transparent_pix)
-            
-            # Formatted tooltip based on confidence type
-            if isinstance(confidence, str):
-                self.setToolTip(f"Smart Synergy: {skill_obj.name}\n{confidence}")
-            else:
-                self.setToolTip(f"Suggestion: {skill_obj.name}\nSynergy: {confidence:.0%}")
         else:
             self.icon_label.setPixmap(pix)
-            self.setToolTip(skill_obj.name if skill_obj else "")
+
+        # Build detailed tooltip
+        if skill_obj:
+            desc = skill_obj.get_description_for_rank(rank)
+            attr_name = ATTR_MAP.get(skill_obj.attribute, "None")
+            tooltip = f"<b>{skill_obj.name}</b><br/>"
+            if skill_obj.attribute != -1:
+                tooltip += f"<i>{attr_name} ({rank})</i><br/>"
+            tooltip += f"<br/>{desc}"
+            
+            if ghost:
+                if isinstance(confidence, str):
+                    tooltip = f"<b>Smart Synergy:</b> {confidence}<br/><hr/>" + tooltip
+                else:
+                    tooltip = f"<b>Synergy: {confidence:.0%}</b><br/><hr/>" + tooltip
+            
+            self.setToolTip(tooltip)
+        else:
+            self.setToolTip(str(skill_id))
 
         self.update_style()
 
@@ -1009,7 +1926,7 @@ class SkillSlot(QFrame):
 class SkillInfoPanel(QFrame):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setFixedWidth(250)
+        self.setMinimumWidth(100)
         self.setStyleSheet("background-color: #1a1a1a; border-left: 1px solid #444;")
         layout = QVBoxLayout(self)
         
@@ -1034,7 +1951,7 @@ class SkillInfoPanel(QFrame):
         layout.addWidget(self.details)
         layout.addStretch()
 
-    def update_info(self, skill: Skill):
+    def update_info(self, skill: Skill, rank=0):
         self.lbl_name.setText(skill.name)
         
         path = os.path.join(ICON_DIR, skill.icon_filename)
@@ -1043,11 +1960,15 @@ class SkillInfoPanel(QFrame):
         else:
             self.lbl_icon.clear()
             
-        self.txt_desc.setText(skill.description)
+        self.txt_desc.setText(skill.get_description_for_rank(rank))
         
         info = []
         info.append(f"Profession: {skill.get_profession_str()}")
-        info.append(f"Attribute: {skill.get_attribute_str()}")
+        attr_name = skill.get_attribute_str()
+        if skill.attribute != -1:
+             info.append(f"Attribute: {attr_name} ({rank})")
+        else:
+             info.append(f"Attribute: {attr_name}")
         if skill.energy: info.append(f"Energy: {skill.energy}")
         if skill.health_cost: info.append(f"<b>Sacrifice: {skill.health_cost} HP</b>") # NEW
         if skill.adrenaline: info.append(f"Adrenaline: {skill.adrenaline}")
@@ -1190,7 +2111,10 @@ class MainWindow(QMainWindow):
         self.current_suggestions = [] 
         self.is_swapped = False 
         self.template_path = "" 
+        self.current_selected_skill_id = None
+        self.team_synergy_skills = [] # Skills from loaded team for Smart Mode
         
+        self.setAcceptDrops(True) # Enable Drag & Drop
         self.init_ui()
         self.apply_filters() 
 
@@ -1234,13 +2158,21 @@ class MainWindow(QMainWindow):
         self.combo_team.blockSignals(True) 
         self.combo_team.clear()
         self.combo_team.addItem("All")
-        self.combo_team.addItems(sorted(list(valid_teams)))
+        
+        # Priority sort: Solo first, then others
+        if "Solo" in valid_teams:
+            self.combo_team.addItem("Solo")
+            others = sorted([t for t in valid_teams if t != "Solo"])
+        else:
+            others = sorted(list(valid_teams))
+        
+        self.combo_team.addItems(others)
         
         index = self.combo_team.findText(current_team)
         if index != -1:
             self.combo_team.setCurrentIndex(index)
         else:
-            self.combo_team.setCurrentIndex(0)
+            self.combo_team.setCurrentIndex(0) # Default to "All"
             
         self.combo_team.blockSignals(False)
         self.apply_filters()
@@ -1271,8 +2203,42 @@ class MainWindow(QMainWindow):
         filter_layout.addWidget(self.combo_prof)
         filter_layout.addWidget(QLabel("Category:"))
         filter_layout.addWidget(self.combo_cat)
-        filter_layout.addWidget(QLabel("Team:"))
-        filter_layout.addWidget(self.combo_team)
+        
+        # --- Team Control Group ---
+        team_widget = QWidget()
+        team_layout = QVBoxLayout(team_widget)
+        team_layout.setContentsMargins(0,0,0,0)
+        team_layout.setSpacing(2)
+        
+        team_header = QHBoxLayout()
+        self.lbl_team_title = QLabel("Team:")
+        self.lbl_team_title.setStyleSheet("color: #aaa; font-weight: bold;")
+        team_header.addWidget(self.lbl_team_title)
+        
+        self.combo_team = QComboBox()
+        self.combo_team.addItem("All")
+        
+        # Priority sort: Solo first
+        all_teams = self.engine.teams
+        if "Solo" in all_teams:
+            self.combo_team.addItem("Solo")
+            others = sorted([t for t in all_teams if t != "Solo"])
+        else:
+            others = sorted(list(all_teams))
+        self.combo_team.addItems(others)
+        
+        self.combo_team.currentTextChanged.connect(self.apply_filters)
+        self.combo_team.setCurrentIndex(0) # Default to "All" (No filter)
+        
+        team_header.addWidget(self.combo_team)
+        team_layout.addLayout(team_header)
+        
+        self.btn_manage_teams = QPushButton("Manage Teams")
+        self.btn_manage_teams.setStyleSheet("background-color: #444; font-size: 10px; padding: 2px;")
+        self.btn_manage_teams.clicked.connect(self.open_team_manager)
+        team_layout.addWidget(self.btn_manage_teams)
+        
+        filter_layout.addWidget(team_widget)
         
         filter_layout.addSpacing(20)
         self.check_pvp = QCheckBox("PvP?")
@@ -1295,6 +2261,15 @@ class MainWindow(QMainWindow):
         filter_layout.addWidget(self.edit_search)
         
         filter_layout.addStretch()
+        
+        # Add Folder Button (Top Right)
+        self.btn_add_folder = QPushButton("+")
+        self.btn_add_folder.setFixedSize(24, 24)
+        self.btn_add_folder.setToolTip("Add Team Build from Folder")
+        self.btn_add_folder.setStyleSheet("font-weight: bold; font-size: 14px; color: #00AAFF;")
+        self.btn_add_folder.clicked.connect(self.select_folder_for_team)
+        filter_layout.addWidget(self.btn_add_folder)
+        
         main_layout.addLayout(filter_layout)
 
         # --- 1b. Export Controls ---
@@ -1323,15 +2298,31 @@ class MainWindow(QMainWindow):
         self.scroll_area = QScrollArea()
         self.scroll_area.setWidgetResizable(True)
         self.skill_grid_widget = QWidget()
-        self.skill_grid_layout = QGridLayout(self.skill_grid_widget)
-        self.skill_grid_layout.setHorizontalSpacing(20) 
-        self.skill_grid_layout.setVerticalSpacing(10)
-        self.skill_grid_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+        self.skill_grid_layout = FlowLayout(self.skill_grid_widget, margin=10, spacing=10)
         self.scroll_area.setWidget(self.skill_grid_widget)
         
         self.splitter.addWidget(self.scroll_area)
         self.info_panel = SkillInfoPanel()
         self.splitter.addWidget(self.info_panel)
+        
+        # Attribute Editor (Phase 2 & UI Polish)
+        self.attr_editor = AttributeEditor()
+        self.attr_editor.setMinimumWidth(100)
+        self.attr_editor.attributes_changed.connect(self.on_attributes_changed)
+        self.splitter.addWidget(self.attr_editor)
+        
+        # Set resize mode for splitter to make center/right panels stick but resizable
+        # Index 0: Scroll Area (Stretch)
+        # Index 1: Info Panel
+        # Index 2: Attribute Editor
+        self.splitter.setStretchFactor(0, 1)
+        self.splitter.setStretchFactor(1, 0)
+        self.splitter.setStretchFactor(2, 0)
+        
+        # Set initial sizes: [Flexible, Info: 255, Attr: 145]
+        # (Increased by 10% from previous 231/132)
+        self.splitter.setSizes([800, 255, 145])
+        
         main_layout.addWidget(self.splitter, stretch=1)
 
         # --- 3. Build Bar (Updated Layout) ---
@@ -1346,25 +2337,33 @@ class MainWindow(QMainWindow):
         cycle_layout.setContentsMargins(0, 5, 0, 5)
         cycle_layout.setSpacing(5)
 
-        self.btn_cycle = QPushButton("Cycle\nSuggestions")
-        self.btn_cycle.setFixedSize(90, 50)
-        self.btn_cycle.setStyleSheet("""
-            QPushButton { background-color: #444; color: white; border-radius: 4px; font-weight: bold; }
+        self.btn_select_zone = QPushButton("Select Zone")
+        self.btn_select_zone.setFixedSize(90, 50)
+        self.btn_select_zone.setStyleSheet("""
+            QPushButton { background-color: #444; color: white; border-radius: 4px; font-weight: bold; font-size: 10px; }
             QPushButton:hover { background-color: #555; }
-            QPushButton:pressed { background-color: #666; }
         """)
-        self.btn_cycle.clicked.connect(self.cycle_suggestions)
-        cycle_layout.addWidget(self.btn_cycle)
+        self.btn_select_zone.clicked.connect(self.open_location_manager)
+        cycle_layout.addWidget(self.btn_select_zone)
 
-        self.check_debug = QCheckBox("Debug Mode")
-        self.check_debug.setStyleSheet("color: #FF5555; font-size: 10px; font-weight: bold;")
-        self.check_debug.setToolTip("Show rejected suggestions in tooltips.\nHover over ghost icons to see why they failed.")
-        self.check_debug.toggled.connect(self.update_suggestions)
-        cycle_layout.addWidget(self.check_debug, alignment=Qt.AlignmentFlag.AlignCenter)
+        self.btn_load_team_synergy = QPushButton("Load Teambuild\nto Bar")
+        self.btn_load_team_synergy.setFixedSize(90, 50)
+        self.btn_load_team_synergy.setStyleSheet("""
+            QPushButton { background-color: #224466; color: white; border-radius: 4px; font-weight: bold; font-size: 10px; }
+            QPushButton:hover { background-color: #335577; }
+        """)
+        self.btn_load_team_synergy.setVisible(False)
+        self.btn_load_team_synergy.clicked.connect(self.open_team_manager_for_synergy)
+        cycle_layout.addWidget(self.btn_load_team_synergy)
         
         container_layout.addWidget(cycle_container)
 
-        # --- Skill Slots ---
+        # --- Skill Bar Area (Vertical wrapper for Bar + Cycle Button) ---
+        bar_area_widget = QWidget()
+        bar_area_layout = QVBoxLayout(bar_area_widget)
+        bar_area_layout.setContentsMargins(0, 0, 0, 0)
+        bar_area_layout.setSpacing(5)
+
         bar_layout = QHBoxLayout()
         bar_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
         
@@ -1377,8 +2376,20 @@ class MainWindow(QMainWindow):
             bar_layout.addWidget(slot)
             self.slots.append(slot)
             
+        bar_area_layout.addLayout(bar_layout)
+
+        # Cycle button moved here (beneath the bar)
+        self.btn_cycle = QPushButton("Cycle Suggestions")
+        self.btn_cycle.setFixedSize(150, 24)
+        self.btn_cycle.setStyleSheet("""
+            QPushButton { background-color: #444; color: white; border-radius: 4px; font-size: 10px; }
+            QPushButton:hover { background-color: #555; }
+        """)
+        self.btn_cycle.clicked.connect(self.cycle_suggestions)
+        bar_area_layout.addWidget(self.btn_cycle, alignment=Qt.AlignmentFlag.AlignCenter)
+
         container_layout.addStretch(1)
-        container_layout.addLayout(bar_layout)
+        container_layout.addWidget(bar_area_widget)
         container_layout.addSpacing(20) 
         
         # --- Control Layout (Right Side) ---
@@ -1392,9 +2403,9 @@ class MainWindow(QMainWindow):
         self.check_lock_suggestions.toggled.connect(self.update_suggestions)
         control_layout.addWidget(self.check_lock_suggestions)
         
-        self.check_smart_mode = QCheckBox("Smart Mode\n(Physics)")
+        self.check_smart_mode = QCheckBox("Smart Mode\n(beta)")
         self.check_smart_mode.setStyleSheet("color: #FFD700; font-weight: bold;")
-        self.check_smart_mode.toggled.connect(self.update_suggestions)
+        self.check_smart_mode.toggled.connect(self.on_smart_mode_toggled)
         control_layout.addWidget(self.check_smart_mode)
 
         container_layout.addLayout(control_layout)
@@ -1425,7 +2436,7 @@ class MainWindow(QMainWindow):
         self.edit_code.setPlaceholderText("Paste build code here...")
         self.edit_code.setStyleSheet("background-color: #222; color: #00AAFF; font-weight: bold;")
         code_layout.addWidget(self.edit_code)
-        
+
         btn_layout = QHBoxLayout()
         self.btn_load = QPushButton("Load")
         self.btn_load.clicked.connect(self.load_code)
@@ -1435,11 +2446,6 @@ class MainWindow(QMainWindow):
         self.btn_copy.clicked.connect(self.copy_code)
         btn_layout.addWidget(self.btn_copy)
         
-        self.btn_import = QPushButton("Import to DB")
-        self.btn_import.setStyleSheet("background-color: #225522;")
-        self.btn_import.clicked.connect(self.import_build_to_db)
-        btn_layout.addWidget(self.btn_import)
-        
         self.btn_reset = QPushButton("Reset")
         self.btn_reset.setStyleSheet("background-color: #552222;")
         self.btn_reset.clicked.connect(self.reset_build)
@@ -1448,6 +2454,76 @@ class MainWindow(QMainWindow):
         code_layout.addLayout(btn_layout)
         container_layout.addWidget(code_box)
         main_layout.addWidget(bar_container)
+
+    def on_smart_mode_toggled(self, checked):
+        if hasattr(self, 'btn_load_team_synergy'):
+            self.btn_load_team_synergy.setVisible(checked)
+        # Clear team synergy context if turning off smart mode? 
+        # User might want it to persist, but for now we keep it.
+        self.update_suggestions()
+
+    def open_team_manager_for_synergy(self):
+        # We'll use a modified TeamManagerDialog logic or just a specialized call
+        dlg = TeamManagerDialog(self, self.engine)
+        # Change button text to indicate synergy mode
+        dlg.btn_load.setText("Load Team context")
+        dlg.btn_load.setToolTip("Load all skills from this team to use as synergy context")
+        
+        # Override the load_team method for this instance
+        original_load = dlg.load_team
+        def synergy_load():
+            item = dlg.list_widget.currentItem()
+            if not item: return
+            team_name = item.text()
+            self.load_team_for_synergy(team_name)
+            dlg.accept()
+            
+        dlg.load_team = synergy_load
+        dlg.exec()
+
+    def open_location_manager(self):
+        dlg = LocationManagerDialog(self, DB_FILE)
+        if dlg.exec():
+            selected_zone = dlg.get_selected_location()
+            if selected_zone:
+                print(f"Selected Zone: {selected_zone}")
+                # Logic for zone-based builds/enemies can be added here later
+
+    def load_team_for_synergy(self, team_name):
+        self.team_synergy_skills = []
+        builds = [b for b in self.engine.builds if b.team == team_name]
+        
+        all_ids = set()
+        for b in builds:
+            for sid in b.skill_ids:
+                if sid != 0:
+                    all_ids.add(sid)
+        
+        self.team_synergy_skills = list(all_ids)
+        print(f"Loaded {len(self.team_synergy_skills)} skills from team '{team_name}' for synergy context.")
+        self.update_suggestions()
+
+    def open_team_manager(self):
+        dlg = TeamManagerDialog(self, self.engine)
+        dlg.exec()
+        # Refresh team dropdown after dialog closes
+        current_team = self.combo_team.currentText()
+        self.combo_team.blockSignals(True)
+        self.combo_team.clear()
+        self.combo_team.addItem("All")
+        
+        all_teams = self.engine.teams
+        if "Solo" in all_teams:
+            self.combo_team.addItem("Solo")
+            others = sorted([t for t in all_teams if t != "Solo"])
+        else:
+            others = sorted(list(all_teams))
+        self.combo_team.addItems(others)
+        
+        idx = self.combo_team.findText(current_team)
+        if idx != -1: self.combo_team.setCurrentIndex(idx)
+        else: self.combo_team.setCurrentIndex(0)
+        self.combo_team.blockSignals(False)
 
     def on_pvp_toggled(self, checked):
         # Update both engines and refresh
@@ -1661,7 +2737,15 @@ class MainWindow(QMainWindow):
             self.check_elites_only.blockSignals(False)
         self.apply_filters()
 
+    def handle_skill_clicked(self, skill: Skill):
+        self.current_selected_skill_id = skill.id
+        dist = self.attr_editor.get_distribution()
+        rank = dist.get(skill.attribute, 0)
+        self.info_panel.update_info(skill, rank=rank)
+
     def apply_filters(self):
+        if not hasattr(self, 'skill_grid_layout'): return
+
         prof_str = self.combo_prof.currentText()
         if prof_str == "All": prof = "All"
         else: prof = prof_str.split(' ')[0]
@@ -1684,14 +2768,11 @@ class MainWindow(QMainWindow):
                     unique_builds.append(b)
                     seen_codes.add(b.code)
             
-            row = 0
-            cols_wide = 8
             for b in unique_builds:
                 widget = BuildPreviewWidget(b, self.repo, is_pvp=self.check_pvp.isChecked())
                 widget.clicked.connect(lambda code=b.code: self.load_code(code_str=code))
-                widget.skill_clicked.connect(self.info_panel.update_info)
-                self.skill_grid_layout.addWidget(widget, row, 0, 1, cols_wide) 
-                row += 1
+                widget.skill_clicked.connect(self.handle_skill_clicked)
+                self.skill_grid_layout.addWidget(widget)
             return
 
         search_text = self.edit_search.text().lower()
@@ -1726,27 +2807,23 @@ class MainWindow(QMainWindow):
                     
                 filtered_skills.append(skill)
 
-        if len(filtered_skills) > 500:
-             filtered_skills = filtered_skills[:500]
+        if len(filtered_skills) > 100:
+             filtered_skills = filtered_skills[:100]
 
-        row, col = 0, 0
-        cols_wide = 8 
-        
         for skill in sorted(filtered_skills, key=lambda x: x.name):
             icon = DraggableSkillIcon(skill)
-            icon.clicked.connect(self.info_panel.update_info)
+            icon.clicked.connect(self.handle_skill_clicked)
             icon.double_clicked.connect(self.handle_skill_double_clicked)
-            self.skill_grid_layout.addWidget(icon, row, col)
-            col += 1
-            if col >= cols_wide:
-                col = 0
-                row += 1
+            self.skill_grid_layout.addWidget(icon)
 
     def handle_skill_id_clicked(self, skill_id):
+        self.current_selected_skill_id = skill_id
         is_pvp = self.check_pvp.isChecked()
         skill = self.repo.get_skill(skill_id, is_pvp=is_pvp)
         if skill:
-            self.info_panel.update_info(skill)
+            dist = self.attr_editor.get_distribution()
+            rank = dist.get(skill.attribute, 0)
+            self.info_panel.update_info(skill, rank=rank)
 
     def handle_skill_equipped(self, index, skill_id):
         self.bar_skills[index] = skill_id
@@ -1754,7 +2831,11 @@ class MainWindow(QMainWindow):
         
         is_pvp = self.check_pvp.isChecked()
         skill_obj = self.repo.get_skill(skill_id, is_pvp=is_pvp)
-        self.slots[index].set_skill(skill_id, skill_obj, ghost=False)
+        
+        dist = self.attr_editor.get_distribution()
+        rank = dist.get(skill_obj.attribute, 0) if skill_obj else 0
+        
+        self.slots[index].set_skill(skill_id, skill_obj, ghost=False, rank=rank)
         
         self.update_suggestions()
 
@@ -1765,10 +2846,12 @@ class MainWindow(QMainWindow):
         
     def refresh_equipped_skills(self):
         is_pvp = self.check_pvp.isChecked()
+        dist = self.attr_editor.get_distribution()
         for i, sid in enumerate(self.bar_skills):
             if sid is not None:
                 skill_obj = self.repo.get_skill(sid, is_pvp=is_pvp)
-                self.slots[i].set_skill(sid, skill_obj, ghost=False)
+                rank = dist.get(skill_obj.attribute, 0) if skill_obj else 0
+                self.slots[i].set_skill(sid, skill_obj, ghost=False, rank=rank)
         self.update_suggestions()
 
     def cycle_suggestions(self):
@@ -1808,6 +2891,13 @@ class MainWindow(QMainWindow):
                 allowed_profs.update(profs_in_bar)
                 allowed_profs.add(0)
 
+        # Prepare team spirit set for fast lookup
+        team_spirit_ids = set()
+        if hasattr(self, 'check_smart_mode') and self.check_smart_mode.isChecked():
+            # Find which IDs in team synergy context are spirits
+            # We can do this once per batch or just check in the loop
+            pass
+
         for sid, conf in suggestions:
             skill = self.repo.get_skill(sid, is_pvp=is_pvp)
             if not skill: continue
@@ -1818,6 +2908,20 @@ class MainWindow(QMainWindow):
                 if skill.profession not in allowed_profs:
                     continue
             
+            # --- SPIRIT REDUNDANCY EXCEPTION ---
+            # If in Smart Mode with a team context, don't suggest spirits already in that context
+            if hasattr(self, 'check_smart_mode') and self.check_smart_mode.isChecked():
+                if sid in self.team_synergy_skills:
+                    # Check if it's a spirit
+                    # We can use the tag map logic or just check the description
+                    # Since we standardized tags, let's query the DB for this skill's tags if not already cached
+                    # Or simpler: check if "Type_Spirit" is in its stats (if we had tags in Skill class)
+                    # We'll do a quick check against the skill_tags table
+                    cursor = self.repo.conn.cursor()
+                    cursor.execute("SELECT 1 FROM skill_tags WHERE skill_id=? AND tag='Type_Spirit'", (sid,))
+                    if cursor.fetchone():
+                        continue # Skip duplicate spirit
+
             self.current_suggestions.append((sid, conf))
 
         self.suggestion_offset = 0
@@ -1834,6 +2938,14 @@ class MainWindow(QMainWindow):
             
         active_ids = [sid for sid in self.bar_skills if sid is not None]
         
+        if hasattr(self, 'check_smart_mode') and self.check_smart_mode.isChecked():
+            # In Smart Mode, include the loaded team context if available
+            # Filter duplicates between bar and team
+            bar_set = set(active_ids)
+            for sid in self.team_synergy_skills:
+                if sid not in bar_set:
+                    active_ids.append(sid)
+
         # Get Profession ID
         prof_text = self.combo_prof.currentText()
         try:
@@ -1841,10 +2953,7 @@ class MainWindow(QMainWindow):
         except:
             pid = 0
 
-        # Check Debug
         is_debug = False
-        if hasattr(self, 'check_debug'):
-            is_debug = self.check_debug.isChecked()
 
         if hasattr(self, 'check_smart_mode') and self.check_smart_mode.isChecked():
             mode = "smart"
@@ -1880,6 +2989,7 @@ class MainWindow(QMainWindow):
                     break
         
         s_idx = 0
+        dist = self.attr_editor.get_distribution()
         for slot_idx in empty_indices:
             slot = self.slots[slot_idx]
             
@@ -1887,13 +2997,40 @@ class MainWindow(QMainWindow):
                 # Fill slot with suggestion
                 s_id, conf = display_list[s_idx]
                 skill_obj = self.repo.get_skill(s_id, is_pvp=is_pvp)
-                slot.set_skill(s_id, skill_obj, ghost=True, confidence=conf)
+                rank = dist.get(skill_obj.attribute, 0) if skill_obj else 0
+                slot.set_skill(s_id, skill_obj, ghost=True, confidence=conf, rank=rank)
                 s_idx += 1
             else:
                 # Ran out of suggestions? Clear the slot.
                 slot.clear_slot(silent=True)
                 
         self.update_build_code()
+
+    def on_attributes_changed(self, distribution):
+        self.update_build_code()
+        # Phase 3: Refresh skill tooltips/displays
+        self.refresh_skill_displays()
+
+    def refresh_skill_displays(self):
+        is_pvp = self.check_pvp.isChecked()
+        dist = self.attr_editor.get_distribution()
+        
+        # Refresh equipped skills
+        for i, sid in enumerate(self.bar_skills):
+            if sid is not None:
+                skill_obj = self.repo.get_skill(sid, is_pvp=is_pvp)
+                rank = dist.get(skill_obj.attribute, 0) if skill_obj else 0
+                self.slots[i].set_skill(sid, skill_obj, ghost=False, rank=rank)
+                
+        # Refresh info panel
+        if self.current_selected_skill_id is not None:
+            skill_obj = self.repo.get_skill(self.current_selected_skill_id, is_pvp=is_pvp)
+            if skill_obj:
+                rank = dist.get(skill_obj.attribute, 0)
+                self.info_panel.update_info(skill_obj, rank=rank)
+
+        # Refresh suggestions (this will call display_suggestions)
+        self.display_suggestions()
 
     def swap_professions(self):
         self.is_swapped = not self.is_swapped
@@ -1937,14 +3074,29 @@ class MainWindow(QMainWindow):
         p2_str = PROF_SHORT_MAP.get(p2_name, "X")
         
         self.lbl_prof_display.setText(f"{p1_str}/{p2_str}")
+        
+        # Collect active skill objects for PvE attribute detection
+        active_skill_objs = []
+        for sid in active_bar:
+            if sid != 0:
+                s = self.repo.get_skill(sid)
+                if s: active_skill_objs.append(s)
 
+        # Update Attribute Editor professions
+        # We also pass active_skill_objs now so it can detect PvE attributes
+        # We force update if the skill bar content implies different attributes
+        # (The simple check _last_profs != ... is insufficient for dynamic PvE attributes)
+        
+        # Simplified change detection: just call it. Optimization can happen if needed.
+        self.attr_editor.set_professions(primary_id, secondary_id, active_skill_objs)
+        self._last_profs = (primary_id, secondary_id)
+
+        # Get actual ranks from editor for the build code
+        dist = self.attr_editor.get_distribution()
         attributes = []
-        if primary_id in PROF_PRIMARY_ATTR:
-            attributes.append([PROF_PRIMARY_ATTR[primary_id], 11])
-        if secondary_id in PROF_PRIMARY_ATTR:
-            attr_id = PROF_PRIMARY_ATTR[secondary_id]
-            if not any(a[0] == attr_id for a in attributes):
-                attributes.append([attr_id, 11])
+        for aid, rank in dist.items():
+            if rank > 0:
+                attributes.append([aid, rank])
 
         data = {
             "header": {"type": 14, "version": 0},
@@ -1958,6 +3110,102 @@ class MainWindow(QMainWindow):
             self.edit_code.setText(live_code)
         except:
             pass
+
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasUrls():
+            urls = event.mimeData().urls()
+            if len(urls) == 1:
+                path = urls[0].toLocalFile()
+                if os.path.isdir(path):
+                    event.accept()
+                    return
+        event.ignore()
+
+    def dropEvent(self, event):
+        urls = event.mimeData().urls()
+        if urls:
+            folder_path = urls[0].toLocalFile()
+            self.process_folder_drop(folder_path)
+
+    def select_folder_for_team(self):
+        folder_path = QFileDialog.getExistingDirectory(self, "Select Team Build Folder")
+        if folder_path:
+            self.process_folder_drop(folder_path)
+
+    def process_folder_drop(self, folder_path):
+        team_name = os.path.basename(folder_path)
+        if not team_name: return
+        
+        added_count = 0
+        
+        # Iterate files
+        for filename in os.listdir(folder_path):
+            if filename.lower().endswith(".txt"):
+                file_path = os.path.join(folder_path, filename)
+                try:
+                    with open(file_path, 'r') as f:
+                        code = f.read().strip()
+                        
+                    # Validate Code
+                    decoder = GuildWarsTemplateDecoder(code)
+                    decoded = decoder.decode()
+                    if decoded:
+                        entry = {
+                            "build_code": code,
+                            "primary_profession": str(decoded['profession']['primary']),
+                            "secondary_profession": str(decoded['profession']['secondary']),
+                            "skill_ids": decoded['skills'],
+                            "category": "User Imported",
+                            "team": team_name
+                        }
+                        
+                        # Add to Engine
+                        # Check duplicates?
+                        exists = False
+                        for b in self.engine.builds:
+                            if b.code == code and b.team == team_name:
+                                exists = True
+                                break
+                        
+                        if not exists:
+                            self.engine.builds.append(Build(
+                                code=entry['build_code'],
+                                primary_prof=entry['primary_profession'],
+                                secondary_prof=entry['secondary_profession'],
+                                skill_ids=entry['skill_ids'],
+                                category=entry['category'],
+                                team=entry['team']
+                            ))
+                            
+                            # Persist
+                            # Access the dialog helper? No, just replicate save logic or make helper static.
+                            # I'll just append to JSON here manually or use a helper if available.
+                            # Ideally I should have a shared DataManager.
+                            # For now, I'll inline the save.
+                            if os.path.exists(JSON_FILE):
+                                with open(JSON_FILE, 'r', encoding='utf-8') as f:
+                                    data = json.load(f)
+                            else:
+                                data = []
+                            
+                            data.append(entry)
+                            with open(JSON_FILE, 'w', encoding='utf-8') as f:
+                                json.dump(data, f, indent=4)
+                                
+                            added_count += 1
+                            
+                except Exception as e:
+                    print(f"Error processing {filename}: {e}")
+
+        if added_count > 0:
+            self.engine.teams.add(team_name)
+            self.update_team_dropdown()
+            # Select the new team
+            idx = self.combo_team.findText(team_name)
+            if idx != -1: self.combo_team.setCurrentIndex(idx)
+            QMessageBox.information(self, "Team Added", f"Added {added_count} builds to team '{team_name}'.")
+        else:
+            QMessageBox.warning(self, "No Builds Found", "Could not find valid build codes in the selected folder.")
 
     def closeEvent(self, event):
         if hasattr(self, 'worker') and self.worker.isRunning():

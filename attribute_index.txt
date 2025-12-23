@@ -1,8 +1,17 @@
+-9 - Norn Title Track
+-8 - Ebon Vanguard Title Track 
+-7 - Dwarven Title Track 
+-6 - Asuran Title Track 
+-5 - Kurzick Title Track
+-4 - Luxon Title Track
+-3 - Lightbringer Title Track
+-2 - Sunspear Title Track
+-1 - No Attribute
 0 - Fast Casting
 1 - Illusion Magic
 2 - Domination Magic
 3 - Inspiration Magic
-4- Blood Magic
+4 - Blood Magic
 5 - Death Magic
 6 - Soul Reaping
 7 - Curses
