@@ -19,10 +19,6 @@ The heart of the application is a custom-built engine that treats character buil
 *   **Law of Disruption**: Pairs Interrupt-reliant bonuses with reliable shutdown skills.
 *   **Target Awareness**: Suggestions respect Ally vs. Foe targeting to prevent logical mismatches.
 
-### Dynamic Variable Substitution
-Never guess your skill effectiveness again. The builder features a live description parser:
-*   **Real-time Updates**: Skill damage, duration, and numeric effects update immediately as you adjust attribute points.
-
 ### Advanced Attribute Editor
 *   **Point Distribution**: Full control over 200 attribute points using the authentic Guild Wars cost curve (Rank 12 costs 97 points).
 *   **PvE Title Tracks**: Integrated support for PvE ranks (0-10) for Sunspear, Lightbringer, Norn, Vanguard, Asuran, Dwarven, and Deldrimor tracks.
@@ -36,11 +32,12 @@ Never guess your skill effectiveness again. The builder features a live descript
 
 ### Interactive Tools
 *   **Location Manager**: Tabbed interface to browse and select specific Explorable Zones and Missions. When an area is selected, the Bookah will suggest skills based on the skills used by the enemies in the area.
+*   **Counter Build**: Use PvX wiki data and Smart Logic to suggest a build to specifically counter the provided build code. 
 *   **Synergy Map**: Integrated web visualization tool to explore the complex web of skill relationships.
 
 ## Getting Started
 Still in development. Run the application using Python 3.10:
 ```bash
 pip install -r requirements.txt
-python gwsynergy.py
+python bookah.py
 ```

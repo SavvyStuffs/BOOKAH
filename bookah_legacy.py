@@ -14,10 +14,12 @@ from PyQt6.QtWidgets import (
     QHBoxLayout, QComboBox, QLabel, QScrollArea, 
     QFrame, QGridLayout, QLineEdit, QSplitter, 
     QTabWidget, QCheckBox, QPushButton, QSizePolicy,
-    QFileDialog, QMessageBox, QLayout, QStyle, QDialog, QListWidget, QInputDialog
+    QFileDialog, QMessageBox, QLayout, QStyle, QDialog, 
+    QListWidget, QInputDialog, QStyledItemDelegate, QListWidgetItem 
+
 )
-from PyQt6.QtCore import Qt, QMimeData, QSize, pyqtSignal, QPoint, QUrl, QRect
-from PyQt6.QtGui import QDrag, QPixmap, QPainter, QColor, QFont, QAction
+from PyQt6.QtCore import Qt, QMimeData, QSize, pyqtSignal, QPoint, QUrl, QRect, QTimer
+from PyQt6.QtGui import QDrag, QPixmap, QPainter, QColor, QFont, QAction, QIcon
 
 # Attempt to import WebEngine for the Map Tab
 try:
@@ -25,85 +27,6 @@ try:
     HAS_WEBENGINE = True
 except ImportError:
     HAS_WEBENGINE = False
-
-class FlowLayout(QLayout):
-    def __init__(self, parent=None, margin=0, spacing=-1):
-        super().__init__(parent)
-        if parent is not None:
-            self.setContentsMargins(margin, margin, margin, margin)
-        self.setSpacing(spacing)
-        self.itemList = []
-
-    def __del__(self):
-        item = self.takeAt(0)
-        while item:
-            item = self.takeAt(0)
-
-    def addItem(self, item):
-        self.itemList.append(item)
-
-    def count(self):
-        return len(self.itemList)
-
-    def itemAt(self, index):
-        if index >= 0 and index < len(self.itemList):
-            return self.itemList[index]
-        return None
-
-    def takeAt(self, index):
-        if index >= 0 and index < len(self.itemList):
-            return self.itemList.pop(index)
-        return None
-
-    def expandingDirections(self):
-        return Qt.Orientation(0)
-
-    def hasHeightForWidth(self):
-        return True
-
-    def heightForWidth(self, width):
-        height = self._doLayout(QRect(0, 0, width, 0), True)
-        return height
-
-    def setGeometry(self, rect):
-        super().setGeometry(rect)
-        self._doLayout(rect, False)
-
-    def sizeHint(self):
-        return self.minimumSize()
-
-    def minimumSize(self):
-        size = QSize()
-        for item in self.itemList:
-            size = size.expandedTo(item.minimumSize())
-        size += QSize(2 * self.contentsMargins().top(), 2 * self.contentsMargins().top())
-        return size
-
-    def _doLayout(self, rect, testOnly):
-        x = rect.x()
-        y = rect.y()
-        lineHeight = 0
-        spacing = self.spacing()
-
-        for item in self.itemList:
-            wid = item.widget()
-            spaceX = spacing + wid.style().layoutSpacing(QSizePolicy.ControlType.PushButton, QSizePolicy.ControlType.PushButton, Qt.Orientation.Horizontal)
-            spaceY = spacing + wid.style().layoutSpacing(QSizePolicy.ControlType.PushButton, QSizePolicy.ControlType.PushButton, Qt.Orientation.Vertical)
-            
-            nextX = x + item.sizeHint().width() + spaceX
-            if nextX - spaceX > rect.right() and lineHeight > 0:
-                x = rect.x()
-                y = y + lineHeight + spaceY
-                nextX = x + item.sizeHint().width() + spaceX
-                lineHeight = 0
-
-            if not testOnly:
-                item.setGeometry(QRect(QPoint(x, y), item.sizeHint()))
-
-            x = nextX
-            lineHeight = max(lineHeight, item.sizeHint().height())
-
-        return y + lineHeight - rect.y()
 
 class ClickableLabel(QLabel):
     clicked = pyqtSignal()
@@ -125,6 +48,13 @@ class TeamManagerDialog(QDialog):
         header = QHBoxLayout()
         header.addWidget(QLabel("<b>Teams:</b>"))
         header.addStretch()
+
+        self.btn_export = QPushButton("Export")
+        self.btn_export.setFixedSize(60, 24)
+        self.btn_export.setToolTip("Export Selected Team Builds")
+        self.btn_export.clicked.connect(self.export_team)
+        header.addWidget(self.btn_export)
+
         self.btn_add_folder = QPushButton("+")
         self.btn_add_folder.setFixedSize(24, 24)
         self.btn_add_folder.setToolTip("Import Team from Folder")
@@ -153,7 +83,7 @@ class TeamManagerDialog(QDialog):
         self.btn_edit.clicked.connect(self.edit_team)
         btn_layout.addWidget(self.btn_edit)
         
-        self.btn_load = QPushButton("Load Team")
+        self.btn_load = QPushButton("Open Team")
         self.btn_load.clicked.connect(self.load_team)
         btn_layout.addWidget(self.btn_load)
         
@@ -171,6 +101,18 @@ class TeamManagerDialog(QDialog):
         filtered_teams = [t for t in teams if search_text in t.lower()]
         self.list_widget.addItems(filtered_teams)
         
+    def export_team(self):
+        item = self.list_widget.currentItem()
+        if not item:
+            QMessageBox.warning(self, "Export", "Please select a team to export.")
+            return
+        team_name = item.text()
+        # Set the combo box in parent so export_team_builds knows what to export
+        idx = self.parent_window.combo_team.findText(team_name)
+        if idx != -1:
+            self.parent_window.combo_team.setCurrentIndex(idx)
+            self.parent_window.export_team_builds()
+
     def add_from_folder(self):
         # Open directory dialog
         folder_path = QFileDialog.getExistingDirectory(self, "Select Team Build Folder")
@@ -465,6 +407,7 @@ DB_FILE = resource_path('master.db')
 JSON_FILE = resource_path('all_skills.json')
 ICON_DIR = resource_path('icons/skill_icons')
 ICON_SIZE = 64
+PIXMAP_CACHE = {}
 
 PROF_MAP = {
     0: "No Profession", 1: "Warrior", 2: "Ranger", 3: "Monk", 4: "Necromancer",
@@ -523,6 +466,7 @@ class Skill:
     combo_req: int = 0       # 0=None, 1=Lead, 2=Offhand, 3=Dual (Assassin)
     is_touch: bool = False   # Requires melee range
     campaign: int = 0        # 0=Core, 1=Prophecies, etc.
+    in_pre: bool = False     # Available in Pre-Searing
     stats: List = field(default_factory=list)
     original_description: str = ""
 
@@ -1388,7 +1332,7 @@ class SkillRepository:
             SELECT skill_id, name, profession, attribute, 
                    energy_cost, activation, recharge, adrenaline, is_pve_only,
                    description, is_elite,
-                   health_cost, aftercast, combo_req, is_touch, campaign
+                   health_cost, aftercast, combo_req, is_touch, campaign, in_pre
             FROM {target_table}
             WHERE skill_id=?
         """
@@ -1427,25 +1371,24 @@ class SkillRepository:
         pvp_row = self.cursor.fetchone()
         
         if not pvp_row:
-            return self.get_skill(skill_id, is_pvp=False) # Total fallback if missing in PvP
-
-        # B. Get Physics Data from PvE Table
-        query_physics = """
-            SELECT health_cost, aftercast, combo_req, is_touch, campaign
+            return None
+            
+        # B. Get Missing Physics Data from Main Skills Table
+        query_phys = """
+            SELECT health_cost, aftercast, combo_req, is_touch, campaign, in_pre
             FROM skills
             WHERE skill_id=?
         """
-        self.cursor.execute(query_physics, (skill_id,))
-        pve_row = self.cursor.fetchone()
+        self.cursor.execute(query_phys, (skill_id,))
+        phys_row = self.cursor.fetchone()
         
-        # Defaults if PvE is also missing (unlikely)
-        phys_data = pve_row if pve_row else (0, 0.75, 0, 0, 0)
+        # Fallback if somehow main table is missing it too
+        phys_data = phys_row if phys_row else (0, 0.75, 0, 0, 0, 0)
         
-        # C. Stitch it together
-        # pvp_row has indices 0-10. phys_data has 0-4.
-        # We construct a "fake" full row to pass to the object creator.
+        # pvp_row has indices 0-10. phys_data has 0-5.
+        # Combined we get 17 columns: 
+        # 0-10 from pvp_row, 11-16 from phys_data
         merged_row = list(pvp_row) + list(phys_data)
-        
         return self._create_skill_object(merged_row, True, cache_key)
 
     def _create_skill_object(self, row, is_pvp, cache_key):
@@ -1467,7 +1410,8 @@ class SkillRepository:
             aftercast=float(row[12] or 0.75), 
             combo_req=int(row[13] or 0),
             is_touch=bool(row[14]),
-            campaign=int(row[15] or 0)
+            campaign=int(row[15] or 0),
+            in_pre=bool(row[16])
         )
         
         # Load stats if available (Phase 1)
@@ -1491,6 +1435,14 @@ class SkillRepository:
             if s:
                 skills.append(s)
         return skills
+
+    def get_all_skill_ids(self, is_pvp: bool = False) -> List[int]:
+        target_table = "skills_pvp" if is_pvp else "skills"
+        try:
+            self.cursor.execute(f"SELECT skill_id FROM {target_table}")
+            return [row[0] for row in self.cursor.fetchall()]
+        except:
+            return []
 
 class AttributeEditor(QFrame):
     """
@@ -1743,76 +1695,6 @@ class SynergyEngine:
 # =============================================================================
 # GUI COMPONENTS
 # =============================================================================
-
-class DraggableSkillIcon(QFrame):
-    clicked = pyqtSignal(Skill)
-    double_clicked = pyqtSignal(Skill)
-
-    def __init__(self, skill: Skill, parent=None):
-        super().__init__(parent)
-        self.skill = skill
-        self.setFixedSize(ICON_SIZE + 10, ICON_SIZE + 60)
-        self.setCursor(Qt.CursorShape.OpenHandCursor)
-        self.setStyleSheet("""
-            QFrame {
-                border: 1px solid #444; 
-                background-color: #222; 
-                border-radius: 4px;
-            }
-            QFrame:hover {
-                border: 1px solid #666;
-                background-color: #333;
-            }
-        """)
-        
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(4, 4, 4, 4)
-        layout.setSpacing(4)
-        
-        self.icon_lbl = QLabel()
-        self.icon_lbl.setFixedSize(ICON_SIZE, ICON_SIZE)
-        self.icon_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.icon_lbl.setStyleSheet("border: none; background: transparent;")
-        layout.addWidget(self.icon_lbl, alignment=Qt.AlignmentFlag.AlignCenter)
-        
-        self.name_lbl = QLabel(skill.name)
-        self.name_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.name_lbl.setWordWrap(True)
-        self.name_lbl.setStyleSheet("border: none; background: transparent; color: #EEE; font-size: 10px;")
-        layout.addWidget(self.name_lbl)
-        
-        self.load_icon()
-
-    def load_icon(self):
-        path = os.path.join(ICON_DIR, self.skill.icon_filename)
-        if os.path.exists(path):
-            pix = QPixmap(path)
-            self.icon_lbl.setPixmap(pix.scaled(ICON_SIZE, ICON_SIZE, Qt.AspectRatioMode.KeepAspectRatio))
-        else:
-            pix = QPixmap(ICON_SIZE, ICON_SIZE)
-            pix.fill(QColor("#333"))
-            painter = QPainter(pix)
-            painter.setPen(Qt.GlobalColor.white)
-            font = QFont("Arial", 8)
-            painter.setFont(font)
-            painter.drawText(pix.rect(), Qt.AlignmentFlag.AlignCenter | Qt.TextFlag.TextWordWrap, self.skill.name)
-            painter.end()
-            self.icon_lbl.setPixmap(pix)
-
-    def mousePressEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton:
-            self.clicked.emit(self.skill)
-            drag = QDrag(self)
-            mime_data = QMimeData()
-            mime_data.setText(str(self.skill.id))
-            drag.setMimeData(mime_data)
-            drag.setPixmap(self.icon_lbl.pixmap()) 
-            drag.setHotSpot(event.position().toPoint())
-            drag.exec(Qt.DropAction.CopyAction)
-
-    def mouseDoubleClickEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton:
-            self.double_clicked.emit(self.skill)
 
 class SkillSlot(QFrame):
     skill_equipped = pyqtSignal(int, int) 
@@ -2076,6 +1958,99 @@ class BuildPreviewWidget(QFrame):
         btn_load.clicked.connect(lambda: self.clicked.emit(self.build.code))
         layout.addWidget(btn_load)
 
+class FilterWorker(QThread):
+    finished = pyqtSignal(list)
+
+    def __init__(self, db_path, engine, filters):
+        super().__init__()
+        self.db_path = db_path
+        self.engine = engine
+        self.filters = filters
+
+    def run(self):
+        try:
+            # SQLite connections cannot be shared across threads.
+            local_repo = SkillRepository(self.db_path)
+            
+            prof = self.filters['prof']
+            cat = self.filters['cat']
+            team = self.filters['team']
+            search_text = self.filters['search_text']
+            # Ensure is_pvp is strictly a boolean
+            is_pvp = bool(self.filters['is_pvp'])
+            is_pve_only = bool(self.filters['is_pve_only'])
+            is_elites_only = self.filters['is_elites_only']
+            is_no_elites = self.filters['is_no_elites']
+            is_pre_only = self.filters['is_pre_only']
+
+            # 1. Get initial list of IDs based on team/category
+            if cat == "All" and team == "All":
+                valid_ids = local_repo.get_all_skill_ids(is_pvp=is_pvp)
+            else:
+                valid_ids = self.engine.filter_skills(prof, cat, team)
+            
+            filtered_skills = []
+            target_prof_id = -1
+            if prof != "All":
+                try:
+                    target_prof_id = int(prof)
+                except:
+                    pass
+
+            for sid in valid_ids:
+                if self.isInterruptionRequested():
+                    return
+                
+                # Fetch skill using the correct mode
+                skill = local_repo.get_skill(sid, is_pvp=is_pvp)
+                
+                if skill:
+                    # --- STRICT MODE CHECKS ---
+                    if is_pvp:
+                        # In PvP Mode: Hide PvE-Only skills
+                        if skill.is_pve_only:
+                            continue
+                    else:
+                        # In PvE Mode: Hide explicit PvP skills
+                        # (This catches skills named "Abc (PvP)" which often slip into the main table)
+                        if "(PvP)" in skill.name:
+                            continue
+
+                    # --- PvE ONLY ---
+                    if is_pve_only and not skill.is_pve_only:
+                        continue
+
+                    # --- SEARCH ---
+                    if search_text and search_text not in skill.name.lower():
+                        continue
+                        
+                    # --- ELITE FILTERS ---
+                    if is_elites_only and not skill.is_elite:
+                        continue
+                    if is_no_elites and skill.is_elite:
+                        continue
+                        
+                    # --- PRE-SEARING ---
+                    if is_pre_only and not skill.in_pre:
+                        continue
+                        
+                    # --- PROFESSION ---
+                    if target_prof_id != -1:
+                        if skill.profession != target_prof_id:
+                            continue
+                        
+                    filtered_skills.append(skill)
+
+            # Sort by attribute (ascending), then by name (ascending)
+            filtered_skills.sort(key=lambda x: (x.attribute, x.name))
+
+            self.finished.emit(filtered_skills)
+        except Exception as e:
+            print(f"FilterWorker Error: {e}")
+        finally:
+            if 'local_repo' in locals():
+                local_repo.conn.close()
+
 class SynergyWorker(QThread):
     results_ready = pyqtSignal(list)
 
@@ -2112,6 +2087,106 @@ class SynergyWorker(QThread):
         self.quit()
         self.wait()
 
+class SkillItemDelegate(QStyledItemDelegate):
+    """
+    Renders the skill items to look like the old DraggableSkillIcon 
+    (Card style with border), but using fast painting instead of Widgets.
+    """
+    def sizeHint(self, option, index):
+        # Matches your old DraggableSkillIcon size (ICON_SIZE + 10, ICON_SIZE + 60)
+        return QSize(ICON_SIZE + 10, ICON_SIZE + 60)
+
+    def paint(self, painter, option, index):
+        if not index.isValid(): return
+
+        painter.save()
+        
+        # Data Retrieval
+        skill_id = index.data(Qt.ItemDataRole.UserRole)
+        name = index.data(Qt.ItemDataRole.DisplayRole)
+        icon = index.data(Qt.ItemDataRole.DecorationRole)
+        
+        # Style Setup
+        rect = option.rect
+        rect.adjust(2, 2, -2, -2) # Margin
+        
+        # Background & Border
+        if option.state & QStyle.StateFlag.State_MouseOver:
+            painter.setBrush(QColor("#333"))
+            painter.setPen(QColor("#666"))
+        elif option.state & QStyle.StateFlag.State_Selected:
+            painter.setBrush(QColor("#2a2a2a"))
+            painter.setPen(QColor("#00AAFF"))
+        else:
+            painter.setBrush(QColor("#222"))
+            painter.setPen(QColor("#444"))
+            
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.drawRoundedRect(rect, 4, 4)
+        
+        # Icon
+        icon_rect = QRect(rect.center().x() - 32, rect.top() + 10, 64, 64)
+        if icon:
+            painter.drawPixmap(icon_rect, icon.pixmap(64, 64))
+        
+        # Text
+        text_rect = QRect(rect.left() + 2, rect.top() + 80, rect.width() - 4, 40)
+        painter.setPen(QColor("#EEE"))
+        painter.setFont(QFont("Arial", 8))
+        painter.drawText(text_rect, Qt.AlignmentFlag.AlignCenter | Qt.TextFlag.TextWordWrap, name)
+        
+        painter.restore()
+
+class SkillLibraryWidget(QListWidget):
+    """
+    High-performance replacement for the ScrollArea + FlowLayout.
+    """
+    skill_clicked = pyqtSignal(int)
+    skill_double_clicked = pyqtSignal(int)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setViewMode(QListWidget.ViewMode.IconMode)
+        self.setResizeMode(QListWidget.ResizeMode.Adjust)
+        self.setUniformItemSizes(True)
+        self.setDragEnabled(True)
+        self.setSelectionMode(QListWidget.SelectionMode.SingleSelection)
+        self.setSpacing(5)
+        self.setStyleSheet("QListWidget { background-color: #111; border: none; }")
+        
+        # Attach the custom painter
+        self.setItemDelegate(SkillItemDelegate(self))
+
+    def startDrag(self, supportedActions):
+        item = self.currentItem()
+        if not item: return
+        
+        skill_id = item.data(Qt.ItemDataRole.UserRole)
+        icon = item.icon()
+        
+        # Create standard drag object compatible with your existing SkillSlot
+        drag = QDrag(self)
+        mime_data = QMimeData()
+        mime_data.setText(str(skill_id))
+        drag.setMimeData(mime_data)
+        drag.setPixmap(icon.pixmap(64, 64))
+        drag.setHotSpot(QPoint(32, 32))
+        drag.exec(Qt.DropAction.CopyAction)
+
+    def mousePressEvent(self, event):
+        # Handle clicks normally, but emit signal for info panel
+        super().mousePressEvent(event)
+        item = self.itemAt(event.pos())
+        if item:
+            sid = item.data(Qt.ItemDataRole.UserRole)
+            self.skill_clicked.emit(sid)
+
+    def mouseDoubleClickEvent(self, event):
+        item = self.itemAt(event.pos())
+        if item:
+            sid = item.data(Qt.ItemDataRole.UserRole)
+            self.skill_double_clicked.emit(sid)
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -2127,12 +2202,18 @@ class MainWindow(QMainWindow):
         self.bar_skills = [None] * 8 
         self.suggestion_offset = 0
         self.current_suggestions = [] 
+        self.all_icon_widgets = []
+        self.skill_widgets = {} # {skill_id: DraggableSkillIcon}
         self.is_swapped = False 
         self.template_path = "" 
         self.current_selected_skill_id = None
         self.team_synergy_skills = [] # Skills from loaded team for Smart Mode
         
         self.setAcceptDrops(True) # Enable Drag & Drop
+        # Debounce timer for search/filter inputs
+        self.filter_debounce_timer = QTimer()
+        self.filter_debounce_timer.setSingleShot(True)
+        self.filter_debounce_timer.timeout.connect(self._run_filter)
         self.init_ui()
         self.apply_filters() 
 
@@ -2224,10 +2305,7 @@ class MainWindow(QMainWindow):
         
         filter_layout.addSpacing(20)
         
-        # Team Column
-        team_col_layout = QVBoxLayout()
-        team_row = QHBoxLayout()
-        team_row.addWidget(QLabel("Team:"))
+        filter_layout.addWidget(QLabel("Team:"))
         self.combo_team = QComboBox()
         self.combo_team.addItem("All")
         
@@ -2242,27 +2320,39 @@ class MainWindow(QMainWindow):
         
         self.combo_team.currentTextChanged.connect(self.apply_filters)
         self.combo_team.setCurrentIndex(0) # Default to "All" (No filter)
-        team_row.addWidget(self.combo_team)
-        team_col_layout.addLayout(team_row)
+        filter_layout.addWidget(self.combo_team)
         
         self.btn_manage_teams = QPushButton("Manage Teams")
         self.btn_manage_teams.clicked.connect(self.open_team_manager)
-        team_col_layout.addWidget(self.btn_manage_teams)
-        
-        filter_layout.addLayout(team_col_layout)
+        filter_layout.addWidget(self.btn_manage_teams)
         
         filter_layout.addSpacing(20)
-        self.check_pvp = QCheckBox("PvP?")
+        pvp_col = QVBoxLayout()
+        pvp_col.addSpacing(26)
+        self.check_pvp = QCheckBox("PvP")
         self.check_pvp.toggled.connect(self.on_pvp_toggled) # Updated handler
-        filter_layout.addWidget(self.check_pvp)
+        pvp_col.addWidget(self.check_pvp)
+
+        self.check_pve_only = QCheckBox("PvE Only")
+        self.check_pve_only.toggled.connect(self.apply_filters)
+        pvp_col.addWidget(self.check_pve_only)
+        filter_layout.addLayout(pvp_col)
 
         filter_layout.addSpacing(20)
+        self.check_pre = QCheckBox("Pre")
+        self.check_pre.toggled.connect(self.apply_filters)
+        filter_layout.addWidget(self.check_pre)
+
+        filter_layout.addSpacing(20)
+        elites_col = QVBoxLayout()
+        elites_col.addSpacing(26)
         self.check_elites_only = QCheckBox("Elites")
         self.check_no_elites = QCheckBox("No Elites")
         self.check_elites_only.toggled.connect(self.toggle_elites)
         self.check_no_elites.toggled.connect(self.toggle_no_elites)
-        filter_layout.addWidget(self.check_elites_only)
-        filter_layout.addWidget(self.check_no_elites)
+        elites_col.addWidget(self.check_elites_only)
+        elites_col.addWidget(self.check_no_elites)
+        filter_layout.addLayout(elites_col)
 
         filter_layout.addSpacing(20)
         filter_layout.addWidget(QLabel("Search:"))
@@ -2288,23 +2378,16 @@ class MainWindow(QMainWindow):
         
         export_layout.addStretch()
         
-        self.btn_export_team = QPushButton("Export Team Builds")
-        self.btn_export_team.clicked.connect(self.export_team_builds)
-        self.btn_export_team.setToolTip("Export the currently displayed team builds to individual .txt files.")
-        export_layout.addWidget(self.btn_export_team)
-        
         main_layout.addLayout(export_layout)
 
         # --- 2. Center Splitter ---
         self.splitter = QSplitter(Qt.Orientation.Horizontal)
         
-        self.scroll_area = QScrollArea()
-        self.scroll_area.setWidgetResizable(True)
-        self.skill_grid_widget = QWidget()
-        self.skill_grid_layout = FlowLayout(self.skill_grid_widget, margin=10, spacing=10)
-        self.scroll_area.setWidget(self.skill_grid_widget)
+        self.library_widget = SkillLibraryWidget()
+        self.library_widget.skill_clicked.connect(self.handle_skill_id_clicked)
+        self.library_widget.skill_double_clicked.connect(lambda sid: self.handle_skill_equipped_auto(sid))
+        self.splitter.addWidget(self.library_widget)
         
-        self.splitter.addWidget(self.scroll_area)
         self.info_panel = SkillInfoPanel()
         self.splitter.addWidget(self.info_panel)
         
@@ -2407,7 +2490,7 @@ class MainWindow(QMainWindow):
         self.check_lock_suggestions.toggled.connect(self.update_suggestions)
         control_layout.addWidget(self.check_lock_suggestions)
         
-        self.check_smart_mode = QCheckBox("Smart Mode\n(beta)")
+        self.check_smart_mode = QCheckBox("Smart Mode\n(experimental)")
         self.check_smart_mode.setStyleSheet("color: #FFD700; font-weight: bold;")
         self.check_smart_mode.toggled.connect(self.on_smart_mode_toggled)
         control_layout.addWidget(self.check_smart_mode)
@@ -2472,8 +2555,12 @@ class MainWindow(QMainWindow):
         # We'll use a modified TeamManagerDialog logic or just a specialized call
         dlg = TeamManagerDialog(self, self.engine)
         # Change button text to indicate synergy mode
-        dlg.btn_load.setText("Load Team context")
+        dlg.btn_load.setText("Load Team")
         dlg.btn_load.setToolTip("Load all skills from this team to use as synergy context")
+        
+        # Hide export and import buttons for smart mode context
+        dlg.btn_export.setVisible(False)
+        dlg.btn_add_folder.setVisible(False)
         
         # Override the load_team method for this instance
         original_load = dlg.load_team
@@ -2535,6 +2622,11 @@ class MainWindow(QMainWindow):
         # Update both engines and refresh
         mode = "pvp" if checked else "pve"
         self.smart_engine.set_mode(mode)
+        
+        # Refresh current info panel if visible
+        if self.current_selected_skill_id:
+            self.handle_skill_id_clicked(self.current_selected_skill_id)
+            
         self.apply_filters()
         self.update_suggestions()
         self.refresh_equipped_skills()
@@ -2595,6 +2687,9 @@ class MainWindow(QMainWindow):
         self.combo_cat.setCurrentIndex(0) 
         self.combo_team.setCurrentIndex(0) 
         self.check_pvp.setChecked(False)
+        self.check_pve_only.setChecked(False)
+        if hasattr(self, 'check_pre'):
+             self.check_pre.setChecked(False)
         self.check_show_others.setChecked(False)
         self.check_lock_suggestions.setChecked(False)
         if hasattr(self, 'check_smart_mode'):
@@ -2719,16 +2814,6 @@ class MainWindow(QMainWindow):
 
         self.update_suggestions()
 
-    def handle_skill_double_clicked(self, skill: Skill):
-        empty_index = -1
-        for i, s_id in enumerate(self.bar_skills):
-            if s_id is None:
-                empty_index = i
-                break
-        
-        if empty_index != -1:
-            self.handle_skill_equipped(empty_index, skill.id)
-
     def toggle_elites(self, checked):
         if checked:
             self.check_no_elites.blockSignals(True)
@@ -2750,7 +2835,16 @@ class MainWindow(QMainWindow):
         self.info_panel.update_info(skill, rank=rank)
 
     def apply_filters(self):
-        if not hasattr(self, 'skill_grid_layout'): return
+        # Debounce filter changes
+        self.filter_debounce_timer.start(250)
+
+    def _run_filter(self):
+        # Stop any active filtering to prevent crashes
+        if hasattr(self, 'filter_worker') and self.filter_worker.isRunning():
+            self.filter_worker.requestInterruption()
+            self.filter_worker.wait()
+
+        # [REMOVED] self.lbl_loading.show() <- This was causing the potential next crash
 
         prof_str = self.combo_prof.currentText()
         if prof_str == "All": prof = "All"
@@ -2758,69 +2852,69 @@ class MainWindow(QMainWindow):
 
         cat = self.combo_cat.currentText()
         team = self.combo_team.currentText()
-        
-        for i in reversed(range(self.skill_grid_layout.count())): 
-            self.skill_grid_layout.itemAt(i).widget().setParent(None)
 
-        if team != "All":
-            matching_builds = [b for b in self.engine.builds if b.team == team]
-            if cat != "All":
-                matching_builds = [b for b in matching_builds if b.category == cat]
+        # Gather filters
+        filters = {
+            'prof': prof,
+            'cat': cat,
+            'team': team,
+            'search_text': self.edit_search.text().lower(),
+            'is_pvp': self.check_pvp.isChecked(),
+            'is_pve_only': self.check_pve_only.isChecked(),
+            'is_elites_only': self.check_elites_only.isChecked(),
+            'is_no_elites': self.check_no_elites.isChecked(),
+            'is_pre_only': self.check_pre.isChecked() if hasattr(self, 'check_pre') else False
+        }
+
+        self.filter_worker = FilterWorker(DB_FILE, self.engine, filters)
+        self.filter_worker.finished.connect(self._on_filter_finished)
+        self.filter_worker.start()
+
+    def _on_filter_finished(self, filtered_skills):
+        self.library_widget.clear()
+        
+        # [REMOVED] self.lbl_loading.hide() <- This was causing your specific crash
+        
+        # Turn off updates briefly for insertion speed
+        self.library_widget.setUpdatesEnabled(False)
+        
+        for skill in filtered_skills:
+            item = QListWidgetItem(skill.name)
+            item.setData(Qt.ItemDataRole.UserRole, skill.id)
+            item.setData(Qt.ItemDataRole.DisplayRole, skill.name) # Explicitly set display role for delegate
             
-            unique_builds = []
-            seen_codes = set()
-            for b in matching_builds:
-                if b.code not in seen_codes:
-                    unique_builds.append(b)
-                    seen_codes.add(b.code)
+            # Icon Loading
+            cache_key = skill.icon_filename
+            pix = None
             
-            for b in unique_builds:
-                widget = BuildPreviewWidget(b, self.repo, is_pvp=self.check_pvp.isChecked())
-                widget.clicked.connect(lambda code=b.code: self.load_code(code_str=code))
-                widget.skill_clicked.connect(self.handle_skill_clicked)
-                self.skill_grid_layout.addWidget(widget)
-            return
+            if cache_key in PIXMAP_CACHE:
+                pix = PIXMAP_CACHE[cache_key]
+            else:
+                path = os.path.join(ICON_DIR, skill.icon_filename)
+                if os.path.exists(path):
+                    pix = QPixmap(path)
+                    # Cache standard size
+                    pix = pix.scaled(ICON_SIZE, ICON_SIZE, Qt.AspectRatioMode.KeepAspectRatio)
+                    PIXMAP_CACHE[cache_key] = pix
+            
+            if pix:
+                item.setIcon(QIcon(pix))
+                item.setData(Qt.ItemDataRole.DecorationRole, QIcon(pix)) # Ensure delegate gets the icon
+            
+            self.library_widget.addItem(item)
+            
+        self.library_widget.setUpdatesEnabled(True)
 
-        search_text = self.edit_search.text().lower()
-        is_pvp = self.check_pvp.isChecked()
-        is_elites_only = self.check_elites_only.isChecked()
-        is_no_elites = self.check_no_elites.isChecked()
+    def handle_skill_equipped_auto(self, skill_id):
+        # Find first empty slot
+        empty_index = -1
+        for i, s_id in enumerate(self.bar_skills):
+            if s_id is None:
+                empty_index = i
+                break
         
-        valid_ids = self.engine.filter_skills(prof, cat, team)
-        
-        filtered_skills = []
-        target_prof_id = -1
-        if prof != "All":
-            try:
-                target_prof_id = int(prof)
-            except:
-                pass
-
-        for sid in valid_ids:
-            skill = self.repo.get_skill(sid, is_pvp=is_pvp)
-            if skill:
-                if search_text and search_text not in skill.name.lower():
-                    continue
-                if is_pvp and skill.is_pve_only:
-                    continue
-                if is_elites_only and not skill.is_elite:
-                    continue
-                if is_no_elites and skill.is_elite:
-                    continue
-                if target_prof_id != -1:
-                    if skill.profession != target_prof_id:
-                        continue
-                    
-                filtered_skills.append(skill)
-
-        if len(filtered_skills) > 100:
-             filtered_skills = filtered_skills[:100]
-
-        for skill in sorted(filtered_skills, key=lambda x: x.name):
-            icon = DraggableSkillIcon(skill)
-            icon.clicked.connect(self.handle_skill_clicked)
-            icon.double_clicked.connect(self.handle_skill_double_clicked)
-            self.skill_grid_layout.addWidget(icon)
+        if empty_index != -1:
+            self.handle_skill_equipped(empty_index, skill_id)           
 
     def handle_skill_id_clicked(self, skill_id):
         self.current_selected_skill_id = skill_id
