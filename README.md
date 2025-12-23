@@ -1,6 +1,4 @@
 # B.O.O.K.A.H. <br>(Build Optimization & Organization for Knowledge-Agnostic Hominids)
-__*So easy, even a Bookah can do it.*__
-
 
 A high-performance build creation and analysis tool for Guild Wars 1, designed to identify deep mechanical synergies between skills and optimize team compositions.
 

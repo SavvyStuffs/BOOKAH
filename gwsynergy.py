@@ -133,6 +133,12 @@ class TeamManagerDialog(QDialog):
         header.addWidget(self.btn_add_folder)
         layout.addLayout(header)
         
+        # Search Bar
+        self.edit_search = QLineEdit()
+        self.edit_search.setPlaceholderText("Search teams...")
+        self.edit_search.textChanged.connect(self.refresh_list)
+        layout.addWidget(self.edit_search)
+        
         self.list_widget = QListWidget()
         self.refresh_list()
         layout.addWidget(self.list_widget)
@@ -160,8 +166,10 @@ class TeamManagerDialog(QDialog):
 
     def refresh_list(self):
         self.list_widget.clear()
+        search_text = self.edit_search.text().lower()
         teams = sorted(list(self.engine.teams))
-        self.list_widget.addItems(teams)
+        filtered_teams = [t for t in teams if search_text in t.lower()]
+        self.list_widget.addItems(filtered_teams)
         
     def add_from_folder(self):
         # Open directory dialog
@@ -379,6 +387,12 @@ class LocationManagerDialog(QDialog):
         
         layout = QVBoxLayout(self)
         
+        # Search Bar
+        self.edit_search = QLineEdit()
+        self.edit_search.setPlaceholderText("Search locations...")
+        self.edit_search.textChanged.connect(self.refresh_list)
+        layout.addWidget(self.edit_search)
+        
         self.tabs = QTabWidget()
         
         self.list_zones = QListWidget()
@@ -405,18 +419,19 @@ class LocationManagerDialog(QDialog):
     def refresh_list(self):
         self.list_zones.clear()
         self.list_missions.clear()
+        search_text = self.edit_search.text().lower()
         try:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
             
             # Load Explorable Zones
             cursor.execute("SELECT name FROM locations WHERE type = 'Location' ORDER BY name ASC")
-            zones = [row[0] for row in cursor.fetchall()]
+            zones = [row[0] for row in cursor.fetchall() if search_text in row[0].lower()]
             self.list_zones.addItems(zones)
             
             # Load Missions
             cursor.execute("SELECT name FROM locations WHERE type = 'Mission' ORDER BY name ASC")
-            missions = [row[0] for row in cursor.fetchall()]
+            missions = [row[0] for row in cursor.fetchall() if search_text in row[0].lower()]
             self.list_missions.addItems(missions)
             
             conn.close()
@@ -1933,6 +1948,7 @@ class SkillInfoPanel(QFrame):
         self.lbl_name = QLabel("Select a skill")
         self.lbl_name.setStyleSheet("font-size: 16px; font-weight: bold; color: #00AAFF;")
         self.lbl_name.setWordWrap(True)
+        self.lbl_name.setAlignment(Qt.AlignmentFlag.AlignCenter)
         
         self.lbl_icon = QLabel()
         self.lbl_icon.setFixedSize(64, 64)
@@ -1941,9 +1957,11 @@ class SkillInfoPanel(QFrame):
         self.txt_desc = QLabel("")
         self.txt_desc.setWordWrap(True)
         self.txt_desc.setStyleSheet("color: #ccc; font-style: italic;")
+        self.txt_desc.setAlignment(Qt.AlignmentFlag.AlignCenter)
         
         self.details = QLabel("")
         self.details.setStyleSheet("color: #aaa;")
+        self.details.setAlignment(Qt.AlignmentFlag.AlignCenter)
         
         layout.addWidget(self.lbl_name)
         layout.addWidget(self.lbl_icon, alignment=Qt.AlignmentFlag.AlignCenter)
@@ -2097,7 +2115,7 @@ class SynergyWorker(QThread):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Guild Wars Synergy Builder")
+        self.setWindowTitle("B.O.O.K.A.H. (Build Optimization & Organization for Knowledge-Agnostic Hominids)")
         self.resize(1200, 800)
         
         # Load Data
@@ -2204,17 +2222,12 @@ class MainWindow(QMainWindow):
         filter_layout.addWidget(QLabel("Category:"))
         filter_layout.addWidget(self.combo_cat)
         
-        # --- Team Control Group ---
-        team_widget = QWidget()
-        team_layout = QVBoxLayout(team_widget)
-        team_layout.setContentsMargins(0,0,0,0)
-        team_layout.setSpacing(2)
+        filter_layout.addSpacing(20)
         
-        team_header = QHBoxLayout()
-        self.lbl_team_title = QLabel("Team:")
-        self.lbl_team_title.setStyleSheet("color: #aaa; font-weight: bold;")
-        team_header.addWidget(self.lbl_team_title)
-        
+        # Team Column
+        team_col_layout = QVBoxLayout()
+        team_row = QHBoxLayout()
+        team_row.addWidget(QLabel("Team:"))
         self.combo_team = QComboBox()
         self.combo_team.addItem("All")
         
@@ -2229,16 +2242,14 @@ class MainWindow(QMainWindow):
         
         self.combo_team.currentTextChanged.connect(self.apply_filters)
         self.combo_team.setCurrentIndex(0) # Default to "All" (No filter)
-        
-        team_header.addWidget(self.combo_team)
-        team_layout.addLayout(team_header)
+        team_row.addWidget(self.combo_team)
+        team_col_layout.addLayout(team_row)
         
         self.btn_manage_teams = QPushButton("Manage Teams")
-        self.btn_manage_teams.setStyleSheet("background-color: #444; font-size: 10px; padding: 2px;")
         self.btn_manage_teams.clicked.connect(self.open_team_manager)
-        team_layout.addWidget(self.btn_manage_teams)
+        team_col_layout.addWidget(self.btn_manage_teams)
         
-        filter_layout.addWidget(team_widget)
+        filter_layout.addLayout(team_col_layout)
         
         filter_layout.addSpacing(20)
         self.check_pvp = QCheckBox("PvP?")
@@ -2261,14 +2272,6 @@ class MainWindow(QMainWindow):
         filter_layout.addWidget(self.edit_search)
         
         filter_layout.addStretch()
-        
-        # Add Folder Button (Top Right)
-        self.btn_add_folder = QPushButton("+")
-        self.btn_add_folder.setFixedSize(24, 24)
-        self.btn_add_folder.setToolTip("Add Team Build from Folder")
-        self.btn_add_folder.setStyleSheet("font-weight: bold; font-size: 14px; color: #00AAFF;")
-        self.btn_add_folder.clicked.connect(self.select_folder_for_team)
-        filter_layout.addWidget(self.btn_add_folder)
         
         main_layout.addLayout(filter_layout)
 
@@ -2344,6 +2347,7 @@ class MainWindow(QMainWindow):
             QPushButton:hover { background-color: #555; }
         """)
         self.btn_select_zone.clicked.connect(self.open_location_manager)
+        self.btn_select_zone.setVisible(False)
         cycle_layout.addWidget(self.btn_select_zone)
 
         self.btn_load_team_synergy = QPushButton("Load Teambuild\nto Bar")
@@ -2458,6 +2462,8 @@ class MainWindow(QMainWindow):
     def on_smart_mode_toggled(self, checked):
         if hasattr(self, 'btn_load_team_synergy'):
             self.btn_load_team_synergy.setVisible(checked)
+        if hasattr(self, 'btn_select_zone'):
+            self.btn_select_zone.setVisible(checked)
         # Clear team synergy context if turning off smart mode? 
         # User might want it to persist, but for now we keep it.
         self.update_suggestions()
