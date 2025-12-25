@@ -1,0 +1,78 @@
+WELCOME TO B.O.O.K.A.H.
+(Build Optimization & Organization for Knowledge-Agnostic Hominids)
+
+==============================================================================
+WHAT IS THIS?
+==============================================================================
+This is a smart assistant for creating Guild Wars 1 builds. Unlike standard 
+template editors, Bookah uses Artificial Intelligence to suggest skills that 
+work well with what you've already picked. It learns from thousands of 
+player-created builds to help you find the perfect synergy.
+
+==============================================================================
+QUICK START
+==============================================================================
+1. Run 'Bookah.exe'.
+2. Drag skills from the list on the left to the empty slots on your bar.
+3. Watch as the empty slots automatically fill with AI suggestions!
+4. Double-click a skill in the list to auto-equip it to the first empty slot.
+
+==============================================================================
+MAIN FEATURES
+==============================================================================
+
+1. INTELLIGENT SUGGESTIONS
+   As you add skills, the AI suggests what to add next.
+   - Standard Mode (Default): Suggests skills that are historically popular 
+     with your current choices.
+   - Smart Mode (Checkbox): Turns on the advanced "Mechanics Engine". It reads 
+     skill descriptions to find combos you might miss and checks if you forgot 
+     basics like a Self-Heal or Energy Management.
+
+2. SEARCH & FILTERS
+   - Text Box: Search by skill name.
+   - "Description" Checkbox: Check this to search inside the skill text instead 
+     of the name (e.g., search "burning" to find skills that cause burning).
+   - "Pre" Checkbox: Hides all skills that are not available in Pre-Searing.
+   - "PvP" Checkbox: Switches to PvP versions of skills and hides PvE-only ones.
+
+3. TEAM SYNERGY MODE (Green Button)
+   Want to fit into a team?
+   1. Click "Manage Teams" to create or import a team build.
+   2. Check "Smart Mode" to see the "Load Teambuild to Bar" button.
+   3. Click it and select your team.
+   4. The AI will now suggest skills that combo with your teammates (like 
+      attacking burning foes if your ally causes burning).
+
+5. ATTRIBUTE EDITOR
+   On the right side, you can adjust your attribute points. The editor uses 
+   real Guild Wars math (costs increase as you rank up). It also supports 
+   PvE ranks like Sunspear or Lightbringer.
+
+6. IS THIS UNIQUE?
+   Click this button to compare your finished bar against thousands of known 
+   meta-builds. It will tell you if you've accidentally reinvented the wheel 
+   or created something truly original.
+
+==============================================================================
+BUTTONS EXPLAINED
+==============================================================================
+[Cycle Suggestions] : Don't like the AI's top pick? Click this to rotate 
+                      through other good options for your empty slots.
+
+[Lock]              : Freezes the current suggestions so they don't change 
+                      while you are browsing or thinking.
+
+[Manage Teams]      : Opens a window to import team builds (you can drag and 
+                      drop a folder of templates here!).
+
+[Select Template Folder] : Tells the app where your Guild Wars templates are 
+                           stored so you can export directly to the game.
+
+==============================================================================
+TIPS & TRICKS
+==============================================================================
+* Right-click a skill on your bar to remove it.
+* Hover over any suggested skill (ghost icon) to see WHY the AI suggested it.
+* If you select a Zone or Team, you can click the colored button again to 
+  turn that mode off and return to normal building.

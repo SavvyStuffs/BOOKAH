@@ -12,7 +12,7 @@ from networkx.algorithms import community
 # CONFIGURATION
 # ==========================================
 BUILDS_FILE = 'all_skills.json'   # Your build data
-SKILLS_DB_FILE = 'skills2.db' # Your ID -> Name mapping
+SKILLS_DB_FILE = 'master.db' # Your ID -> Name mapping
 MIN_SUPPORT = 10                  # Pairs must appear this often to be shown
 MIN_CONFIDENCE = 0.60             # 60% link strength required
 
@@ -37,13 +37,13 @@ class VisualAnalyzer:
             try:
                 conn = sqlite3.connect(SKILLS_DB_FILE)
                 cursor = conn.cursor()
-                cursor.execute("SELECT id, skill_name, skill_icon FROM skills_index")
+                cursor.execute("SELECT skill_id, name FROM skills")
                 skill_map = {}
                 for row in cursor.fetchall():
                     s_id = int(row[0])
                     skill_map[s_id] = {
                         'name': row[1],
-                        'icon': row[2] if row[2] else f"{s_id}.jpg"
+                        'icon': f"{s_id}.jpg"
                     }
                 conn.close()
                 print(f" -> Successfully loaded {len(skill_map)} names and icons from SQLite.")
@@ -107,14 +107,19 @@ class VisualAnalyzer:
     def generate_interactive_map(self):
         print("Analyzing data...")
         
-        # 1. Tally up the skills
+        # 1. Tally up the skills (Strictly filter out ID 0)
         pair_counts = Counter()
         skill_counts = Counter()
         
         for build in self.builds:
-            skills = list(set(build.get('skill_ids', [])))
+            # Filter out 0 and any invalid IDs
+            raw_skills = build.get('skill_ids', [])
+            skills = sorted(list(set([int(s) for s in raw_skills if s and int(s) != 0])))
+            
+            if len(skills) < 2: continue
+            
             skill_counts.update(skills)
-            pair_counts.update(itertools.combinations(sorted(skills), 2))
+            pair_counts.update(itertools.combinations(skills, 2))
 
         # 2. Build NetworkX Graph for Analysis
         print(f"Calculating Communities (Min Support: {MIN_SUPPORT}, Min Conf: {MIN_CONFIDENCE*100}%)...")
@@ -135,11 +140,9 @@ class VisualAnalyzer:
                 valid_edges.append((id_a, id_b, weight))
 
         # 3. Detect Communities
-        # Uses Greedy Modularity optimization
         communities = community.greedy_modularity_communities(G)
         print(f" -> Found {len(communities)} distinct communities.")
         
-        # Map node -> color
         node_colors = {}
         for i, comm in enumerate(communities):
             color = COMMUNITY_COLORS[i % len(COMMUNITY_COLORS)]
@@ -155,43 +158,112 @@ class VisualAnalyzer:
         
         # 5. Add Nodes and Edges to PyVis
         for (id_a, id_b, weight) in valid_edges:
-            data_a = self.get_skill_data(id_a)
-            data_b = self.get_skill_data(id_b)
-            
-            if id_a not in added_skills:
-                icon_path = icons_base_path + data_a['icon']
-                if not icon_path.lower().endswith('.jpg'): icon_path += '.jpg'
-                
-                # Get Color
-                color = node_colors.get(id_a, '#97c2fc') # Default blue if logic fails
-                
-                # Use 'color' for borders/backgrounds behind the image
-                net.add_node(id_a, label=data_a['name'], title=f"Used in {skill_counts[id_a]} builds", 
-                             shape='circularImage', image=icon_path, size=10 + (skill_counts[id_a]/15),
-                             color=color, borderWidth=3)
-                added_skills.add(id_a)
-                
-            if id_b not in added_skills:
-                icon_path = icons_base_path + data_b['icon']
-                if not icon_path.lower().endswith('.jpg'): icon_path += '.jpg'
-                
-                color = node_colors.get(id_b, '#97c2fc')
-                
-                net.add_node(id_b, label=data_b['name'], title=f"Used in {skill_counts[id_b]} builds", 
-                             shape='circularImage', image=icon_path, size=10 + (skill_counts[id_b]/15),
-                             color=color, borderWidth=3)
-                added_skills.add(id_b)
+            for sid in [id_a, id_b]:
+                if sid not in added_skills:
+                    data = self.get_skill_data(sid)
+                    color = node_colors.get(sid, '#97c2fc')
+                    
+                    # Ensure label is a string and not empty
+                    label_text = str(data.get('name', f"Skill {sid}"))
+                    
+                    net.add_node(sid, 
+                                 label=label_text, 
+                                 title=f"{label_text}\\nUsed in {skill_counts[sid]} builds", 
+                                 shape='circularImage', 
+                                 image=icons_base_path + str(data['icon']), 
+                                 size=15 + (skill_counts[sid]/12),
+                                 color=color, 
+                                 borderWidth=3,
+                                 font={'size': 14, 'color': 'white', 'face': 'Arial', 'strokeWidth': 2, 'strokeColor': '#000'})
+                    added_skills.add(sid)
 
-            net.add_edge(id_a, id_b, value=weight, title=f"Synergy: {weight:.1%}")
+            net.add_edge(id_a, id_b, value=weight, title=f"Synergy: {weight:.1%}", color='#555')
 
         # 6. Save and Open
         output_file = "synergy_map.html"
         net.show_buttons(filter_=['physics'])
         html_content = net.generate_html()
         
-        # --- Custom JS Injection for Manual Grouping ---
+        # --- Custom JS Injection for Search and Manual Grouping ---
         custom_js = """
+        <div id="search-container" style="position: absolute; top: 10px; left: 10px; z-index: 100; background: rgba(34,34,34,0.9); padding: 10px; border-radius: 8px; border: 1px solid #444;">
+            <input type="text" id="node-search" placeholder="Search skills..." style="background: #111; color: #fff; border: 1px solid #555; padding: 5px; border-radius: 4px; width: 200px;">
+            <div id="search-results" style="color: #aaa; font-size: 10px; margin-top: 5px;"></div>
+        </div>
+
         <script type="text/javascript">
+        // 0. Search Logic
+        var searchInput = document.getElementById('node-search');
+        searchInput.addEventListener('input', function(e) {
+            var term = e.target.value.toLowerCase();
+            if (term.length < 2) {
+                document.getElementById('search-results').innerHTML = '';
+                // Restore all if search cleared
+                if (term.length === 0) neighbourhoodHighlight({ nodes: [] });
+                return;
+            }
+            
+            var allNodesArr = nodes.get();
+            var matches = allNodesArr.filter(n => {
+                var l = n.label || n.hiddenLabel;
+                return l && l.toLowerCase().includes(term);
+            });
+            
+            document.getElementById('search-results').innerHTML = matches.length + ' found';
+            
+            if (matches.length > 0) {
+                var first = matches[0];
+                network.selectNodes([first.id]);
+                network.focus(first.id, {
+                    scale: 1.0,
+                    animation: { duration: 500, easingFunction: 'easeInOutQuad' }
+                });
+                neighbourhoodHighlight({ nodes: [first.id] });
+            }
+        });
+
+        function neighbourhoodHighlight(params) {
+          allNodes = nodes.get({ returnType: "Object" });
+          if (params.nodes.length > 0) {
+            highlightActive = true;
+            var selectedNode = params.nodes[0];
+            
+            for (let nodeId in allNodes) {
+              allNodes[nodeId].color = "rgba(200,200,200,0.2)";
+              if (allNodes[nodeId].hiddenLabel === undefined) {
+                allNodes[nodeId].hiddenLabel = allNodes[nodeId].label;
+                allNodes[nodeId].label = undefined;
+              }
+            }
+            
+            var connectedNodes = network.getConnectedNodes(selectedNode);
+            var allRelevant = [selectedNode].concat(connectedNodes);
+            
+            for (let i = 0; i < allRelevant.length; i++) {
+              let nid = allRelevant[i];
+              if (allNodes[nid]) {
+                allNodes[nid].color = nodeColors[nid];
+                if (allNodes[nid].hiddenLabel !== undefined) {
+                  allNodes[nid].label = allNodes[nid].hiddenLabel;
+                  allNodes[nid].hiddenLabel = undefined;
+                }
+              }
+            }
+          } else if (highlightActive === true) {
+            for (let nodeId in allNodes) {
+              allNodes[nodeId].color = nodeColors[nodeId];
+              if (allNodes[nodeId].hiddenLabel !== undefined) {
+                allNodes[nodeId].label = allNodes[nodeId].hiddenLabel;
+                allNodes[nodeId].hiddenLabel = undefined;
+              }
+            }
+            highlightActive = false;
+          }
+          var updateArray = [];
+          for (let nodeId in allNodes) { updateArray.push(allNodes[nodeId]); }
+          nodes.update(updateArray);
+        }
+
         // 1. Drag + Ctrl to Merge
         network.on("dragEnd", function (params) {
             // Check if Ctrl key was held during the drag

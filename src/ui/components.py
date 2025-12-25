@@ -1,6 +1,6 @@
 import os
 from PyQt6.QtWidgets import (
-    QLabel, QFrame, QVBoxLayout, QHBoxLayout, QPushButton, QSizePolicy, QListWidget, QStyle, QStyledItemDelegate, QListWidgetItem
+    QLabel, QFrame, QVBoxLayout, QHBoxLayout, QPushButton, QSizePolicy, QListWidget, QStyle, QStyledItemDelegate, QListWidgetItem, QAbstractItemView, QScrollArea, QWidget
 )
 from PyQt6.QtCore import Qt, pyqtSignal, QMimeData, QPoint, QSize, QRect
 from PyQt6.QtGui import QDrag, QPixmap, QPainter, QColor, QFont, QIcon
@@ -178,7 +178,20 @@ class SkillInfoPanel(QFrame):
         super().__init__(parent)
         self.setMinimumWidth(100)
         self.setStyleSheet("background-color: #1a1a1a; border-left: 1px solid #444;")
-        layout = QVBoxLayout(self)
+        
+        # Main Layout for the QFrame itself
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        
+        # Scroll Area Setup
+        self.scroll_area = QScrollArea()
+        self.scroll_area.setWidgetResizable(True)
+        self.scroll_area.setStyleSheet("border: none; background-color: transparent;")
+        
+        # Container Widget for the scroll area
+        self.content_widget = QWidget()
+        self.content_widget.setStyleSheet("background-color: transparent;")
+        self.content_layout = QVBoxLayout(self.content_widget)
         
         self.lbl_name = QLabel("Select a skill")
         self.lbl_name.setStyleSheet("font-size: 16px; font-weight: bold; color: #00AAFF;")
@@ -198,13 +211,17 @@ class SkillInfoPanel(QFrame):
         self.details.setStyleSheet("color: #aaa;")
         self.details.setAlignment(Qt.AlignmentFlag.AlignCenter)
         
-        layout.addWidget(self.lbl_name)
-        layout.addWidget(self.lbl_icon, alignment=Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(self.txt_desc)
-        layout.addWidget(self.details)
-        layout.addStretch()
+        self.content_layout.addWidget(self.lbl_name)
+        self.content_layout.addWidget(self.lbl_icon, alignment=Qt.AlignmentFlag.AlignCenter)
+        self.content_layout.addWidget(self.txt_desc)
+        self.content_layout.addWidget(self.details)
+        self.content_layout.addStretch()
+        
+        # Finalize Scroll Area
+        self.scroll_area.setWidget(self.content_widget)
+        main_layout.addWidget(self.scroll_area)
 
-    def update_info(self, skill: Skill, rank=0):
+    def update_info(self, skill: Skill, repo=None, rank=0):
         self.lbl_name.setText(skill.name)
         
         path = os.path.join(ICON_DIR, skill.icon_filename)
@@ -235,8 +252,73 @@ class SkillInfoPanel(QFrame):
         if skill.is_elite: info.append("<b>Elite Skill</b>")
         if skill.is_pve_only: info.append("<i>PvE Only</i>")
         if skill.combo_req > 0: info.append(f"Combo Stage: {skill.combo_req}") # NEW
+
+        # --- Acquisition Info ---
+        if repo:
+            aq = repo.get_skill_acquisition(skill.id)
+            if aq:
+                # Helper to format links
+                def format_links(text_blob):
+                    if not text_blob: return ""
+                    links = []
+                    # Split by newlines first
+                    for line in text_blob.split('\n'):
+                        parts = line.split('|')
+                        if len(parts) >= 2:
+                            name, url = parts[0], parts[1]
+                            links.append(f'<a href="{url}" style="color: #00AAFF;">{name}</a>')
+                        else:
+                            links.append(line)
+                    return "<br/>".join(links)
+
+                if aq.get('campaign'):
+                    info.append(f"<b>Campaign:</b> {aq['campaign']}")
+                
+                if aq.get('quests'):
+                    links = format_links(aq['quests'])
+                    if links: info.append(f"<b>Quests:</b><br/>{links}")
+                    
+                if aq.get('trainers'):
+                    links = format_links(aq['trainers'])
+                    if links: info.append(f"<b>Trainers:</b><br/>{links}")
+                
+                if aq.get('hero_trainers'):
+                    links = format_links(aq['hero_trainers'])
+                    if links: info.append(f"<b>Hero Trainers:</b><br/>{links}")
+                    
+                if aq.get('capture'):
+                    links = format_links(aq['capture'])
+                    if links: info.append(f"<b>Capture:</b><br/>{links}")
         
-        self.details.setText("<br>".join(info))
+        self.details.setWordWrap(True)
+        self.details.setText("<br/><br/>".join(info))
+        self.details.setOpenExternalLinks(True)
+
+    def update_monster_info(self, monster_data):
+        self.lbl_name.setText(monster_data['name'])
+        if monster_data.get('is_boss'):
+            self.lbl_name.setStyleSheet("font-size: 16px; font-weight: bold; color: #FFD700;")
+        else:
+            self.lbl_name.setStyleSheet("font-size: 16px; font-weight: bold; color: #00AAFF;")
+            
+        self.lbl_icon.clear()
+        
+        skills = monster_data.get('skills', [])
+        self.txt_desc.setText("<b>Build:</b><br/>" + (", ".join(skills) if skills else "No known skills."))
+        
+        analysis = []
+        if skills:
+            analysis.append("<b>Analysis:</b>")
+            text = " ".join(skills).lower()
+            if "hex" in text: analysis.append("- Uses Hexes. Suggest Hex Removal.")
+            if any(x in text for x in ["condition", "bleeding", "poison", "disease", "burning", "weakness"]): 
+                analysis.append("- Uses Conditions. Suggest Condition Removal.")
+            if "knock down" in text: analysis.append("- Uses Knockdowns. Suggest Stability.")
+            if "interrupt" in text: analysis.append("- Uses Interrupts. Careful with long casts.")
+            if "stance" in text: analysis.append("- Uses Stances. Suggest Wild Blow or Wild Throw.")
+            if "enchantment" in text: analysis.append("- Uses Enchantments. Suggest Strip/Removal.")
+            
+        self.details.setText("<br/>".join(analysis))
 
 class BuildPreviewWidget(QFrame):
     clicked = pyqtSignal(str) 
@@ -292,7 +374,7 @@ class BuildPreviewWidget(QFrame):
                 placeholder.setStyleSheet("background: transparent; border: 1px dashed #444;")
                 layout.addWidget(placeholder)
             
-        layout.addStretch()
+        layout.addStretch() 
         
         btn_load = QPushButton("Load")
         btn_load.setFixedSize(60, 40)
@@ -372,29 +454,145 @@ class SkillItemDelegate(QStyledItemDelegate):
 
 class SkillLibraryWidget(QListWidget):
     """
-    High-performance replacement for the ScrollArea + FlowLayout.
+    Smart Widget that handles both standard lists and AI-driven suggestions.
     """
-    skill_clicked = pyqtSignal(int)
-    skill_double_clicked = pyqtSignal(int)
+    skill_clicked = pyqtSignal(object)
+    skill_double_clicked = pyqtSignal(object)
 
-    def __init__(self, parent=None):
+    def __init__(self, repo, engine=None, parent=None):
         super().__init__(parent)
+        self.repo = repo      # <--- REQUIRED: To look up Skill objects from IDs
+        self.engine = engine  # Optional: stored for reference if needed
+        
         self.setViewMode(QListWidget.ViewMode.IconMode)
         self.setResizeMode(QListWidget.ResizeMode.Adjust)
         self.setUniformItemSizes(True)
         self.setDragEnabled(True)
         self.setSelectionMode(QListWidget.SelectionMode.SingleSelection)
         self.setSpacing(5)
+        # Fix for slow scrolling: Force pixel-based scrolling
+        self.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
         self.setStyleSheet("QListWidget { background-color: #111; border: none; }")
         
         # Attach the custom painter
         self.delegate = SkillItemDelegate(self)
         self.setItemDelegate(self.delegate)
 
+    def update_suggestions(self, suggestions):
+        """
+        Render AI Suggestions.
+        Expected format: [(skill_id, score, reason), ...]
+        """
+        self.clear() 
+        
+        # 1. Sort by Confidence Score (High to Low)
+        # tuple index 1 is the float score
+        sorted_suggestions = sorted(suggestions, key=lambda x: x[1], reverse=True)
+
+        for item in sorted_suggestions:
+            # Robust unpacking: Handle cases where reason might be missing
+            if len(item) == 3:
+                sid, score, reason = item
+            else:
+                sid, score = item
+                reason = "Neural Synergy"
+
+            # 2. Fetch Skill Data
+            skill = self.repo.get_skill(sid)
+            if not skill:
+                continue
+
+            # 3. Create List Item
+            list_item = QListWidgetItem()
+            list_item.setText(skill.name)
+            
+            # Store ID for drag/click events
+            list_item.setData(Qt.ItemDataRole.UserRole, sid)
+            
+            # 4. Rich Tooltip: Explains the "Why"
+            confidence_pct = int(score * 100)
+            tooltip_text = (
+                f"<b>{skill.name}</b><br/>"
+                f"<span style='color:#00AAFF;'>Match: {reason}</span><br/>"
+                f"Confidence: {confidence_pct}%<br/><hr/>"
+                f"{skill.description}"
+            )
+            list_item.setToolTip(tooltip_text)
+            
+            # 5. Set Icon (using your existing cache/path logic)
+            icon_path = os.path.join(ICON_DIR, skill.icon_filename)
+            if os.path.exists(icon_path):
+                key = f"{skill.icon_filename}_{self.delegate.icon_size}"
+                if key in PIXMAP_CACHE:
+                    pixmap = PIXMAP_CACHE[key]
+                else:
+                    pixmap = QPixmap(icon_path).scaled(
+                        self.delegate.icon_size, self.delegate.icon_size, 
+                        Qt.AspectRatioMode.KeepAspectRatio, 
+                        Qt.TransformationMode.SmoothTransformation
+                    )
+                    PIXMAP_CACHE[key] = pixmap
+                list_item.setIcon(QIcon(pixmap))
+            
+            # 6. High Confidence Visual Cue (Optional)
+            if score > 0.85:
+                font = list_item.font()
+                font.setBold(True)
+                list_item.setFont(font)
+
+            self.addItem(list_item)
+
+    def update_standard_list(self, skill_ids):
+        """
+        Render a standard list of IDs (e.g. from a filter).
+        """
+        self.clear()
+        for sid in skill_ids:
+            skill = self.repo.get_skill(sid)
+            if not skill: continue
+            
+            list_item = QListWidgetItem()
+            list_item.setText(skill.name)
+            list_item.setData(Qt.ItemDataRole.UserRole, sid)
+            list_item.setToolTip(f"<b>{skill.name}</b><br>{skill.description}")
+            
+            icon_path = os.path.join(ICON_DIR, skill.icon_filename)
+            if os.path.exists(icon_path):
+                # Simple uncached load for brevity, or reuse cache logic above
+                pix = QPixmap(icon_path).scaled(
+                    self.delegate.icon_size, self.delegate.icon_size,
+                    Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
+                )
+                list_item.setIcon(QIcon(pix))
+            
+            self.addItem(list_item)
+
+    def update_zone_summary(self, monsters):
+        """
+        Populate list with monster names instead of skills.
+        """
+        self.clear()
+        self.setViewMode(QListWidget.ViewMode.ListMode)
+        self.setSpacing(2)
+        
+        for m in monsters:
+            item = QListWidgetItem(m['name'])
+            # Store full dict
+            item.setData(Qt.ItemDataRole.UserRole, m) 
+            
+            if m.get('is_boss'):
+                item.setForeground(QColor("#FFD700")) # GOLD
+                font = item.font()
+                font.setBold(True)
+                item.setFont(font)
+            
+            self.addItem(item)
+
     def set_icon_size(self, size):
         self.delegate.icon_size = size
         self.model().layoutChanged.emit()
         self.viewport().update()
+        # Trigger reload of icons if needed, or rely on next update
 
     def startDrag(self, supportedActions):
         item = self.currentItem()
@@ -403,17 +601,18 @@ class SkillLibraryWidget(QListWidget):
         skill_id = item.data(Qt.ItemDataRole.UserRole)
         icon = item.icon()
         
-        # Create standard drag object compatible with your existing SkillSlot
         drag = QDrag(self)
         mime_data = QMimeData()
         mime_data.setText(str(skill_id))
         drag.setMimeData(mime_data)
-        drag.setPixmap(icon.pixmap(64, 64))
-        drag.setHotSpot(QPoint(32, 32))
+        
+        if not icon.isNull():
+            drag.setPixmap(icon.pixmap(64, 64))
+            drag.setHotSpot(QPoint(32, 32))
+            
         drag.exec(Qt.DropAction.CopyAction)
 
     def mousePressEvent(self, event):
-        # Handle clicks normally, but emit signal for info panel
         super().mousePressEvent(event)
         item = self.itemAt(event.pos())
         if item:

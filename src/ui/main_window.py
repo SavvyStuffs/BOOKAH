@@ -16,12 +16,12 @@ except ImportError:
 
 from src.constants import DB_FILE, JSON_FILE, PROF_MAP, PROF_SHORT_MAP, resource_path, ICON_DIR, ICON_SIZE, PIXMAP_CACHE
 from src.database import SkillRepository
-from src.engine import HamiltonianEngine, SynergyEngine
+from src.engine import MechanicsEngine, SynergyEngine
 from src.models import Build, Skill
 from src.utils import GuildWarsTemplateDecoder, GuildWarsTemplateEncoder
 from src.ui.components import SkillSlot, SkillInfoPanel, SkillLibraryWidget, BuildPreviewWidget
 from src.ui.attribute_editor import AttributeEditor
-from src.ui.dialogs import TeamManagerDialog, LocationManagerDialog
+from src.ui.dialogs import TeamManagerDialog, LocationManagerDialog, BuildUniquenessDialog
 
 class FilterWorker(QThread):
     finished = pyqtSignal(list)
@@ -41,6 +41,7 @@ class FilterWorker(QThread):
             cat = self.filters['cat']
             team = self.filters['team']
             search_text = self.filters['search_text']
+            search_desc_mode = self.filters.get('search_desc_mode', False)
             # Ensure is_pvp is strictly a boolean
             is_pvp = bool(self.filters['is_pvp'])
             is_pve_only = bool(self.filters['is_pve_only'])
@@ -63,6 +64,8 @@ class FilterWorker(QThread):
                     pass
 
             for sid in valid_ids:
+                if sid == 0: continue
+                
                 if self.isInterruptionRequested():
                     return
                 
@@ -86,8 +89,13 @@ class FilterWorker(QThread):
                         continue
 
                     # --- SEARCH ---
-                    if search_text and search_text not in skill.name.lower():
-                        continue
+                    if search_text:
+                        if search_desc_mode:
+                            if not skill.description or search_text not in skill.description.lower():
+                                continue
+                        else:
+                            if search_text not in skill.name.lower():
+                                continue
                         
                     # --- ELITE FILTERS ---
                     if is_elites_only and not skill.is_elite:
@@ -106,8 +114,8 @@ class FilterWorker(QThread):
                         
                     filtered_skills.append(skill)
 
-            # Sort by attribute (ascending), then by name (ascending)
-            filtered_skills.sort(key=lambda x: (x.attribute, x.name))
+            # Sort by profession (ascending), then by name (ascending)
+            filtered_skills.sort(key=lambda x: (x.profession, x.name))
 
             self.finished.emit(filtered_skills)
         except Exception as e:
@@ -119,28 +127,25 @@ class FilterWorker(QThread):
 class SynergyWorker(QThread):
     results_ready = pyqtSignal(list)
 
-    def __init__(self, engine, active_skill_ids, prof_id=0, mode="legacy", debug=False):
+    def __init__(self, engine, active_skill_ids, prof_id=0, mode="legacy", debug=False, is_pre=False):
         super().__init__()
         self.engine = engine
         self.active_skill_ids = active_skill_ids
         self.prof_id = prof_id 
         self.mode = mode
         self.debug = debug
+        self.is_pre = is_pre
         self._is_interrupted = False
 
     def run(self):
         try:
-            results = []
-            if self.mode == "smart":
-                # PASS A LAMBDA THAT CHECKS IF THIS THREAD IS INTERRUPTED
-                results = self.engine.find_synergies(
-                    self.active_skill_ids, 
-                    self.prof_id, 
-                    debug_mode=self.debug,
-                    stop_check=lambda: self.isInterruptionRequested()
-                )
-            else:
-                results = self.engine.get_suggestions(self.active_skill_ids, limit=5000)
+            # UNIFIED PIPELINE: Always use the Neural/Hybrid Engine
+            results = self.engine.get_suggestions(
+                self.active_skill_ids, 
+                limit=100, 
+                mode=self.mode, 
+                is_pre=self.is_pre
+            )
             
             if not self.isInterruptionRequested():
                 self.results_ready.emit(results)
@@ -153,7 +158,7 @@ class SynergyWorker(QThread):
         self.wait()
 
 class MainWindow(QMainWindow):
-    def __init__(self):
+    def __init__(self, engine=None):
         super().__init__()
         self.setWindowTitle("B.O.O.K.A.H. (Build Optimization & Organization for Knowledge-Agnostic Hominids)")
         self.resize(1200, 800)
@@ -165,8 +170,15 @@ class MainWindow(QMainWindow):
         
         # Load Data
         self.repo = SkillRepository(DB_FILE)
-        self.engine = SynergyEngine(JSON_FILE) # Legacy
-        self.smart_engine = HamiltonianEngine(DB_FILE) # NEW: Physics Engine
+        
+        if engine:
+            self.engine = engine
+        else:
+            # Fallback if run directly (shouldn't happen via bookah.py)
+            from src.engine import SynergyEngine
+            self.engine = SynergyEngine(JSON_FILE, DB_FILE)
+            
+        # self.smart_engine removed - functionality merged into SynergyEngine
         
         # State
         self.bar_skills = [None] * 8 
@@ -298,36 +310,77 @@ class MainWindow(QMainWindow):
         self.btn_manage_teams.clicked.connect(self.open_team_manager)
         top_grid.addWidget(self.btn_manage_teams, 0, 6)
         
-        # Col 7: PvP Checkboxes
+        # Col 7-9: Checkbox Group
         self.check_pvp = QCheckBox("PvP")
         self.check_pvp.toggled.connect(self.on_pvp_toggled)
-        top_grid.addWidget(self.check_pvp, 0, 7)
-
+        
         self.check_pve_only = QCheckBox("PvE Only")
         self.check_pve_only.toggled.connect(self.apply_filters)
-        top_grid.addWidget(self.check_pve_only, 1, 7)
 
-        # Col 8: Pre Checkbox
         self.check_pre = QCheckBox("Pre")
         self.check_pre.toggled.connect(self.apply_filters)
-        top_grid.addWidget(self.check_pre, 0, 8)
+        self.check_pre.toggled.connect(self.update_suggestions)
 
-        # Col 9: Elites Checkboxes
         self.check_elites_only = QCheckBox("Elites")
         self.check_no_elites = QCheckBox("No Elites")
         self.check_elites_only.toggled.connect(self.toggle_elites)
         self.check_no_elites.toggled.connect(self.toggle_no_elites)
-        top_grid.addWidget(self.check_elites_only, 0, 9)
-        top_grid.addWidget(self.check_no_elites, 1, 9)
 
-        # Col 10: Search Label
-        top_grid.addWidget(QLabel("Search:"), 0, 10)
+        # Create a horizontal layout for the three groups
+        cb_hbox = QHBoxLayout()
+        cb_hbox.setContentsMargins(0, 0, 0, 0)
+        cb_hbox.setSpacing(10)
+
+        # Group 1: PvP
+        vbox_pvp = QVBoxLayout()
+        vbox_pvp.addWidget(self.check_pvp)
+        vbox_pvp.addWidget(self.check_pve_only)
+        cb_hbox.addLayout(vbox_pvp)
+
+        # Move Pre 5px to the left (Gap 5->0 before, 15->20 after)
+        cb_hbox.addSpacing(0) 
         
-        # Col 11: Search Edit
+        # Group Pre: Adjust vertical offset by 11px
+        vbox_pre = QVBoxLayout()
+        vbox_pre.addSpacing(11)
+        vbox_pre.addWidget(self.check_pre)
+        vbox_pre.addStretch()
+        cb_hbox.addLayout(vbox_pre)
+        
+        cb_hbox.addSpacing(20) 
+
+        # Group 2: Elites
+        vbox_elites = QVBoxLayout()
+        vbox_elites.addWidget(self.check_elites_only)
+        vbox_elites.addWidget(self.check_no_elites)
+        cb_hbox.addLayout(vbox_elites)
+
+        top_grid.addLayout(cb_hbox, 0, 7, 2, 3)
+
+        # Col 10: Search Label (Moved Up)
+        search_label_vbox = QVBoxLayout()
+        search_label_vbox.setContentsMargins(0, 0, 0, 0)
+        search_label_vbox.addWidget(QLabel("Search:"))
+        search_label_vbox.addSpacing(15)
+        top_grid.addLayout(search_label_vbox, 0, 10)
+        
+        # Col 11: Search Edit + Description Checkbox (Moved Down)
+        search_vbox = QVBoxLayout()
+        search_vbox.setSpacing(2)
+        search_vbox.setContentsMargins(0, 0, 0, 0)
+        search_vbox.addSpacing(10)
+        
         self.edit_search = QLineEdit()
         self.edit_search.setPlaceholderText("Search skills...")
         self.edit_search.textChanged.connect(self.apply_filters)
-        top_grid.addWidget(self.edit_search, 0, 11)
+        search_vbox.addWidget(self.edit_search)
+        
+        self.check_search_desc = QCheckBox("Description")
+        self.check_search_desc.setStyleSheet("font-size: 10px; color: #aaa;")
+        self.check_search_desc.toggled.connect(self.apply_filters)
+        search_vbox.addWidget(self.check_search_desc)
+        
+        top_grid.addLayout(search_vbox, 0, 11)
         
         # --- Row 1: Export Controls + Maximize Button ---
         
@@ -371,7 +424,8 @@ class MainWindow(QMainWindow):
         # --- 2. Center Splitter ---
         self.splitter = QSplitter(Qt.Orientation.Horizontal)
         
-        self.library_widget = SkillLibraryWidget()
+        # UPDATED: Pass engine to Library Widget
+        self.library_widget = SkillLibraryWidget(parent=None, repo=self.repo, engine=self.engine)
         self.library_widget.skill_clicked.connect(self.handle_skill_id_clicked)
         self.library_widget.skill_double_clicked.connect(lambda sid: self.handle_skill_equipped_auto(sid))
         self.splitter.addWidget(self.library_widget)
@@ -413,10 +467,9 @@ class MainWindow(QMainWindow):
         self.btn_select_zone = QPushButton("Select Zone")
         self.btn_select_zone.setFixedSize(90, 50)
         self.btn_select_zone.setStyleSheet("""
-            QPushButton { background-color: #444; color: white; border-radius: 4px; font-weight: bold; font-size: 10px; }
-            QPushButton:hover { background-color: #555; }
+            QPushButton { background-color: #444; color: #888; border-radius: 4px; font-weight: bold; font-size: 10px; }
         """)
-        self.btn_select_zone.clicked.connect(self.open_location_manager)
+        # self.btn_select_zone.clicked.connect(self.open_location_manager) # Disabled
         self.btn_select_zone.setVisible(False)
         cycle_layout.addWidget(self.btn_select_zone)
 
@@ -452,7 +505,11 @@ class MainWindow(QMainWindow):
             
         bar_area_layout.addLayout(bar_layout)
 
-        # Cycle button moved here (beneath the bar)
+        # Button row (Cycle + Unique Check)
+        btn_hbox = QHBoxLayout()
+        btn_hbox.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        btn_hbox.setSpacing(10)
+
         self.btn_cycle = QPushButton("Cycle Suggestions")
         self.btn_cycle.setFixedSize(150, 24)
         self.btn_cycle.setStyleSheet("""
@@ -460,7 +517,19 @@ class MainWindow(QMainWindow):
             QPushButton:hover { background-color: #555; }
         """)
         self.btn_cycle.clicked.connect(self.cycle_suggestions)
-        bar_area_layout.addWidget(self.btn_cycle, alignment=Qt.AlignmentFlag.AlignCenter)
+        btn_hbox.addWidget(self.btn_cycle)
+
+        self.btn_check_unique = QPushButton("Is this unique?")
+        self.btn_check_unique.setFixedSize(150, 24)
+        self.btn_check_unique.setStyleSheet("""
+            QPushButton { background-color: #6644AA; color: white; border-radius: 4px; font-size: 10px; font-weight: bold;}
+            QPushButton:hover { background-color: #7755BB; }
+        """)
+        self.btn_check_unique.setVisible(False)
+        self.btn_check_unique.clicked.connect(self.check_build_uniqueness)
+        btn_hbox.addWidget(self.btn_check_unique)
+
+        bar_area_layout.addLayout(btn_hbox)
 
         container_layout.addStretch(1)
         container_layout.addWidget(bar_area_widget)
@@ -532,11 +601,16 @@ class MainWindow(QMainWindow):
     def on_smart_mode_toggled(self, checked):
         if hasattr(self, 'btn_load_team_synergy'):
             self.btn_load_team_synergy.setVisible(checked)
-        if hasattr(self, 'btn_select_zone'):
-            self.btn_select_zone.setVisible(checked)
+        # self.btn_select_zone.setVisible(checked) # Feature disabled
         self.update_suggestions()
 
     def open_team_manager_for_synergy(self):
+        # Toggle Off if already active
+        if self.team_synergy_skills:
+            self.reset_team_mode()
+            self.update_suggestions()
+            return
+
         # We'll use a modified TeamManagerDialog logic or just a specialized call
         dlg = TeamManagerDialog(self, self.engine)
         # Change button text to indicate synergy mode
@@ -547,27 +621,71 @@ class MainWindow(QMainWindow):
         dlg.btn_export.setVisible(False)
         dlg.btn_add_folder.setVisible(False)
         
-        # Override the load_team method for this instance
-        original_load = dlg.load_team
+        # Override the load_team method logic by reconnecting the button
         def synergy_load():
             item = dlg.list_widget.currentItem()
             if not item: return
             team_name = item.text()
+            
+            # 1. Load the context (Activates the AI/Visual mode)
             self.load_team_for_synergy(team_name)
+            
+            # 2. Update the library view (Show the builds in the list)
+            index = self.combo_team.findText(team_name)
+            if index != -1:
+                self.combo_team.setCurrentIndex(index)
+                
             dlg.accept()
             
-        dlg.load_team = synergy_load
+        try:
+            dlg.btn_load.clicked.disconnect()
+        except:
+            pass
+        dlg.btn_load.clicked.connect(synergy_load)
+        
         dlg.exec()
 
     def open_location_manager(self):
+        # Toggle Off if already active
+        if getattr(self, 'active_zone_mode', False):
+            self.reset_zone_mode()
+            self.update_suggestions()
+            return
+
         dlg = LocationManagerDialog(self, DB_FILE)
         if dlg.exec():
             selected_zone = dlg.get_selected_location()
             if selected_zone:
-                print(f"Selected Zone: {selected_zone}")
-                # Logic for zone-based builds/enemies can be added here later
+                self.load_zone_counters(selected_zone)
+
+    def load_zone_counters(self, zone_name):
+        print(f"[UI] Loading summary for zone: {zone_name}")
+        
+        # Mutual Exclusion
+        self.reset_team_mode()
+        
+        # Set Mode Flag
+        self.active_zone_mode = True
+        
+        # 1. Get Summary
+        monsters = self.engine.get_zone_summary(zone_name)
+        
+        # 2. Update Library List
+        self.library_widget.update_zone_summary(monsters)
+        
+        # 3. Update Visuals
+        self.btn_select_zone.setText(f"Active Zone:\n{zone_name}")
+        self.btn_select_zone.setStyleSheet("QPushButton { background-color: #444; color: white; border: 2px solid #AA00FF; border-radius: 4px; font-weight: bold; font-size: 10px; } QPushButton:hover { background-color: #555; }")
+        
+        # 4. Clear Bar Suggestions (Agency Mode)
+        self.current_suggestions = [] 
+        self.display_suggestions()
 
     def load_team_for_synergy(self, team_name):
+        # Mutual Exclusion
+        self.reset_zone_mode()
+
+        print(f"[UI] Activating Team Context: {team_name}")
         self.team_synergy_skills = []
         builds = [b for b in self.engine.builds if b.team == team_name]
         
@@ -578,7 +696,12 @@ class MainWindow(QMainWindow):
                     all_ids.add(sid)
         
         self.team_synergy_skills = list(all_ids)
-        print(f"Loaded {len(self.team_synergy_skills)} skills from team '{team_name}' for synergy context.")
+        print(f"[UI] Loaded {len(self.team_synergy_skills)} skills from team '{team_name}' for synergy context.")
+        
+        # Visual Indication
+        self.btn_load_team_synergy.setText(f"Active Team:\n{team_name}")
+        self.btn_load_team_synergy.setStyleSheet("QPushButton { background-color: #224466; color: white; border: 2px solid #00FF00; border-radius: 4px; font-weight: bold; font-size: 10px; } QPushButton:hover { background-color: #335577; }")
+        
         self.update_suggestions()
 
     def open_team_manager(self):
@@ -606,7 +729,7 @@ class MainWindow(QMainWindow):
     def on_pvp_toggled(self, checked):
         # Update both engines and refresh
         mode = "pvp" if checked else "pve"
-        self.smart_engine.set_mode(mode)
+        self.engine.mechanics.set_mode(mode)
         
         # Refresh current info panel if visible
         if self.current_selected_skill_id:
@@ -668,6 +791,9 @@ class MainWindow(QMainWindow):
         self.suggestion_offset = 0
         self.is_swapped = False
         
+        self.reset_zone_mode()
+        self.reset_team_mode()
+        
         self.combo_prof.setCurrentIndex(0) 
         self.combo_cat.setCurrentIndex(0) 
         self.combo_team.setCurrentIndex(0) 
@@ -687,6 +813,21 @@ class MainWindow(QMainWindow):
             
         self.apply_filters()
         self.update_suggestions()
+
+    def reset_zone_mode(self):
+        self.active_zone_mode = False
+        if hasattr(self, 'btn_select_zone'):
+             self.btn_select_zone.setText("Select Zone")
+             self.btn_select_zone.setStyleSheet("QPushButton { background-color: #444; color: white; border-radius: 4px; font-weight: bold; font-size: 10px; } QPushButton:hover { background-color: #555; }")
+
+    def reset_team_mode(self):
+        self.team_synergy_skills = []
+        if hasattr(self, 'btn_load_team_synergy'):
+            self.btn_load_team_synergy.setText("Load Teambuild\nto Bar")
+            self.btn_load_team_synergy.setStyleSheet("""
+                QPushButton { background-color: #224466; color: white; border-radius: 4px; font-weight: bold; font-size: 10px; }
+                QPushButton:hover { background-color: #335577; }
+            """)
 
     def choose_template_path(self):
         path = QFileDialog.getExistingDirectory(self, "Select Template Folder", self.template_path)
@@ -817,7 +958,7 @@ class MainWindow(QMainWindow):
         self.current_selected_skill_id = skill.id
         dist = self.attr_editor.get_distribution()
         rank = dist.get(skill.attribute, 0)
-        self.info_panel.update_info(skill, rank=rank)
+        self.info_panel.update_info(skill, repo=self.repo, rank=rank)
 
     def apply_filters(self):
         # Debounce filter changes
@@ -849,6 +990,7 @@ class MainWindow(QMainWindow):
             'cat': cat,
             'team': team,
             'search_text': self.edit_search.text().lower(),
+            'search_desc_mode': self.check_search_desc.isChecked() if hasattr(self, 'check_search_desc') else False,
             'is_pvp': self.check_pvp.isChecked(),
             'is_pve_only': self.check_pve_only.isChecked(),
             'is_elites_only': self.check_elites_only.isChecked(),
@@ -924,7 +1066,10 @@ class MainWindow(QMainWindow):
             
         self.library_widget.setUpdatesEnabled(True)
 
-    def handle_skill_equipped_auto(self, skill_id):
+    def handle_skill_equipped_auto(self, data):
+        if isinstance(data, dict): return
+
+        skill_id = data
         # Find first empty slot
         empty_index = -1
         for i, s_id in enumerate(self.bar_skills):
@@ -935,14 +1080,19 @@ class MainWindow(QMainWindow):
         if empty_index != -1:
             self.handle_skill_equipped(empty_index, skill_id)           
 
-    def handle_skill_id_clicked(self, skill_id):
+    def handle_skill_id_clicked(self, data):
+        if isinstance(data, dict):
+            self.info_panel.update_monster_info(data)
+            return
+
+        skill_id = data
         self.current_selected_skill_id = skill_id
         is_pvp = self.check_pvp.isChecked()
         skill = self.repo.get_skill(skill_id, is_pvp=is_pvp)
         if skill:
             dist = self.attr_editor.get_distribution()
             rank = dist.get(skill.attribute, 0)
-            self.info_panel.update_info(skill, rank=rank)
+            self.info_panel.update_info(skill, repo=self.repo, rank=rank)
 
     def handle_skill_equipped(self, index, skill_id):
         self.bar_skills[index] = skill_id
@@ -995,6 +1145,18 @@ class MainWindow(QMainWindow):
         
         active_ids = [sid for sid in self.bar_skills if sid is not None]
         profs_in_bar = set()
+        
+        # 1. Add Primary Profession from Dropdown
+        prof_text = self.combo_prof.currentText()
+        if prof_text != "All":
+            try:
+                pid = int(prof_text.split(' ')[0])
+                if pid != 0:
+                    profs_in_bar.add(pid)
+            except:
+                pass
+
+        # 2. Add Professions from Skills on Bar
         for sid in active_ids:
             if sid != 0:
                 s = self.repo.get_skill(sid, is_pvp=is_pvp)
@@ -1004,11 +1166,12 @@ class MainWindow(QMainWindow):
         allowed_profs = set()
         enforce_prof_limit = False
         
+        # Rule: Only enforce limit if we have 2+ professions determined AND user hasn't asked to show others.
         if not show_others:
             if len(profs_in_bar) >= 2:
                 enforce_prof_limit = True
                 allowed_profs.update(profs_in_bar)
-                allowed_profs.add(0)
+                allowed_profs.add(0) # Always allow Common
 
         # Prepare team spirit set for fast lookup
         team_spirit_ids = set()
@@ -1017,7 +1180,18 @@ class MainWindow(QMainWindow):
             # We can do this once per batch or just check in the loop
             pass
 
-        for sid, conf in suggestions:
+        print(f"[UI] Suggestions received: {len(suggestions)}")
+        filtered_count = 0
+
+        for item in suggestions:
+            if len(item) == 3:
+                sid, conf, reason = item
+            else:
+                sid, conf = item
+                reason = None
+
+            if sid == 0: continue
+
             skill = self.repo.get_skill(sid, is_pvp=is_pvp)
             if not skill: continue
             
@@ -1025,6 +1199,7 @@ class MainWindow(QMainWindow):
             
             if enforce_prof_limit:
                 if skill.profession not in allowed_profs:
+                    filtered_count += 1
                     continue
             
             # --- SPIRIT REDUNDANCY EXCEPTION ---
@@ -1041,14 +1216,16 @@ class MainWindow(QMainWindow):
                     if cursor.fetchone():
                         continue # Skip duplicate spirit
 
-            self.current_suggestions.append((sid, conf))
+            self.current_suggestions.append((sid, conf, reason))
+        
+        print(f"[UI] Suggestions kept after filter: {len(self.current_suggestions)} (Filtered: {filtered_count})")
 
         self.suggestion_offset = 0
         self.display_suggestions()
 
     def update_suggestions(self):
-        # Prevent updates if "Lock" is checked
-        if hasattr(self, 'check_lock_suggestions') and self.check_lock_suggestions.isChecked():
+        # Prevent updates if "Lock" is checked OR Zone Mode is active
+        if (hasattr(self, 'check_lock_suggestions') and self.check_lock_suggestions.isChecked()) or getattr(self, 'active_zone_mode', False):
             return
             
         # Clean up existing thread if running
@@ -1057,13 +1234,13 @@ class MainWindow(QMainWindow):
             
         active_ids = [sid for sid in self.bar_skills if sid is not None]
         
-        if hasattr(self, 'check_smart_mode') and self.check_smart_mode.isChecked():
-            # In Smart Mode, include the loaded team context if available
-            # Filter duplicates between bar and team
-            bar_set = set(active_ids)
-            for sid in self.team_synergy_skills:
-                if sid not in bar_set:
-                    active_ids.append(sid)
+        # Always include the loaded team context if available (Active Team Mode)
+        bar_set = set(active_ids)
+        for sid in self.team_synergy_skills:
+            if sid not in bar_set:
+                active_ids.append(sid)
+
+        print(f"[UI] Sending {len(active_ids)} active IDs to engine (Bar + Team Context).")
 
         # Get Profession ID
         prof_text = self.combo_prof.currentText()
@@ -1073,15 +1250,11 @@ class MainWindow(QMainWindow):
             pid = 0
 
         is_debug = False
+        mode = "smart" if hasattr(self, 'check_smart_mode') and self.check_smart_mode.isChecked() else "legacy"
+        is_pre = self.check_pre.isChecked() if hasattr(self, 'check_pre') else False
 
-        if hasattr(self, 'check_smart_mode') and self.check_smart_mode.isChecked():
-            mode = "smart"
-            engine = self.smart_engine
-        else:
-            mode = "legacy"
-            engine = self.engine
-
-        self.worker = SynergyWorker(engine, active_ids, pid, mode, debug=is_debug)
+        # ALWAYS use self.engine (Neural/Hybrid)
+        self.worker = SynergyWorker(self.engine, active_ids, pid, mode, debug=is_debug, is_pre=is_pre)
         self.worker.results_ready.connect(self.on_synergies_loaded)
         self.worker.start()
 
@@ -1114,10 +1287,17 @@ class MainWindow(QMainWindow):
             
             if s_idx < len(display_list):
                 # Fill slot with suggestion
-                s_id, conf = display_list[s_idx]
+                item = display_list[s_idx]
+                if len(item) == 3:
+                    s_id, conf, reason = item
+                    display_val = reason if reason else conf
+                else:
+                    s_id, conf = item
+                    display_val = conf
+
                 skill_obj = self.repo.get_skill(s_id, is_pvp=is_pvp)
                 rank = dist.get(skill_obj.attribute, 0) if skill_obj else 0
-                slot.set_skill(s_id, skill_obj, ghost=True, confidence=conf, rank=rank)
+                slot.set_skill(s_id, skill_obj, ghost=True, confidence=display_val, rank=rank)
                 s_idx += 1
             else:
                 # Ran out of suggestions? Clear the slot.
@@ -1146,7 +1326,7 @@ class MainWindow(QMainWindow):
             skill_obj = self.repo.get_skill(self.current_selected_skill_id, is_pvp=is_pvp)
             if skill_obj:
                 rank = dist.get(skill_obj.attribute, 0)
-                self.info_panel.update_info(skill_obj, rank=rank)
+                self.info_panel.update_info(skill_obj, repo=self.repo, rank=rank)
 
         # Refresh suggestions (this will call display_suggestions)
         self.display_suggestions()
@@ -1194,6 +1374,11 @@ class MainWindow(QMainWindow):
         p2_str = PROF_SHORT_MAP.get(p2_name, "X")
         
         self.lbl_prof_display.setText(f"{p1_str}/{p2_str}")
+        
+        # Check uniqueness visibility
+        active_count = sum(1 for s in active_bar if s != 0)
+        if hasattr(self, 'btn_check_unique'):
+            self.btn_check_unique.setVisible(active_count == 8)
         
         # Collect active skill objects for PvE attribute detection
         active_skill_objs = []
@@ -1328,6 +1513,24 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "Team Added", f"Added {added_count} builds to team '{team_name}'.")
         else:
             QMessageBox.warning(self, "No Builds Found", "Could not find valid build codes in the selected folder.")
+
+    def check_build_uniqueness(self):
+        active_ids = [s for s in self.bar_skills if s is not None]
+        if len(active_ids) < 8: return
+        
+        target_set = set(active_ids)
+        matches = []
+        
+        for b in self.engine.builds:
+            b_set = set([s for s in b.skill_ids if s != 0])
+            overlap = len(target_set.intersection(b_set))
+            if overlap >= 4: # Show anything with decent overlap
+                matches.append({'score': overlap, 'build': b})
+        
+        matches.sort(key=lambda x: x['score'], reverse=True)
+        
+        dlg = BuildUniquenessDialog(matches, len(self.engine.builds), self)
+        dlg.exec()
 
     def closeEvent(self, event):
         if hasattr(self, 'worker') and self.worker.isRunning():

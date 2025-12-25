@@ -1,16 +1,45 @@
 import sys
 import os
+import shutil
 
 def resource_path(relative_path):
     """ Get absolute path to resource, works for dev and for PyInstaller """
     try:
+        # PyInstaller creates a temp folder and stores path in _MEIPASS
         base_path = sys._MEIPASS
     except Exception:
         base_path = os.path.abspath(".")
     return os.path.join(base_path, relative_path)
 
+# --- Persistent User Data ---
+USER_DIR = os.path.join(os.path.expanduser("~"), "Documents", "Bookah")
+if not os.path.exists(USER_DIR):
+    os.makedirs(USER_DIR)
+
+# 1. Writable JSON Database
+JSON_FILE = os.path.join(USER_DIR, 'all_skills.json')
+if not os.path.exists(JSON_FILE):
+    # Copy bundled version to Documents on first run
+    default_json = resource_path('all_skills.json')
+    if os.path.exists(default_json):
+        shutil.copy(default_json, JSON_FILE)
+
+# 2. AI Models (Stored in Documents so they can be updated/retrained)
+BEHAVIOR_MODEL_PATH = os.path.join(USER_DIR, 'skill_vectors.model')
+SEMANTIC_MODEL_PATH = os.path.join(USER_DIR, 'description_embeddings.pt')
+
+# Pre-seed models if bundled
+if not os.path.exists(BEHAVIOR_MODEL_PATH):
+    bundled_bm = resource_path('skill_vectors.model')
+    if os.path.exists(bundled_bm): shutil.copy(bundled_bm, BEHAVIOR_MODEL_PATH)
+
+if not os.path.exists(SEMANTIC_MODEL_PATH):
+    bundled_sm = resource_path('description_embeddings.pt')
+    if os.path.exists(bundled_sm): shutil.copy(bundled_sm, SEMANTIC_MODEL_PATH)
+
+# --- Static Data (Bundled in EXE) ---
 DB_FILE = resource_path('master.db') 
-JSON_FILE = resource_path('all_skills.json')
+AQ_DB_FILE = resource_path('skills_aq.db')
 ICON_DIR = resource_path('icons/skill_icons')
 ICON_SIZE = 64
 PIXMAP_CACHE = {}

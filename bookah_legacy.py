@@ -1324,18 +1324,27 @@ class SkillRepository:
         if cache_key in self._cache:
             return self._cache[cache_key]
         
-        target_table = "skills_pvp" if is_pvp else "skills"
-        
-        # 1. ATTEMPT: Fetch Everything (Optimistic)
-        # This works if the table has all columns.
-        query_full = f"""
-            SELECT skill_id, name, profession, attribute, 
-                   energy_cost, activation, recharge, adrenaline, is_pve_only,
-                   description, is_elite,
-                   health_cost, aftercast, combo_req, is_touch, campaign, in_pre
-            FROM {target_table}
-            WHERE skill_id=?
-        """
+        # We always want is_pve_only from the main 'skills' table because 'skills_pvp' 
+        # often has incorrect or missing data for that specific field.
+        if is_pvp:
+            query_full = """
+                SELECT p.skill_id, p.name, p.profession, p.attribute, 
+                       p.energy_cost, p.activation, p.recharge, p.adrenaline, s.is_pve_only,
+                       p.description, p.is_elite,
+                       s.health_cost, s.aftercast, s.combo_req, s.is_touch, s.campaign, s.in_pre
+                FROM skills_pvp p
+                JOIN skills s ON p.skill_id = s.skill_id
+                WHERE p.skill_id=?
+            """
+        else:
+            query_full = """
+                SELECT skill_id, name, profession, attribute, 
+                       energy_cost, activation, recharge, adrenaline, is_pve_only,
+                       description, is_elite,
+                       health_cost, aftercast, combo_req, is_touch, campaign, in_pre
+                FROM skills
+                WHERE skill_id=?
+            """
         
         try:
             self.cursor.execute(query_full, (skill_id,))
@@ -1345,12 +1354,11 @@ class SkillRepository:
                 return self._create_skill_object(row, is_pvp, cache_key)
                 
         except sqlite3.OperationalError:
-            # 2. FALLBACK: HYBRID FETCH
-            # The PvP table is missing columns. We must stitch data together.
+            # FALLBACK: The tables might be missing some columns (older DB versions)
             if is_pvp:
                 return self._fetch_hybrid_skill(skill_id, cache_key)
             else:
-                print(f"Critical DB Error: Main 'skills' table corrupted.")
+                print(f"Critical DB Error: Main 'skills' table corrupted or missing columns.")
                 
         return None
 
@@ -1360,9 +1368,10 @@ class SkillRepository:
         but fills missing Physics Data from PvE table (for Engine).
         """
         # A. Get Display Data from PvP Table (Safe Columns Only)
+        # Note: We skip is_pve_only here and get it from the main table instead.
         query_safe = """
             SELECT skill_id, name, profession, attribute, 
-                   energy_cost, activation, recharge, adrenaline, is_pve_only,
+                   energy_cost, activation, recharge, adrenaline,
                    description, is_elite
             FROM skills_pvp
             WHERE skill_id=?
@@ -1373,9 +1382,9 @@ class SkillRepository:
         if not pvp_row:
             return None
             
-        # B. Get Missing Physics Data from Main Skills Table
+        # B. Get Missing Physics Data and correct is_pve_only from Main Skills Table
         query_phys = """
-            SELECT health_cost, aftercast, combo_req, is_touch, campaign, in_pre
+            SELECT health_cost, aftercast, combo_req, is_touch, campaign, in_pre, is_pve_only
             FROM skills
             WHERE skill_id=?
         """
@@ -1383,12 +1392,19 @@ class SkillRepository:
         phys_row = self.cursor.fetchone()
         
         # Fallback if somehow main table is missing it too
-        phys_data = phys_row if phys_row else (0, 0.75, 0, 0, 0, 0)
+        # Index map for phys_row: 0:hp, 1:after, 2:combo, 3:touch, 4:camp, 5:pre, 6:pve_only
+        phys_data = phys_row if phys_row else (0, 0.75, 0, 0, 0, 0, 0)
         
-        # pvp_row has indices 0-10. phys_data has 0-5.
-        # Combined we get 17 columns: 
-        # 0-10 from pvp_row, 11-16 from phys_data
-        merged_row = list(pvp_row) + list(phys_data)
+        # Re-stitch row for _create_skill_object
+        # Expected order: 
+        # 0:id, 1:name, 2:prof, 3:attr, 4:nrg, 5:act, 6:rech, 7:adr, 8:pve_only, 9:desc, 10:elite,
+        # 11:hp, 12:after, 13:combo, 14:touch, 15:camp, 16:pre
+        merged_row = [
+            pvp_row[0], pvp_row[1], pvp_row[2], pvp_row[3], pvp_row[4], 
+            pvp_row[5], pvp_row[6], pvp_row[7], phys_data[6], pvp_row[8], pvp_row[9],
+            phys_data[0], phys_data[1], phys_data[2], phys_data[3], phys_data[4], phys_data[5]
+        ]
+        
         return self._create_skill_object(merged_row, True, cache_key)
 
     def _create_skill_object(self, row, is_pvp, cache_key):
@@ -1437,11 +1453,18 @@ class SkillRepository:
         return skills
 
     def get_all_skill_ids(self, is_pvp: bool = False) -> List[int]:
-        target_table = "skills_pvp" if is_pvp else "skills"
         try:
-            self.cursor.execute(f"SELECT skill_id FROM {target_table}")
+            if is_pvp:
+                # We join with 'skills' to filter out PvE-only skills at the database level.
+                # Only return skills that are in 'skills_pvp' AND are NOT marked as PvE-only in the main table.
+                query = "SELECT p.skill_id FROM skills_pvp p JOIN skills s ON p.skill_id = s.skill_id WHERE s.is_pve_only = 0"
+            else:
+                query = "SELECT skill_id FROM skills"
+            
+            self.cursor.execute(query)
             return [row[0] for row in self.cursor.fetchall()]
-        except:
+        except Exception as e:
+            print(f"Error in get_all_skill_ids: {e}")
             return []
 
 class AttributeEditor(QFrame):

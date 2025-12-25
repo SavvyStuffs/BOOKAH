@@ -4,13 +4,14 @@ from PyQt6.QtWidgets import QApplication, QSplashScreen
 from PyQt6.QtGui import QPixmap, QCursor, QIcon
 from PyQt6.QtCore import Qt, QTimer
 from src.ui.main_window import MainWindow
-from src.constants import resource_path
+from src.constants import resource_path, JSON_FILE, DB_FILE
+from src.engine import SynergyEngine 
 
 if __name__ == "__main__":
     # Fix Taskbar Icon on Windows
     if sys.platform == 'win32':
         import ctypes
-        myappid = 'bookah.builder.gui.1.0' # arbitrary string
+        myappid = 'bookah.builder.gui.1.0'
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
 
     app = QApplication(sys.argv)
@@ -47,15 +48,22 @@ if __name__ == "__main__":
     splash.show()
     app.processEvents()
     
-    # Initialize Main Window (Load DB, etc.)
-    window = MainWindow()
+    # --- LOAD ENGINE WHILE SPLASH IS SHOWING ---
+    print("Loading Synergy Engine...")
+    # This trains the neural net if needed
+    synergy_engine = SynergyEngine(JSON_FILE, DB_FILE)
     
-    # Function to show main window and close splash
+    # Initialize Main Window with the loaded engine
+    window = MainWindow(engine=synergy_engine)
+    
     def show_main():
         window.show()
         splash.finish(window)
         
-    # Enforce minimum 4 second splash
-    QTimer.singleShot(4000, show_main)
+    # Enforce minimum 2 second splash (or until loaded)
+    # Since loading happens synchronously above, the timer starts AFTER load.
+    # So 100ms is fine just to yield UI loop, but user wanted "splash screen visible".
+    # We can use 2000ms to be safe/nice.
+    QTimer.singleShot(2000, show_main)
     
     sys.exit(app.exec())

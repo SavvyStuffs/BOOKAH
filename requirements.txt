@@ -3,3 +3,8 @@ PyQt6-WebEngine
 pyvis==0.3.2
 networkx
 pytest
+gensim
+sentence-transformers
+torch
+numpy
+scikit-learn

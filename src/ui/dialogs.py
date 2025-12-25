@@ -327,3 +327,46 @@ class LocationManagerDialog(QDialog):
         else:
             item = self.list_missions.currentItem()
         return item.text() if item else None
+
+class BuildUniquenessDialog(QDialog):
+    def __init__(self, matches, total_builds, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Build Uniqueness Check")
+        self.resize(500, 400)
+        
+        layout = QVBoxLayout(self)
+        
+        # Summary
+        if not matches:
+            summary = f"<h3>This build is Unique!</h3><p>No other builds in the database ({total_builds} total) share 8/8 skills.</p>"
+        else:
+            exact_matches = [m for m in matches if m['score'] == 8]
+            if exact_matches:
+                summary = f"<h3>Found {len(exact_matches)} Exact Matches!</h3>"
+            else:
+                summary = f"<h3>Partial Matches Only</h3><p>Highest overlap is {matches[0]['score']}/8 skills.</p>"
+        
+        lbl_summary = QLabel(summary)
+        lbl_summary.setWordWrap(True)
+        layout.addWidget(lbl_summary)
+        
+        # List of matches
+        self.list_widget = QListWidget()
+        
+        # matches is list of {'score': int, 'build': Build}
+        for m in matches:
+            score = m['score']
+            b = m['build']
+            
+            # Profession string
+            p1 = PROF_MAP.get(int(b.primary_prof) if b.primary_prof.isdigit() else 0, "X")
+            p2 = PROF_MAP.get(int(b.secondary_prof) if b.secondary_prof.isdigit() else 0, "X")
+            
+            text = f"[{score}/8 Matches] {p1}/{p2} - {b.team} ({b.category})"
+            self.list_widget.addItem(text)
+            
+        layout.addWidget(self.list_widget)
+        
+        btn_close = QPushButton("Close")
+        btn_close.clicked.connect(self.accept)
+        layout.addWidget(btn_close)
