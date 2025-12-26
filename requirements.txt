@@ -8,3 +8,9 @@ sentence-transformers
 torch
 numpy
 scikit-learn
+
+requests
+packaging
+
+boto3
+python-dotenv

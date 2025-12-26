@@ -7,6 +7,7 @@ from PyQt6.QtGui import QDrag, QPixmap, QPainter, QColor, QFont, QIcon
 
 from src.constants import ICON_DIR, ICON_SIZE, ATTR_MAP, PROF_MAP, PROF_SHORT_MAP, PIXMAP_CACHE
 from src.models import Skill, Build
+from src.ui.theme import get_color
 
 class ClickableLabel(QLabel):
     clicked = pyqtSignal()
@@ -29,7 +30,11 @@ class DraggableSkillIcon(QLabel):
             self.setPixmap(QPixmap(path).scaled(ICON_SIZE, ICON_SIZE, Qt.AspectRatioMode.KeepAspectRatio))
         else:
             self.setText(skill.name)
-            self.setStyleSheet("border: 1px solid #555; background-color: #222; color: #fff;")
+            self.refresh_theme()
+
+    def refresh_theme(self):
+        if not self.pixmap():
+            self.setStyleSheet(f"border: 1px solid {get_color('slot_border')}; background-color: {get_color('input_bg')}; color: {get_color('text_primary')};")
 
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
@@ -59,23 +64,20 @@ class SkillSlot(QFrame):
         
         self.setFixedSize(ICON_SIZE + 4, ICON_SIZE + 4)
         self.setAcceptDrops(True)
-        self.setStyleSheet("""
-            QFrame {
-                border: 2px dashed #555;
-                background-color: #1a1a1a;
-                border-radius: 4px;
-            }
-        """)
+        self.refresh_theme()
         
         self.icon_label = QLabel(self)
         self.icon_label.setGeometry(2, 2, ICON_SIZE, ICON_SIZE)
         self.icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.icon_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents) 
 
+    def refresh_theme(self):
+        self.update_style()
+
     def dragEnterEvent(self, event):
         if event.mimeData().hasText():
             event.accept()
-            self.setStyleSheet("border: 2px solid #00AAFF; background-color: #222;")
+            self.setStyleSheet(f"border: 2px solid {get_color('border_accent')}; background-color: {get_color('slot_bg_drag')};")
         else:
             event.ignore()
 
@@ -120,9 +122,9 @@ class SkillSlot(QFrame):
             pix.load(path)
         else:
             pix = QPixmap(ICON_SIZE, ICON_SIZE)
-            pix.fill(QColor("#333"))
+            pix.fill(QColor(get_color("bg_hover")))
             p = QPainter(pix)
-            p.setPen(Qt.GlobalColor.white)
+            p.setPen(QColor(get_color("text_primary")))
             p.drawText(pix.rect(), Qt.AlignmentFlag.AlignCenter, skill_obj.name if skill_obj else str(skill_id))
             p.end()
 
@@ -169,15 +171,15 @@ class SkillSlot(QFrame):
 
     def update_style(self):
         if self.current_skill_id and not self.is_ghost:
-            self.setStyleSheet("border: 2px solid #666; background-color: #2a2a2a;")
+            self.setStyleSheet(f"border: 2px solid {get_color('border_light')}; background-color: {get_color('slot_bg_equipped')};")
         else:
-            self.setStyleSheet("border: 2px dashed #555; background-color: #1a1a1a;")
+            self.setStyleSheet(f"border: 2px dashed {get_color('slot_border')}; background-color: {get_color('slot_bg')};")
 
 class SkillInfoPanel(QFrame):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setMinimumWidth(100)
-        self.setStyleSheet("background-color: #1a1a1a; border-left: 1px solid #444;")
+        self.refresh_theme()
         
         # Main Layout for the QFrame itself
         main_layout = QVBoxLayout(self)
@@ -194,22 +196,21 @@ class SkillInfoPanel(QFrame):
         self.content_layout = QVBoxLayout(self.content_widget)
         
         self.lbl_name = QLabel("Select a skill")
-        self.lbl_name.setStyleSheet("font-size: 16px; font-weight: bold; color: #00AAFF;")
         self.lbl_name.setWordWrap(True)
         self.lbl_name.setAlignment(Qt.AlignmentFlag.AlignCenter)
         
         self.lbl_icon = QLabel()
         self.lbl_icon.setFixedSize(128, 128)
-        self.lbl_icon.setStyleSheet("border: 1px solid #444;")
+        self.lbl_icon.setStyleSheet(f"border: 1px solid {get_color('border')};")
         
         self.txt_desc = QLabel("")
         self.txt_desc.setWordWrap(True)
-        self.txt_desc.setStyleSheet("color: #ccc; font-style: italic;")
         self.txt_desc.setAlignment(Qt.AlignmentFlag.AlignCenter)
         
         self.details = QLabel("")
-        self.details.setStyleSheet("color: #aaa;")
         self.details.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        self.refresh_labels()
         
         self.content_layout.addWidget(self.lbl_name)
         self.content_layout.addWidget(self.lbl_icon, alignment=Qt.AlignmentFlag.AlignCenter)
@@ -220,6 +221,18 @@ class SkillInfoPanel(QFrame):
         # Finalize Scroll Area
         self.scroll_area.setWidget(self.content_widget)
         main_layout.addWidget(self.scroll_area)
+
+    def refresh_theme(self):
+        self.setStyleSheet(f"background-color: {get_color('bg_tertiary')}; border-left: 1px solid {get_color('border')};")
+        # Check if initialized fully
+        if hasattr(self, 'lbl_name'):
+            self.refresh_labels()
+
+    def refresh_labels(self):
+        self.lbl_name.setStyleSheet(f"font-size: 16px; font-weight: bold; color: {get_color('text_accent')};")
+        self.lbl_icon.setStyleSheet(f"border: 1px solid {get_color('border')};")
+        self.txt_desc.setStyleSheet(f"color: {get_color('text_secondary')}; font-style: italic;")
+        self.details.setStyleSheet(f"color: {get_color('text_tertiary')};")
 
     def update_info(self, skill: Skill, repo=None, rank=0):
         self.lbl_name.setText(skill.name)
@@ -266,7 +279,7 @@ class SkillInfoPanel(QFrame):
                         parts = line.split('|')
                         if len(parts) >= 2:
                             name, url = parts[0], parts[1]
-                            links.append(f'<a href="{url}" style="color: #00AAFF;">{name}</a>')
+                            links.append(f'<a href="{url}" style="color: {get_color("text_accent")};">{name}</a>')
                         else:
                             links.append(line)
                     return "<br/>".join(links)
@@ -297,9 +310,9 @@ class SkillInfoPanel(QFrame):
     def update_monster_info(self, monster_data):
         self.lbl_name.setText(monster_data['name'])
         if monster_data.get('is_boss'):
-            self.lbl_name.setStyleSheet("font-size: 16px; font-weight: bold; color: #FFD700;")
+            self.lbl_name.setStyleSheet(f"font-size: 16px; font-weight: bold; color: {get_color('text_warning')};")
         else:
-            self.lbl_name.setStyleSheet("font-size: 16px; font-weight: bold; color: #00AAFF;")
+            self.lbl_name.setStyleSheet(f"font-size: 16px; font-weight: bold; color: {get_color('text_accent')};")
             
         self.lbl_icon.clear()
         
@@ -330,17 +343,7 @@ class BuildPreviewWidget(QFrame):
         self.repo = repo
         self.setFixedHeight(ICON_SIZE + 80) 
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        self.setStyleSheet("""
-            QFrame {
-                background-color: #222;
-                border: 1px solid #444;
-                border-radius: 4px;
-            }
-            QFrame:hover {
-                background-color: #333;
-                border: 1px solid #666;
-            }
-        """)
+        self.refresh_theme()
         
         layout = QHBoxLayout(self)
         layout.setContentsMargins(4, 4, 4, 4)
@@ -352,7 +355,7 @@ class BuildPreviewWidget(QFrame):
         p2 = PROF_SHORT_MAP.get(p2_name, "X")
         
         lbl_prof = QLabel(f"{p1}/{p2}")
-        lbl_prof.setStyleSheet("color: #AAA; font-weight: bold; font-size: 14px; border: none; background: transparent;")
+        lbl_prof.setStyleSheet(f"color: {get_color('text_tertiary')}; font-weight: bold; font-size: 14px; border: none; background: transparent;")
         lbl_prof.setFixedWidth(50)
         lbl_prof.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(lbl_prof)
@@ -371,27 +374,45 @@ class BuildPreviewWidget(QFrame):
             else:
                 placeholder = QFrame()
                 placeholder.setFixedSize(ICON_SIZE + 10, ICON_SIZE + 60)
-                placeholder.setStyleSheet("background: transparent; border: 1px dashed #444;")
+                placeholder.setStyleSheet(f"background: transparent; border: 1px dashed {get_color('border')};")
                 layout.addWidget(placeholder)
             
         layout.addStretch() 
         
-        btn_load = QPushButton("Load")
-        btn_load.setFixedSize(60, 40)
-        btn_load.setStyleSheet("""
-            QPushButton {
-                background-color: #0066CC; 
-                color: white; 
+        self.btn_load = QPushButton("Load")
+        self.btn_load.setFixedSize(60, 40)
+        self.btn_load.clicked.connect(lambda: self.clicked.emit(self.build.code))
+        self.refresh_button_style()
+        layout.addWidget(self.btn_load)
+
+    def refresh_theme(self):
+        self.setStyleSheet(f"""
+            QFrame {{
+                background-color: {get_color('bg_secondary')};
+                border: 1px solid {get_color('border')};
+                border-radius: 4px;
+            }}
+            QFrame:hover {{
+                background-color: {get_color('bg_hover')};
+                border: 1px solid {get_color('border_light')};
+            }}
+        """)
+        if hasattr(self, 'btn_load'):
+            self.refresh_button_style()
+
+    def refresh_button_style(self):
+        self.btn_load.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {get_color('border_accent')}; 
+                color: #FFFFFF; 
                 border: none; 
                 border-radius: 4px;
                 font-weight: bold;
-            }
-            QPushButton:hover {
-                background-color: #0088FF;
-            }
+            }}
+            QPushButton:hover {{
+                background-color: {get_color('text_link')};
+            }}
         """)
-        btn_load.clicked.connect(lambda: self.clicked.emit(self.build.code))
-        layout.addWidget(btn_load)
 
 class SkillItemDelegate(QStyledItemDelegate):
     """
@@ -419,14 +440,14 @@ class SkillItemDelegate(QStyledItemDelegate):
         
         # Background & Border
         if option.state & QStyle.StateFlag.State_MouseOver:
-            painter.setBrush(QColor("#333"))
-            painter.setPen(QColor("#666"))
+            painter.setBrush(QColor(get_color("bg_hover")))
+            painter.setPen(QColor(get_color("border_light")))
         elif option.state & QStyle.StateFlag.State_Selected:
-            painter.setBrush(QColor("#2a2a2a"))
-            painter.setPen(QColor("#00AAFF"))
+            painter.setBrush(QColor(get_color("bg_selected")))
+            painter.setPen(QColor(get_color("border_accent")))
         else:
-            painter.setBrush(QColor("#222"))
-            painter.setPen(QColor("#444"))
+            painter.setBrush(QColor(get_color("bg_secondary")))
+            painter.setPen(QColor(get_color("border")))
             
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         painter.drawRoundedRect(rect, 4, 4)
@@ -444,7 +465,7 @@ class SkillItemDelegate(QStyledItemDelegate):
         text_height = rect.bottom() - text_y - 2
         text_rect = QRect(rect.left() + 2, text_y, rect.width() - 4, text_height)
         
-        painter.setPen(QColor("#EEE"))
+        painter.setPen(QColor(get_color("text_primary")))
         # Scale font size: Base 8, increases slightly with icon size
         font_size = 8 if self.icon_size <= 64 else 11
         painter.setFont(QFont("Arial", font_size))
@@ -472,11 +493,15 @@ class SkillLibraryWidget(QListWidget):
         self.setSpacing(5)
         # Fix for slow scrolling: Force pixel-based scrolling
         self.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
-        self.setStyleSheet("QListWidget { background-color: #111; border: none; }")
+        self.refresh_theme()
         
         # Attach the custom painter
         self.delegate = SkillItemDelegate(self)
         self.setItemDelegate(self.delegate)
+
+    def refresh_theme(self):
+        self.setStyleSheet(f"QListWidget {{ background-color: {get_color('bg_primary')}; border: none; }}")
+        self.viewport().update()
 
     def update_suggestions(self, suggestions):
         """
@@ -513,7 +538,7 @@ class SkillLibraryWidget(QListWidget):
             confidence_pct = int(score * 100)
             tooltip_text = (
                 f"<b>{skill.name}</b><br/>"
-                f"<span style='color:#00AAFF;'>Match: {reason}</span><br/>"
+                f"<span style='color:{get_color('text_accent')};'>Match: {reason}</span><br/>"
                 f"Confidence: {confidence_pct}%<br/><hr/>"
                 f"{skill.description}"
             )
@@ -581,7 +606,7 @@ class SkillLibraryWidget(QListWidget):
             item.setData(Qt.ItemDataRole.UserRole, m) 
             
             if m.get('is_boss'):
-                item.setForeground(QColor("#FFD700")) # GOLD
+                item.setForeground(QColor(get_color("text_warning"))) # GOLD
                 font = item.font()
                 font.setBold(True)
                 item.setFont(font)

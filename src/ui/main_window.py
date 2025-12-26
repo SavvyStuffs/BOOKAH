@@ -3,7 +3,7 @@ import os
 import json
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QComboBox, QLabel, QSplitter, 
-    QTabWidget, QCheckBox, QPushButton, QFileDialog, QMessageBox, QFrame, QLineEdit, QApplication, QListWidgetItem, QListWidget, QSizePolicy, QGridLayout, QStyle
+    QTabWidget, QCheckBox, QPushButton, QFileDialog, QMessageBox, QFrame, QLineEdit, QApplication, QListWidgetItem, QListWidget, QSizePolicy, QGridLayout, QStyle, QProgressDialog
 )
 from PyQt6.QtCore import Qt, QTimer, QUrl, QThread, pyqtSignal, QSize
 from PyQt6.QtGui import QIcon, QPixmap
@@ -22,6 +22,9 @@ from src.utils import GuildWarsTemplateDecoder, GuildWarsTemplateEncoder
 from src.ui.components import SkillSlot, SkillInfoPanel, SkillLibraryWidget, BuildPreviewWidget
 from src.ui.attribute_editor import AttributeEditor
 from src.ui.dialogs import TeamManagerDialog, LocationManagerDialog, BuildUniquenessDialog
+from src.ui.settings_tab import SettingsTab
+from src.ui.theme import update_theme, get_color
+from src.updater import UpdateChecker, UpdateDownloader, install_and_restart
 
 class FilterWorker(QThread):
     finished = pyqtSignal(list)
@@ -48,6 +51,7 @@ class FilterWorker(QThread):
             is_elites_only = self.filters['is_elites_only']
             is_no_elites = self.filters['is_no_elites']
             is_pre_only = self.filters['is_pre_only']
+            allowed_campaigns = self.filters.get('allowed_campaigns')
 
             # 1. Get initial list of IDs based on team/category
             if cat == "All" and team == "All":
@@ -107,6 +111,11 @@ class FilterWorker(QThread):
                     if is_pre_only and not skill.in_pre:
                         continue
                         
+                    # --- CAMPAIGN FILTER ---
+                    if allowed_campaigns is not None:
+                        if skill.campaign != 0 and skill.campaign not in allowed_campaigns:
+                            continue
+                        
                     # --- PROFESSION ---
                     if target_prof_id != -1:
                         if skill.profession != target_prof_id:
@@ -127,7 +136,7 @@ class FilterWorker(QThread):
 class SynergyWorker(QThread):
     results_ready = pyqtSignal(list)
 
-    def __init__(self, engine, active_skill_ids, prof_id=0, mode="legacy", debug=False, is_pre=False):
+    def __init__(self, engine, active_skill_ids, prof_id=0, mode="legacy", debug=False, is_pre=False, allowed_campaigns=None):
         super().__init__()
         self.engine = engine
         self.active_skill_ids = active_skill_ids
@@ -135,6 +144,7 @@ class SynergyWorker(QThread):
         self.mode = mode
         self.debug = debug
         self.is_pre = is_pre
+        self.allowed_campaigns = allowed_campaigns
         self._is_interrupted = False
 
     def run(self):
@@ -144,7 +154,8 @@ class SynergyWorker(QThread):
                 self.active_skill_ids, 
                 limit=100, 
                 mode=self.mode, 
-                is_pre=self.is_pre
+                is_pre=self.is_pre,
+                allowed_campaigns=self.allowed_campaigns
             )
             
             if not self.isInterruptionRequested():
@@ -155,7 +166,7 @@ class SynergyWorker(QThread):
     def stop(self):
         self.requestInterruption() # New standard PyQt6 way
         self.quit()
-        self.wait()
+        self.wait(500)
 
 class MainWindow(QMainWindow):
     def __init__(self, engine=None):
@@ -192,13 +203,79 @@ class MainWindow(QMainWindow):
         self.team_synergy_skills = [] # Skills from loaded team for Smart Mode
         self._last_attr_state = None
         
+        self.pending_update = None # Store update info if window is not visible
+
         self.setAcceptDrops(True) # Enable Drag & Drop
         # Debounce timer for search/filter inputs
         self.filter_debounce_timer = QTimer()
         self.filter_debounce_timer.setSingleShot(True)
         self.filter_debounce_timer.timeout.connect(self._run_filter)
         self.init_ui()
+        
+        # Apply initial theme
+        initial_theme = self.settings_tab.settings.value("theme", "Auto")
+        self.apply_theme(initial_theme)
+        
         self.apply_filters() 
+
+        # Auto-Update Check
+        self.update_checker = UpdateChecker()
+        self.update_checker.update_available.connect(self.on_update_available)
+        self.update_checker.error.connect(lambda e: print(f"Update Check Error: {e}"))
+        self.update_checker.check()
+
+    def on_update_available(self, new_version, download_url):
+        if self.isVisible():
+            self._show_update_dialog(new_version, download_url)
+        else:
+            self.pending_update = (new_version, download_url)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if self.pending_update:
+            new_version, download_url = self.pending_update
+            self.pending_update = None
+            QTimer.singleShot(500, lambda: self._show_update_dialog(new_version, download_url))
+
+    def _show_update_dialog(self, new_version, download_url):
+        reply = QMessageBox.question(
+            self, 
+            "Update Available", 
+            f"A new version ({new_version}) is available.\nDo you want to download and update now?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        
+        if reply == QMessageBox.StandardButton.Yes:
+            self.start_update(download_url)
+
+    def start_update(self, url):
+        self.progress_dlg = QProgressDialog("Downloading Update...", "Cancel", 0, 100, self)
+        self.progress_dlg.setWindowModality(Qt.WindowModality.WindowModal)
+        self.progress_dlg.setAutoClose(False)
+        self.progress_dlg.setAutoReset(False)
+        self.progress_dlg.show()
+
+        self.downloader = UpdateDownloader(url)
+        self.downloader.progress.connect(self.on_update_progress)
+        self.downloader.finished.connect(self.on_update_downloaded)
+        self.downloader.error.connect(self.on_update_error)
+        
+        self.progress_dlg.canceled.connect(self.downloader.terminate)
+        self.downloader.start()
+
+    def on_update_progress(self, percent):
+        self.progress_dlg.setValue(percent)
+
+    def on_update_downloaded(self, zip_path):
+        self.progress_dlg.setValue(100)
+        self.progress_dlg.setLabelText("Installing... App will restart.")
+        
+        # Give UI a moment to update
+        QTimer.singleShot(500, lambda: install_and_restart(zip_path))
+
+    def on_update_error(self, message):
+        self.progress_dlg.close()
+        QMessageBox.critical(self, "Update Failed", f"An error occurred:\n{message}")
 
     def init_ui(self):
         self.tabs = QTabWidget()
@@ -212,6 +289,16 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.map_tab, "Synergy Map")
         self.init_map_ui(self.map_tab)
 
+        self.settings_tab = SettingsTab()
+        self.settings_tab.theme_changed.connect(self.apply_theme)
+        self.settings_tab.campaigns_changed.connect(self.on_campaigns_changed)
+        self.tabs.addTab(self.settings_tab, "Settings")
+
+    def on_campaigns_changed(self, campaigns):
+        # Refresh both UI list and AI suggestions
+        self.apply_filters()
+        self.update_suggestions()
+
     def init_map_ui(self, parent_widget):
         layout = QVBoxLayout(parent_widget)
         if HAS_WEBENGINE:
@@ -224,6 +311,75 @@ class MainWindow(QMainWindow):
                 layout.addWidget(QLabel(f"Error loading map: {e}"))
         else:
             layout.addWidget(QLabel("PyQt6-WebEngine is not installed."))
+
+    def apply_theme(self, mode):
+        # Update Global Theme State & Palette
+        palette = update_theme(mode)
+        app = QApplication.instance()
+        app.setPalette(palette)
+        
+        # Enforce global tooltip style on the application instance
+        app.setStyleSheet(f"""
+            QToolTip {{ 
+                background-color: {get_color('tooltip_bg')}; 
+                color: {get_color('tooltip_text')}; 
+                border: 1px solid {get_color('border')}; 
+                padding: 4px;
+            }}
+        """)
+        
+        # Propagate to Children
+        self.refresh_theme()
+        
+        if hasattr(self, 'library_widget'): self.library_widget.refresh_theme()
+        if hasattr(self, 'info_panel'): self.info_panel.refresh_theme()
+        if hasattr(self, 'attr_editor'): self.attr_editor.refresh_theme()
+        
+        # Refresh slots
+        if hasattr(self, 'slots'):
+            for slot in self.slots:
+                slot.refresh_theme()
+                
+        # Force a repaint of the window to apply palette changes
+        self.update()
+
+    def refresh_theme(self):
+        # Update stylesheets that were hardcoded
+        self.setStyleSheet(f"QMainWindow {{ background-color: {get_color('bg_secondary')}; }}")
+        
+        # Bar Container
+        if hasattr(self, 'bar_container'):
+            self.bar_container.setStyleSheet(f"background-color: {get_color('bg_tertiary')}; border-top: 1px solid {get_color('border')};")
+            
+        # Code Box
+        if hasattr(self, 'edit_code'):
+            self.edit_code.setStyleSheet(f"background-color: {get_color('input_bg')}; color: {get_color('input_text')}; font-weight: bold; border: 1px solid {get_color('border')};")
+            
+        # Buttons
+        btn_style = f"""
+            QPushButton {{ background-color: {get_color('btn_bg')}; color: {get_color('btn_text')}; border-radius: 4px; font-size: 10px; }}
+            QPushButton:hover {{ background-color: {get_color('btn_bg_hover')}; }}
+        """
+        
+        cycle_style = f"""
+            QPushButton {{ background-color: {get_color('btn_bg')}; color: {get_color('btn_text')}; border-radius: 4px; font-size: 10px; }}
+            QPushButton:hover {{ background-color: {get_color('btn_bg_hover')}; }}
+        """
+        
+        if hasattr(self, 'btn_cycle'): self.btn_cycle.setStyleSheet(cycle_style)
+        if hasattr(self, 'btn_select_zone'): 
+            # Only if not active? Actually active style overrides this.
+            # We can leave specialized buttons alone if they have dynamic styles
+            pass
+            
+        if hasattr(self, 'btn_reset'):
+            self.btn_reset.setStyleSheet(f"background-color: {get_color('bg_hover')}; color: {get_color('text_warning')}; border-radius: 4px;")
+
+        if hasattr(self, 'lbl_prof_display'):
+            self.lbl_prof_display.setStyleSheet(f"color: {get_color('text_tertiary')}; font-weight: bold;")
+
+        if hasattr(self, 'check_smart_mode'):
+            self.check_smart_mode.setStyleSheet(f"color: {get_color('text_link')}; font-weight: bold;")
 
     def update_team_dropdown(self):
         selected_cat = self.combo_cat.currentText()
@@ -453,10 +609,10 @@ class MainWindow(QMainWindow):
         main_layout.addWidget(self.splitter, stretch=1)
 
         # --- 3. Build Bar (Updated Layout) ---
-        bar_container = QFrame()
-        bar_container.setFixedHeight(140) # Increased height slightly to fit checkbox
-        bar_container.setStyleSheet("background-color: #111; border-top: 1px solid #444;")
-        container_layout = QHBoxLayout(bar_container)
+        self.bar_container = QFrame()
+        self.bar_container.setFixedHeight(140) # Increased height slightly to fit checkbox
+        self.bar_container.setStyleSheet(f"background-color: {get_color('bg_primary')}; border-top: 1px solid {get_color('border')};")
+        container_layout = QHBoxLayout(self.bar_container)
 
         # --- NEW: Cycle & Debug Column ---
         cycle_container = QWidget()
@@ -577,7 +733,7 @@ class MainWindow(QMainWindow):
         
         self.edit_code = QLineEdit()
         self.edit_code.setPlaceholderText("Paste build code here...")
-        self.edit_code.setStyleSheet("background-color: #222; color: #00AAFF; font-weight: bold;")
+        self.edit_code.setStyleSheet(f"background-color: {get_color('input_bg')}; color: {get_color('input_text')}; font-weight: bold;")
         code_layout.addWidget(self.edit_code)
 
         btn_layout = QHBoxLayout()
@@ -596,7 +752,7 @@ class MainWindow(QMainWindow):
         
         code_layout.addLayout(btn_layout)
         container_layout.addWidget(code_box)
-        main_layout.addWidget(bar_container)
+        main_layout.addWidget(self.bar_container)
 
     def on_smart_mode_toggled(self, checked):
         if hasattr(self, 'btn_load_team_synergy'):
@@ -964,11 +1120,33 @@ class MainWindow(QMainWindow):
         # Debounce filter changes
         self.filter_debounce_timer.start(250)
 
+    def get_allowed_campaigns(self):
+        # Map names to IDs
+        # Prophecies=1, Factions=2, Nightfall=3, EotN=4
+        camp_map = {
+            'Prophecies': 1,
+            'Factions': 2,
+            'Nightfall': 3,
+            'Eye of the North': 4
+        }
+        
+        # Read directly from checkboxes in settings tab if possible, or use saved settings
+        # The SettingsTab updates QSettings immediately.
+        # We can read QSettings or ask the tab. Reading from tab UI is safer for sync.
+        
+        allowed = set()
+        if self.settings_tab.check_prophecies.isChecked(): allowed.add(1)
+        if self.settings_tab.check_factions.isChecked(): allowed.add(2)
+        if self.settings_tab.check_nightfall.isChecked(): allowed.add(3)
+        if self.settings_tab.check_eotn.isChecked(): allowed.add(4)
+        
+        return allowed
+
     def _run_filter(self):
         # Stop any active filtering to prevent crashes
         if hasattr(self, 'filter_worker') and self.filter_worker.isRunning():
             self.filter_worker.requestInterruption()
-            self.filter_worker.wait()
+            self.filter_worker.wait(200)
 
         # [REMOVED] self.lbl_loading.show() <- This was causing the potential next crash
 
@@ -995,7 +1173,8 @@ class MainWindow(QMainWindow):
             'is_pve_only': self.check_pve_only.isChecked(),
             'is_elites_only': self.check_elites_only.isChecked(),
             'is_no_elites': self.check_no_elites.isChecked(),
-            'is_pre_only': self.check_pre.isChecked() if hasattr(self, 'check_pre') else False
+            'is_pre_only': self.check_pre.isChecked() if hasattr(self, 'check_pre') else False,
+            'allowed_campaigns': self.get_allowed_campaigns()
         }
 
         self.filter_worker = FilterWorker(DB_FILE, self.engine, filters)
@@ -1252,9 +1431,10 @@ class MainWindow(QMainWindow):
         is_debug = False
         mode = "smart" if hasattr(self, 'check_smart_mode') and self.check_smart_mode.isChecked() else "legacy"
         is_pre = self.check_pre.isChecked() if hasattr(self, 'check_pre') else False
+        allowed_campaigns = self.get_allowed_campaigns()
 
         # ALWAYS use self.engine (Neural/Hybrid)
-        self.worker = SynergyWorker(self.engine, active_ids, pid, mode, debug=is_debug, is_pre=is_pre)
+        self.worker = SynergyWorker(self.engine, active_ids, pid, mode, debug=is_debug, is_pre=is_pre, allowed_campaigns=allowed_campaigns)
         self.worker.results_ready.connect(self.on_synergies_loaded)
         self.worker.start()
 
@@ -1533,6 +1713,18 @@ class MainWindow(QMainWindow):
         dlg.exec()
 
     def closeEvent(self, event):
+        # Stop Synergy Worker
         if hasattr(self, 'worker') and self.worker.isRunning():
-            self.worker.stop()
+            self.worker.requestInterruption()
+            try: self.worker.results_ready.disconnect()
+            except: pass
+            self.worker.wait(500)
+
+        # Stop Filter Worker
+        if hasattr(self, 'filter_worker') and self.filter_worker.isRunning():
+            self.filter_worker.requestInterruption()
+            try: self.filter_worker.finished.disconnect()
+            except: pass
+            self.filter_worker.wait(500)
+
         event.accept()

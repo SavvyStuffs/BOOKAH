@@ -40,6 +40,7 @@ class TeamManagerDialog(QDialog):
         # Search Bar
         self.edit_search = QLineEdit()
         self.edit_search.setPlaceholderText("Search teams...")
+        self.edit_search.setStyleSheet("QLineEdit::placeholder { color: white; }")
         self.edit_search.textChanged.connect(self.refresh_list)
         layout.addWidget(self.edit_search)
         

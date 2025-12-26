@@ -69,6 +69,8 @@ class BuildState:
         # Casters: Monk(3), Necro(4), Mesmer(5), Ele(6), Rit(8)
         self.is_caster = primary_prof_id in [3, 4, 5, 6, 8]
         
+        self.elite_count = 0
+        
         # Energy Capacity
         self.max_energy_capacity = 60 if self.is_caster else 30
         self.base_regen = 1.33 if self.is_caster else 0.66
@@ -119,6 +121,7 @@ class BuildState:
             self.energy_drain_per_sec += (nrg / rech)
             
         # 2. Law of Occupancy & Mechanics
+        if skill[10]: self.elite_count += 1
         if "stance" in desc and "form" not in name: self.stance_count += 1
         if "weapon spell" in desc: self.weapon_spell_count += 1
         if "hex" in desc and "spell" in desc: 
@@ -907,7 +910,7 @@ class SynergyEngine:
             print(f"[Engine] Summary Error: {e}")
             return []
 
-    def get_suggestions(self, active_skill_ids: List[int], limit=100, category=None, team=None, min_overlap=None, mode="legacy", is_pre=False) -> List[tuple]:
+    def get_suggestions(self, active_skill_ids: List[int], limit=100, category=None, team=None, min_overlap=None, mode="legacy", is_pre=False, allowed_campaigns=None) -> List[tuple]:
         # ...
         # 1. Cold Start Check
         if not active_skill_ids:
@@ -939,9 +942,18 @@ class SynergyEngine:
         for sid, score in neural_suggestions:
             if sid in active_skill_ids: continue
 
-            cursor.execute("SELECT skill_id, name, is_elite, profession, in_pre FROM skills WHERE skill_id = ?", (sid,))
+            cursor.execute("SELECT skill_id, name, is_elite, profession, in_pre, campaign FROM skills WHERE skill_id = ?", (sid,))
             row = cursor.fetchone()
             
+            if row:
+                # Campaign Filter
+                if allowed_campaigns is not None:
+                    # 0=Core, 1=Prophecies, 2=Factions, 3=Nightfall, 4=EotN
+                    # We always allow Core (0)
+                    camp = row[5]
+                    if camp != 0 and camp not in allowed_campaigns:
+                        continue
+
             if not row: 
                 # Try PvP table fallback?
                 # If Pre-Searing is active, PvP skills are generally invalid unless they exist in Pre (which they should be in 'skills' table then)
@@ -956,6 +968,10 @@ class SynergyEngine:
                 # Check Pre-Searing constraint
                 if is_pre and not row[4]:
                     continue
+
+            # Elite Filter: Only show additional elites if bar has >= 3 skills
+            if bool(row[2]) and context.elite_count > 0 and len(active_skill_ids) < 3:
+                continue
             
             final_results.append((sid, score))
             

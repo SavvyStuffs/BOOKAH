@@ -2,6 +2,7 @@ from PyQt6.QtWidgets import QFrame, QVBoxLayout, QLabel, QScrollArea, QWidget, Q
 from PyQt6.QtCore import pyqtSignal
 from src.constants import ATTR_MAP, PROF_PRIMARY_ATTR
 from src.models import Skill
+from src.ui.theme import get_color
 from typing import List
 
 class AttributeEditor(QFrame):
@@ -14,14 +15,12 @@ class AttributeEditor(QFrame):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setFrameStyle(QFrame.Shape.StyledPanel | QFrame.Shadow.Raised)
-        self.setStyleSheet("background-color: #1a1a1a; border: 1px solid #333; border-radius: 4px;")
         
         self.layout = QVBoxLayout(self)
         self.layout.setContentsMargins(5, 5, 5, 5)
         self.layout.setSpacing(2)
         
         self.title = QLabel("Attributes (0/200)")
-        self.title.setStyleSheet("font-weight: bold; color: #aaa; border: none;")
         self.layout.addWidget(self.title)
         
         self.scroll = QScrollArea()
@@ -52,6 +51,20 @@ class AttributeEditor(QFrame):
             9: [37, 38, 39, 40],              # Paragon: Spear, Command, Motiv, Leadership
             10: [41, 42, 43, 44]              # Dervish: Scythe, Wind, Earth, Mysticism
         }
+        self.refresh_theme()
+
+    def refresh_theme(self):
+        self.setStyleSheet(f"background-color: {get_color('bg_tertiary')}; border: 1px solid {get_color('border')}; border-radius: 4px;")
+        self.scroll_content.setStyleSheet("background-color: transparent;")
+        self._update_total() # Refresh title color
+        
+        # Refresh widgets in grid
+        for aid, (lbl, spin) in self.attr_widgets.items():
+            spin.setStyleSheet(f"background-color: {get_color('btn_bg')}; color: {get_color('btn_text')}; border: 1px solid {get_color('slot_border')};")
+            if aid < 0:
+                lbl.setStyleSheet(f"color: {get_color('text_warning')}; font-size: 11px; border: none; font-weight: bold;")
+            else:
+                lbl.setStyleSheet(f"color: {get_color('text_secondary')}; font-size: 11px; border: none;")
 
     def set_professions(self, primary_id, secondary_id, active_skills: List[Skill] = None):
         # Clear existing widgets
@@ -97,7 +110,6 @@ class AttributeEditor(QFrame):
         for row, aid in enumerate(final_attrs):
             name = ATTR_MAP.get(aid, f"Attr {aid}")
             lbl = QLabel(name)
-            lbl.setStyleSheet("color: #ccc; font-size: 11px; border: none;")
             
             spin = QComboBox()
             
@@ -106,7 +118,7 @@ class AttributeEditor(QFrame):
             spin.addItems([str(i) for i in range(limit + 1)])
             
             spin.setFixedWidth(45)
-            spin.setStyleSheet("background-color: #333; color: white; border: 1px solid #555;")
+            spin.setStyleSheet(f"background-color: {get_color('btn_bg')}; color: {get_color('btn_text')}; border: 1px solid {get_color('slot_border')};")
             
             # Set previous value if it existed
             prev_val = self.current_distribution.get(aid, 0)
@@ -116,7 +128,9 @@ class AttributeEditor(QFrame):
             
             # Highlight PvE attributes
             if aid < 0:
-                lbl.setStyleSheet("color: #FFAA00; font-size: 11px; border: none; font-weight: bold;")
+                lbl.setStyleSheet(f"color: {get_color('text_warning')}; font-size: 11px; border: none; font-weight: bold;")
+            else:
+                lbl.setStyleSheet(f"color: {get_color('text_secondary')}; font-size: 11px; border: none;")
             
             self.grid.addWidget(lbl, row, 0)
             self.grid.addWidget(spin, row, 1)
@@ -146,9 +160,9 @@ class AttributeEditor(QFrame):
         self.title.setText(f"Attributes ({total}/{self.max_points})")
         
         if total > self.max_points:
-            self.title.setStyleSheet("font-weight: bold; color: #ff5555; border: none;")
+            self.title.setStyleSheet(f"font-weight: bold; color: {get_color('text_warning')}; border: none;")
         else:
-            self.title.setStyleSheet("font-weight: bold; color: #aaa; border: none;")
+            self.title.setStyleSheet(f"font-weight: bold; color: {get_color('text_tertiary')}; border: none;")
 
     def get_distribution(self):
         return {aid: int(spin.currentText()) for aid, (lbl, spin) in self.attr_widgets.items()}
