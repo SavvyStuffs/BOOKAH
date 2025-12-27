@@ -139,11 +139,65 @@ class TeamManagerDialog(QDialog):
             QMessageBox.warning(self, "Export", "Please select a team to export.")
             return
         team_name = item.text()
-        # Set the combo box in parent so export_team_builds knows what to export
-        idx = self.parent_window.combo_team.findText(team_name)
-        if idx != -1:
-            self.parent_window.combo_team.setCurrentIndex(idx)
-            self.parent_window.export_team_builds()
+        
+        # Ask for export directory
+        export_dir = QFileDialog.getExistingDirectory(self, f"Select Folder to Export '{team_name}'")
+        if not export_dir:
+            return
+
+        # Get matching builds
+        matching_builds = [b for b in self.engine.builds if b.team == team_name]
+        if not matching_builds:
+            QMessageBox.information(self, "Export", "No builds found to export.")
+            return
+
+        # Ensure we only export unique codes within this export batch
+        unique_builds = []
+        seen_codes = set()
+        for b in matching_builds:
+            if b.code not in seen_codes:
+                unique_builds.append(b)
+                seen_codes.add(b.code)
+        
+        saved_count = 0
+        from src.constants import PROF_MAP, PROF_SHORT_MAP
+        
+        for b in unique_builds:
+            # Determine File Name
+            p1_id = int(b.primary_prof) if b.primary_prof.isdigit() else 0
+            p2_id = int(b.secondary_prof) if b.secondary_prof.isdigit() else 0
+            
+            p1_name = PROF_MAP.get(p1_id, "X")
+            p2_name = PROF_MAP.get(p2_id, "X")
+            p1 = PROF_SHORT_MAP.get(p1_name, "X")
+            p2 = PROF_SHORT_MAP.get(p2_name, "X")
+            
+            # Use build name if available, otherwise just professions
+            if b.name:
+                base_name = f"{b.name} ({p1}-{p2})"
+            else:
+                base_name = f"{p1}-{p2}"
+                
+            # Sanitize filename
+            safe_name = "".join(c for c in base_name if c.isalnum() or c in (' ', '-', '_', '(', ')')).strip()
+            filename = f"{safe_name}.txt"
+            full_path = os.path.join(export_dir, filename)
+            
+            # Handle duplicates in the file system
+            counter = 1
+            while os.path.exists(full_path):
+                name_part, ext = os.path.splitext(filename)
+                full_path = os.path.join(export_dir, f"{name_part} ({counter}){ext}")
+                counter += 1
+            
+            try:
+                with open(full_path, 'w', encoding='utf-8') as f:
+                    f.write(b.code)
+                saved_count += 1
+            except Exception as e:
+                print(f"Error saving {filename}: {e}")
+        
+        QMessageBox.information(self, "Export Complete", f"Successfully exported {saved_count} builds to:\n{export_dir}")
         
     def edit_team(self):
         item = self.list_widget.currentItem()
@@ -273,6 +327,10 @@ class TeamEditorDialog(QDialog):
                     break
             
             self.refresh_list()
+            
+            # Refresh main window if it's showing this team
+            if hasattr(self.parent(), 'parent_window'):
+                self.parent().parent_window.apply_filters()
 
     def rename_build(self):
         row = self.list_widget.currentRow()
@@ -285,6 +343,10 @@ class TeamEditorDialog(QDialog):
             build.is_user_build = True
             self.engine.save_user_builds()
             self.refresh_list()
+            
+            # Refresh main window list to show new name
+            if hasattr(self.parent(), 'parent_window'):
+                self.parent().parent_window.apply_filters()
 
     def refresh_list(self):
         self.list_widget.clear()

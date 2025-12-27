@@ -564,16 +564,6 @@ class MainWindow(QMainWindow):
         self.btn_max_icons.clicked.connect(self.toggle_icon_size)
         top_grid.addWidget(self.btn_max_icons, 1, 0, alignment=Qt.AlignmentFlag.AlignLeft)
 
-        # Path Label: Span Cols 1-5, Align Right
-        self.lbl_path = QLabel("Path: (No folder selected)")
-        self.lbl_path.setStyleSheet("color: #888; font-style: italic;")
-        top_grid.addWidget(self.lbl_path, 1, 1, 1, 5, alignment=Qt.AlignmentFlag.AlignRight)
-        
-        # Button: Col 6 (Under Manage Teams)
-        self.btn_path = QPushButton("Select Template Folder")
-        self.btn_path.clicked.connect(self.choose_template_path)
-        top_grid.addWidget(self.btn_path, 1, 6)
-        
         # Add grid to main layout
         main_layout.addLayout(top_grid)
         
@@ -987,69 +977,6 @@ class MainWindow(QMainWindow):
                 QPushButton:hover { background-color: #335577; }
             """)
 
-    def choose_template_path(self):
-        path = QFileDialog.getExistingDirectory(self, "Select Template Folder", self.template_path)
-        if path:
-            self.template_path = path
-            self.lbl_path.setText(f"Path: {path}")
-
-    def export_team_builds(self):
-        if not self.template_path:
-            self.choose_template_path()
-            if not self.template_path:
-                return 
-                
-        team_name = self.combo_team.currentText()
-        if team_name == "All":
-            QMessageBox.warning(self, "Export Error", "Please select a specific Team to export.")
-            return
-            
-        cat = self.combo_cat.currentText()
-        matching_builds = [b for b in self.engine.builds if b.team == team_name]
-        if cat != "All":
-            matching_builds = [b for b in matching_builds if b.category == cat]
-            
-        if not matching_builds:
-            QMessageBox.information(self, "Export", "No builds found to export.")
-            return
-
-        unique_builds = []
-        seen_codes = set()
-        for b in matching_builds:
-            if b.code not in seen_codes:
-                unique_builds.append(b)
-                seen_codes.add(b.code)
-        
-        saved_count = 0
-        for b in unique_builds:
-            p1_id = int(b.primary_prof) if b.primary_prof.isdigit() else 0
-            p2_id = int(b.secondary_prof) if b.secondary_prof.isdigit() else 0
-            
-            p1_name = PROF_MAP.get(p1_id, "No Profession")
-            p2_name = PROF_MAP.get(p2_id, "No Profession")
-            p1 = PROF_SHORT_MAP.get(p1_name, "X")
-            p2 = PROF_SHORT_MAP.get(p2_name, "X")
-            
-            safe_team = "".join(c for c in team_name if c.isalnum() or c in (' ', '-', '_')).strip()
-            filename = f"{safe_team} {p1}-{p2}.txt"
-            
-            full_path = os.path.join(self.template_path, filename)
-            
-            counter = 1
-            base_filename = filename
-            while os.path.exists(full_path):
-                name_part, ext = os.path.splitext(base_filename)
-                full_path = os.path.join(self.template_path, f"{name_part} ({counter}){ext}")
-                counter += 1
-            
-            try:
-                with open(full_path, 'w') as f:
-                    f.write(b.code)
-                saved_count += 1
-            except Exception as e:
-                print(f"Error saving {filename}: {e}")
-        
-        QMessageBox.information(self, "Export Complete", f"Successfully exported {saved_count} builds to\n{self.template_path}")
 
     def copy_code(self):
         clipboard = QApplication.clipboard()
@@ -1159,9 +1086,13 @@ class MainWindow(QMainWindow):
         cat = self.combo_cat.currentText()
         team = self.combo_team.currentText()
 
-        # --- NEW: Team Build View Mode ---
+        # --- NEW: Build View Modes ---
         if team != "All":
             self.show_team_builds(team)
+            return
+        
+        if cat != "All":
+            self.show_category_builds(cat)
             return
 
         # Gather filters
@@ -1186,70 +1117,106 @@ class MainWindow(QMainWindow):
     def show_team_builds(self, team_name):
         self.library_widget.clear()
         self.library_widget.setViewMode(QListWidget.ViewMode.ListMode)
-        self.library_widget.setSpacing(2)
-        # Enable reordering
+        self.library_widget.setSpacing(0)
         self.library_widget.setDragDropMode(QListWidget.DragDropMode.InternalMove)
         
         # Filter builds
         cat = self.combo_cat.currentText()
         matching_builds = [b for b in self.engine.builds if b.team == team_name]
-        
         if cat != "All":
             matching_builds = [b for b in matching_builds if b.category == cat]
             
-        # Create widgets
+        self._populate_build_list(matching_builds)
+
+    def show_category_builds(self, category_name):
+        self.library_widget.clear()
+        self.library_widget.setViewMode(QListWidget.ViewMode.ListMode)
+        self.library_widget.setSpacing(0)
+        self.library_widget.setDragDropMode(QListWidget.DragDropMode.InternalMove)
+        
+        # Filter builds by category (team is "All")
+        matching_builds = [b for b in self.engine.builds if b.category == category_name]
+        
+        # Filter by profession if needed
+        prof_str = self.combo_prof.currentText()
+        if prof_str != "All":
+            prof_id = prof_str.split(' ')[0]
+            matching_builds = [b for b in matching_builds if b.primary_prof == prof_id]
+
+        self._populate_build_list(matching_builds)
+
+    def _populate_build_list(self, matching_builds):
         is_pvp = self.check_pvp.isChecked()
         for b in matching_builds:
             item = QListWidgetItem()
-            # Set size hint to match BuildPreviewWidget height
-            item.setSizeHint(QSize(500, ICON_SIZE + 80)) 
-            # Store build object for reordering
+            # Match the new widget height: 130
+            item.setSizeHint(QSize(500, 130)) 
             item.setData(Qt.ItemDataRole.UserRole, b)
             self.library_widget.addItem(item)
             
             widget = BuildPreviewWidget(b, self.repo, is_pvp=is_pvp)
             widget.clicked.connect(self.load_code)
             widget.skill_clicked.connect(self.handle_skill_clicked)
-            
+            widget.rename_clicked.connect(self.handle_build_rename) # NEW
             self.library_widget.setItemWidget(item, widget)
+
+    def handle_build_rename(self, build):
+        from PyQt6.QtWidgets import QInputDialog
+        new_name, ok = QInputDialog.getText(self, "Rename Build", "Enter build name:", text=build.name)
+        if ok:
+            build.name = new_name.strip()
+            build.is_user_build = True
+            self.engine.save_user_builds()
+            # Refresh current view
+            team_name = self.combo_team.currentText()
+            cat_name = self.combo_cat.currentText()
+            if team_name != "All":
+                self.show_team_builds(team_name)
+            else:
+                self.show_category_builds(cat_name)
 
     def handle_builds_reordered(self, source_row, target_row):
         team_name = self.combo_team.currentText()
-        if team_name == "All":
-            return
-        cat = self.combo_cat.currentText()
-
-        # 1. Get the list of builds currently visible (the order before the move)
-        matching_builds = [b for b in self.engine.builds if b.team == team_name]
-        if cat != "All":
-            matching_builds = [b for b in matching_builds if b.category == cat]
+        cat_name = self.combo_cat.currentText()
+        
+        # 1. Get the list of builds currently visible
+        if team_name != "All":
+            matching_builds = [b for b in self.engine.builds if b.team == team_name]
+            if cat_name != "All":
+                matching_builds = [b for b in matching_builds if b.category == cat_name]
+        else:
+            matching_builds = [b for b in self.engine.builds if b.category == cat_name]
+            prof_str = self.combo_prof.currentText()
+            if prof_str != "All":
+                prof_id = prof_str.split(' ')[0]
+                matching_builds = [b for b in matching_builds if b.primary_prof == prof_id]
             
         if not matching_builds or source_row >= len(matching_builds) or target_row >= len(matching_builds):
             return
 
-        # 2. Map visual builds to their global indices in the master list
-        # We need these indices to know where to "swap" them back in the master list
-        indices = [i for i, b in enumerate(self.engine.builds) 
-                   if b.team == team_name and (cat == "All" or b.category == cat)]
+        # 2. Get global indices of these specific builds in the master engine list
+        # We use object identity (id()) to be absolutely sure we map the correct objects
+        visible_ids = [id(b) for b in matching_builds]
+        global_indices = [i for i, b in enumerate(self.engine.builds) if id(b) in visible_ids]
 
-        if len(indices) != len(matching_builds):
+        if len(global_indices) != len(matching_builds):
             return
 
-        # 3. Perform the move in the visible list
+        # 3. Reorder the visible list
         build_to_move = matching_builds.pop(source_row)
         matching_builds.insert(target_row, build_to_move)
 
-        # 4. Update the master list at the original indices
-        for idx, build in zip(indices, matching_builds):
+        # 4. Map the reordered builds back to the original global positions
+        for idx, build in zip(global_indices, matching_builds):
             self.engine.builds[idx] = build
-            # Mark as user build to ensure it's saved to user_builds.json
             build.is_user_build = True
 
-        # 5. Save changes
+        # 5. Save and Refresh
         self.engine.save_user_builds()
-        
-        # 6. Refresh the view to fix broken item widgets
-        self.show_team_builds(team_name)
+        if team_name != "All":
+            self.show_team_builds(team_name)
+        else:
+            self.show_category_builds(cat_name)
 
     def _on_filter_finished(self, filtered_skills):
         self.library_widget.clear()
@@ -1691,21 +1658,13 @@ class MainWindow(QMainWindow):
                 file_path = os.path.join(folder_path, filename)
                 try:
                     with open(file_path, 'r') as f:
-                        code = f.read().strip()
+                        code = f.readline().strip() # Read only first line for code
                         
                     # Validate Code
                     decoder = GuildWarsTemplateDecoder(code)
                     decoded = decoder.decode()
                     if decoded:
-                        entry = {
-                            "build_code": code,
-                            "primary_profession": str(decoded['profession']['primary']),
-                            "secondary_profession": str(decoded['profession']['secondary']),
-                            "skill_ids": decoded['skills'],
-                            "category": "User Imported",
-                            "team": team_name
-                        }
-                        
+                        # ...
                         # Add to Engine
                         # Check duplicates?
                         exists = False
@@ -1715,13 +1674,15 @@ class MainWindow(QMainWindow):
                                 break
                         
                         if not exists:
+                            build_name = os.path.splitext(filename)[0]
                             new_build = Build(
                                 code=code,
                                 primary_prof=str(decoded['profession']['primary']),
                                 secondary_prof=str(decoded['profession']['secondary']),
                                 skill_ids=decoded['skills'],
                                 category="User Imported",
-                                team=team_name
+                                team=team_name,
+                                name=build_name
                             )
                             new_build.is_user_build = True
                             self.engine.builds.append(new_build)

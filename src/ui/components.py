@@ -359,21 +359,40 @@ class SkillInfoPanel(QFrame):
             
         self.details.setText("<br/>".join(analysis))
 
-class BuildPreviewWidget(QFrame):
+class BuildPreviewWidget(QFrame): # Restored to QFrame
     clicked = pyqtSignal(str) 
     skill_clicked = pyqtSignal(Skill) 
+    rename_clicked = pyqtSignal(Build) 
 
     def __init__(self, build: Build, repo, is_pvp=False, parent=None):
         super().__init__(parent)
         self.build = build
         self.repo = repo
-        self.setFixedHeight(ICON_SIZE + 80) 
+        # Increased height for a more spacious and centered layout
+        self.setFixedHeight(130) 
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        self.refresh_theme()
         
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(4, 4, 4, 4)
-        layout.setSpacing(10)
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(10, 5, 10, 5)
+        main_layout.setSpacing(0)
+
+        # 1. Top Row: Build Name (Compact)
+        if hasattr(build, 'name') and build.name:
+            lbl_name = QLabel(build.name)
+            lbl_name.setStyleSheet(f"color: {get_color('text_accent')}; font-weight: bold; font-size: 10px; border: none; background: transparent;")
+            lbl_name.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+            lbl_name.setFixedHeight(14) 
+            main_layout.addWidget(lbl_name)
+            main_layout.addSpacing(15) # Increased spacing to push skills down
+        else:
+            # Small spacer to keep layout consistent
+            main_layout.addSpacing(29)
+
+        # 2. Bottom Row: Info and Icons (Centered in remaining space)
+        content_layout = QHBoxLayout()
+        content_layout.setSpacing(10)
+        content_layout.setContentsMargins(0, 0, 0, 0)
+        content_layout.setAlignment(Qt.AlignmentFlag.AlignVCenter)
         
         p1_name = PROF_MAP.get(int(build.primary_prof) if build.primary_prof.isdigit() else 0, "No Profession")
         p2_name = PROF_MAP.get(int(build.secondary_prof) if build.secondary_prof.isdigit() else 0, "No Profession")
@@ -384,7 +403,7 @@ class BuildPreviewWidget(QFrame):
         lbl_prof.setStyleSheet(f"color: {get_color('text_tertiary')}; font-weight: bold; font-size: 14px; border: none; background: transparent;")
         lbl_prof.setFixedWidth(50)
         lbl_prof.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(lbl_prof)
+        content_layout.addWidget(lbl_prof)
         
         for sid in build.skill_ids:
             skill_widget = None
@@ -396,38 +415,48 @@ class BuildPreviewWidget(QFrame):
                     skill_widget.clicked.connect(self.skill_clicked.emit)
             
             if skill_widget:
-                layout.addWidget(skill_widget)
+                content_layout.addWidget(skill_widget)
             else:
                 placeholder = QFrame()
-                placeholder.setFixedSize(ICON_SIZE + 10, ICON_SIZE + 60)
+                placeholder.setFixedSize(ICON_SIZE, ICON_SIZE)
                 placeholder.setStyleSheet(f"background: transparent; border: 1px dashed {get_color('border')};")
-                layout.addWidget(placeholder)
+                content_layout.addWidget(placeholder)
             
-        layout.addStretch() 
+        content_layout.addStretch() 
+        
+        # Right Side Buttons
+        btn_vbox = QVBoxLayout()
+        btn_vbox.setSpacing(2)
         
         self.btn_load = QPushButton("Load")
-        self.btn_load.setFixedSize(60, 40)
+        self.btn_load.setFixedSize(60, 28)
         self.btn_load.clicked.connect(lambda: self.clicked.emit(self.build.code))
+        
+        self.btn_rename = QPushButton("Rename")
+        self.btn_rename.setFixedSize(60, 18)
+        self.btn_rename.setStyleSheet("font-size: 9px;")
+        self.btn_rename.clicked.connect(lambda: self.rename_clicked.emit(self.build))
+        
+        btn_vbox.addWidget(self.btn_load)
+        btn_vbox.addWidget(self.btn_rename)
+        
         self.refresh_button_style()
-        layout.addWidget(self.btn_load)
+        content_layout.addLayout(btn_vbox)
+        
+        main_layout.addStretch() # Push skills to center
+        main_layout.addLayout(content_layout)
+        main_layout.addStretch() # Push skills to center
+        
+        self.refresh_theme()
 
     def refresh_theme(self):
-        self.setStyleSheet(f"""
-            QFrame {{
-                background-color: {get_color('bg_secondary')};
-                border: 1px solid {get_color('border')};
-                border-radius: 4px;
-            }}
-            QFrame:hover {{
-                background-color: {get_color('bg_hover')};
-                border: 1px solid {get_color('border_light')};
-            }}
-        """)
+        # Remove the internal box styling. We let the QListWidget handle the item background/hover.
+        self.setStyleSheet("background: transparent; border: none;")
         if hasattr(self, 'btn_load'):
             self.refresh_button_style()
 
     def refresh_button_style(self):
-        self.btn_load.setStyleSheet(f"""
+        style = f"""
             QPushButton {{
                 background-color: {get_color('border_accent')}; 
                 color: #FFFFFF; 
@@ -438,7 +467,11 @@ class BuildPreviewWidget(QFrame):
             QPushButton:hover {{
                 background-color: {get_color('text_link')};
             }}
-        """)
+        """
+        if hasattr(self, 'btn_load'):
+            self.btn_load.setStyleSheet(style)
+        if hasattr(self, 'btn_rename'):
+            self.btn_rename.setStyleSheet(style)
 
 class SkillItemDelegate(QStyledItemDelegate):
     """
@@ -541,7 +574,21 @@ class SkillLibraryWidget(QListWidget):
             self.skill_double_clicked.emit(data)
 
     def refresh_theme(self):
-        self.setStyleSheet(f"QListWidget {{ background-color: {get_color('bg_primary')}; border: none; }}")
+        self.setStyleSheet(f"""
+            QListWidget {{ 
+                background-color: {get_color('bg_primary')}; 
+                border: none; 
+            }}
+            QListWidget::item {{
+                border-bottom: 1px solid {get_color('border')};
+            }}
+            QListWidget::item:hover {{
+                background-color: {get_color('bg_hover')};
+            }}
+            QListWidget::item:selected {{
+                background-color: {get_color('bg_selected')};
+            }}
+        """)
         self.viewport().update()
 
     def update_suggestions(self, suggestions):
