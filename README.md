@@ -43,3 +43,7 @@ Run the application using Python 3.10:
 pip install -r requirements.txt
 python bookah.py
 ```
+
+## Legal
+*   **Code & Logic**: Licensed under [CC BY-NC-SA 4.0](LICENSE). You are free to share and adapt this code for non-commercial purposes, provided you credit the author and share under the same license.
+*   **Game Assets**: Guild Wars content and materials are trademarks and copyrights of ArenaNet and its licensors. All rights reserved. This tool is a fan project and is not affiliated with ArenaNet or NCSOFT.

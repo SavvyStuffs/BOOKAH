@@ -15,6 +15,7 @@ tmp/
 /build
 /dist
 *.spec
+Bookah_Installer.iss
 
 # Misc
 /tests
