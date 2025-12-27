@@ -1,5 +1,5 @@
 from PyQt6.QtWidgets import QFrame, QVBoxLayout, QLabel, QScrollArea, QWidget, QGridLayout, QComboBox
-from PyQt6.QtCore import pyqtSignal
+from PyQt6.QtCore import pyqtSignal, Qt
 from src.constants import ATTR_MAP, PROF_PRIMARY_ATTR
 from src.models import Skill
 from src.ui.theme import get_color
@@ -58,13 +58,24 @@ class AttributeEditor(QFrame):
         self.scroll_content.setStyleSheet("background-color: transparent;")
         self._update_total() # Refresh title color
         
+        # Style for cleaner boxes without arrows
+        combo_style = f"""
+            QComboBox {{ 
+                background-color: {get_color('btn_bg')}; 
+                color: {get_color('btn_text')}; 
+                border: 1px solid {get_color('slot_border')}; 
+                padding-left: 5px;
+            }}
+            QComboBox::drop-down {{ border: none; width: 0px; }}
+        """
+        
         # Refresh widgets in grid
         for aid, (lbl, spin) in self.attr_widgets.items():
-            spin.setStyleSheet(f"background-color: {get_color('btn_bg')}; color: {get_color('btn_text')}; border: 1px solid {get_color('slot_border')};")
+            spin.setStyleSheet(combo_style)
             if aid < 0:
-                lbl.setStyleSheet(f"color: {get_color('text_warning')}; font-size: 11px; border: none; font-weight: bold;")
+                lbl.setStyleSheet(f"color: {get_color('text_warning')}; font-size: 13px; border: none; font-weight: bold;")
             else:
-                lbl.setStyleSheet(f"color: {get_color('text_secondary')}; font-size: 11px; border: none;")
+                lbl.setStyleSheet(f"color: {get_color('text_secondary')}; font-size: 13px; border: none; font-weight: bold;")
 
     def set_professions(self, primary_id, secondary_id, active_skills: List[Skill] = None):
         # Clear existing widgets
@@ -96,9 +107,6 @@ class AttributeEditor(QFrame):
                         relevant_attrs.append(s.attribute)
 
         # Sort: Standard attributes first (by name), then PvE attributes
-        # ATTR_MAP has names for negatives now
-        
-        # Split into standard and pve
         std_attrs = [a for a in relevant_attrs if a >= 0]
         pve_attrs = [a for a in relevant_attrs if a < 0]
         
@@ -107,18 +115,34 @@ class AttributeEditor(QFrame):
         
         final_attrs = std_attrs + pve_attrs
         
-        for row, aid in enumerate(final_attrs):
+        # Style for cleaner boxes without arrows
+        combo_style = f"""
+            QComboBox {{ 
+                background-color: {get_color('btn_bg')}; 
+                color: {get_color('btn_text')}; 
+                border: 1px solid {get_color('slot_border')}; 
+                padding-left: 5px;
+            }}
+            QComboBox::drop-down {{ border: none; width: 0px; }}
+        """
+
+        for i, aid in enumerate(final_attrs):
             name = ATTR_MAP.get(aid, f"Attr {aid}")
             lbl = QLabel(name)
+            lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            lbl.setWordWrap(True)
             
             spin = QComboBox()
+            # To ensure the text itself is centered, we can use a delegate or just padding
+            # QComboBox doesn't have a simple align-text property for the box itself easily via CSS
+            # But making it narrower helps the visual center.
             
             # Range: 0-12 for standard, 0-10 for PvE
             limit = 12 if aid >= 0 else 10
             spin.addItems([str(i) for i in range(limit + 1)])
             
-            spin.setFixedWidth(45)
-            spin.setStyleSheet(f"background-color: {get_color('btn_bg')}; color: {get_color('btn_text')}; border: 1px solid {get_color('slot_border')};")
+            spin.setFixedWidth(40)
+            spin.setStyleSheet(combo_style)
             
             # Set previous value if it existed
             prev_val = self.current_distribution.get(aid, 0)
@@ -128,12 +152,13 @@ class AttributeEditor(QFrame):
             
             # Highlight PvE attributes
             if aid < 0:
-                lbl.setStyleSheet(f"color: {get_color('text_warning')}; font-size: 11px; border: none; font-weight: bold;")
+                lbl.setStyleSheet(f"color: {get_color('text_warning')}; font-size: 13px; border: none; font-weight: bold;")
             else:
-                lbl.setStyleSheet(f"color: {get_color('text_secondary')}; font-size: 11px; border: none;")
+                lbl.setStyleSheet(f"color: {get_color('text_secondary')}; font-size: 13px; border: none; font-weight: bold;")
             
-            self.grid.addWidget(lbl, row, 0)
-            self.grid.addWidget(spin, row, 1)
+            # Label on top row, Spinbox on row below it
+            self.grid.addWidget(lbl, i * 2, 0, Qt.AlignmentFlag.AlignCenter)
+            self.grid.addWidget(spin, i * 2 + 1, 0, Qt.AlignmentFlag.AlignCenter)
             self.attr_widgets[aid] = (lbl, spin)
             
         self._update_total()

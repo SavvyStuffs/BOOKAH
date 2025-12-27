@@ -54,6 +54,7 @@ class DraggableSkillIcon(QLabel):
 class SkillSlot(QFrame):
     skill_equipped = pyqtSignal(int, int) 
     skill_removed = pyqtSignal(int)       
+    skill_swapped = pyqtSignal(int, int) # NEW: source_index, target_index
     clicked = pyqtSignal(int)             
 
     def __init__(self, index, parent=None):
@@ -86,9 +87,18 @@ class SkillSlot(QFrame):
 
     def dropEvent(self, event):
         try:
-            skill_id = int(event.mimeData().text())
-            self.skill_equipped.emit(self.index, skill_id)
-            event.accept()
+            mime_text = event.mimeData().text()
+            if mime_text.startswith("slot:"):
+                source_index = int(mime_text.split(":")[1])
+                if source_index != self.index:
+                    self.skill_swapped.emit(source_index, self.index)
+                    event.accept()
+                else:
+                    event.ignore()
+            else:
+                skill_id = int(mime_text)
+                self.skill_equipped.emit(self.index, skill_id)
+                event.accept()
         except ValueError:
             event.ignore()
 
@@ -96,6 +106,22 @@ class SkillSlot(QFrame):
         if event.button() == Qt.MouseButton.LeftButton:
             if self.current_skill_id is not None:
                 self.clicked.emit(self.current_skill_id)
+                
+                # Initiate Drag for reordering
+                if not self.is_ghost:
+                    drag = QDrag(self)
+                    mime_data = QMimeData()
+                    # Prefix with "slot:" to distinguish from library drags
+                    mime_data.setText(f"slot:{self.index}")
+                    drag.setMimeData(mime_data)
+                    
+                    pix = self.icon_label.pixmap()
+                    if pix and not pix.isNull():
+                        drag.setPixmap(pix)
+                        drag.setHotSpot(QPoint(ICON_SIZE // 2, ICON_SIZE // 2))
+                    
+                    drag.exec(Qt.DropAction.MoveAction)
+                    
         elif event.button() == Qt.MouseButton.RightButton:
             if self.current_skill_id is not None:
                 self.clear_slot()
@@ -479,62 +505,63 @@ class SkillLibraryWidget(QListWidget):
     """
     skill_clicked = pyqtSignal(object)
     skill_double_clicked = pyqtSignal(object)
+    builds_reordered = pyqtSignal(int, int) # source_index, target_index
 
     def __init__(self, repo, engine=None, parent=None):
         super().__init__(parent)
-        self.repo = repo      # <--- REQUIRED: To look up Skill objects from IDs
-        self.engine = engine  # Optional: stored for reference if needed
+        self.repo = repo      
+        self.engine = engine  
+        self.drop_row = -1 # Track for manual painting
         
         self.setViewMode(QListWidget.ViewMode.IconMode)
         self.setResizeMode(QListWidget.ResizeMode.Adjust)
         self.setUniformItemSizes(True)
         self.setDragEnabled(True)
+        self.setAcceptDrops(True)
+        self.setDropIndicatorShown(True) # NEW: Show where item will land
         self.setSelectionMode(QListWidget.SelectionMode.SingleSelection)
         self.setSpacing(5)
-        # Fix for slow scrolling: Force pixel-based scrolling
         self.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
-        self.refresh_theme()
         
-        # Attach the custom painter
         self.delegate = SkillItemDelegate(self)
         self.setItemDelegate(self.delegate)
+
+        self.itemClicked.connect(self._on_item_clicked)
+        self.itemDoubleClicked.connect(self._on_item_double_clicked)
+        self.refresh_theme()
+
+    def _on_item_clicked(self, item):
+        data = item.data(Qt.ItemDataRole.UserRole)
+        if not isinstance(data, Build):
+            self.skill_clicked.emit(data)
+
+    def _on_item_double_clicked(self, item):
+        data = item.data(Qt.ItemDataRole.UserRole)
+        if not isinstance(data, Build):
+            self.skill_double_clicked.emit(data)
 
     def refresh_theme(self):
         self.setStyleSheet(f"QListWidget {{ background-color: {get_color('bg_primary')}; border: none; }}")
         self.viewport().update()
 
     def update_suggestions(self, suggestions):
-        """
-        Render AI Suggestions.
-        Expected format: [(skill_id, score, reason), ...]
-        """
         self.clear() 
-        
-        # 1. Sort by Confidence Score (High to Low)
-        # tuple index 1 is the float score
         sorted_suggestions = sorted(suggestions, key=lambda x: x[1], reverse=True)
 
         for item in sorted_suggestions:
-            # Robust unpacking: Handle cases where reason might be missing
             if len(item) == 3:
                 sid, score, reason = item
             else:
                 sid, score = item
                 reason = "Neural Synergy"
 
-            # 2. Fetch Skill Data
             skill = self.repo.get_skill(sid)
-            if not skill:
-                continue
+            if not skill: continue
 
-            # 3. Create List Item
             list_item = QListWidgetItem()
             list_item.setText(skill.name)
-            
-            # Store ID for drag/click events
             list_item.setData(Qt.ItemDataRole.UserRole, sid)
             
-            # 4. Rich Tooltip: Explains the "Why"
             confidence_pct = int(score * 100)
             tooltip_text = (
                 f"<b>{skill.name}</b><br/>"
@@ -544,7 +571,6 @@ class SkillLibraryWidget(QListWidget):
             )
             list_item.setToolTip(tooltip_text)
             
-            # 5. Set Icon (using your existing cache/path logic)
             icon_path = os.path.join(ICON_DIR, skill.icon_filename)
             if os.path.exists(icon_path):
                 key = f"{skill.icon_filename}_{self.delegate.icon_size}"
@@ -559,7 +585,6 @@ class SkillLibraryWidget(QListWidget):
                     PIXMAP_CACHE[key] = pixmap
                 list_item.setIcon(QIcon(pixmap))
             
-            # 6. High Confidence Visual Cue (Optional)
             if score > 0.85:
                 font = list_item.font()
                 font.setBold(True)
@@ -568,9 +593,6 @@ class SkillLibraryWidget(QListWidget):
             self.addItem(list_item)
 
     def update_standard_list(self, skill_ids):
-        """
-        Render a standard list of IDs (e.g. from a filter).
-        """
         self.clear()
         for sid in skill_ids:
             skill = self.repo.get_skill(sid)
@@ -583,7 +605,6 @@ class SkillLibraryWidget(QListWidget):
             
             icon_path = os.path.join(ICON_DIR, skill.icon_filename)
             if os.path.exists(icon_path):
-                # Simple uncached load for brevity, or reuse cache logic above
                 pix = QPixmap(icon_path).scaled(
                     self.delegate.icon_size, self.delegate.icon_size,
                     Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
@@ -593,59 +614,137 @@ class SkillLibraryWidget(QListWidget):
             self.addItem(list_item)
 
     def update_zone_summary(self, monsters):
-        """
-        Populate list with monster names instead of skills.
-        """
         self.clear()
         self.setViewMode(QListWidget.ViewMode.ListMode)
         self.setSpacing(2)
         
         for m in monsters:
             item = QListWidgetItem(m['name'])
-            # Store full dict
             item.setData(Qt.ItemDataRole.UserRole, m) 
-            
             if m.get('is_boss'):
-                item.setForeground(QColor(get_color("text_warning"))) # GOLD
+                item.setForeground(QColor(get_color("text_warning")))
                 font = item.font()
                 font.setBold(True)
                 item.setFont(font)
-            
             self.addItem(item)
 
     def set_icon_size(self, size):
         self.delegate.icon_size = size
         self.model().layoutChanged.emit()
         self.viewport().update()
-        # Trigger reload of icons if needed, or rely on next update
 
     def startDrag(self, supportedActions):
         item = self.currentItem()
         if not item: return
         
-        skill_id = item.data(Qt.ItemDataRole.UserRole)
+        data = item.data(Qt.ItemDataRole.UserRole)
+        if isinstance(data, Build):
+            drag = QDrag(self)
+            mime_data = QMimeData()
+            mime_data.setText(f"reorder_build:{self.row(item)}")
+            drag.setMimeData(mime_data)
+            
+            widget = self.itemWidget(item)
+            if widget:
+                # Create a semi-transparent thumbnail
+                pixmap = widget.grab()
+                transparent_pix = QPixmap(pixmap.size())
+                transparent_pix.fill(Qt.GlobalColor.transparent)
+                p = QPainter(transparent_pix)
+                p.setOpacity(0.6)
+                p.drawPixmap(0, 0, pixmap)
+                p.end()
+                
+                drag.setPixmap(transparent_pix.scaled(400, widget.height(), Qt.AspectRatioMode.KeepAspectRatio))
+                drag.setHotSpot(QPoint(200, widget.height() // 2))
+            
+            drag.exec(Qt.DropAction.MoveAction)
+            return
+
+        skill_id = data
         icon = item.icon()
-        
         drag = QDrag(self)
         mime_data = QMimeData()
         mime_data.setText(str(skill_id))
         drag.setMimeData(mime_data)
-        
         if not icon.isNull():
             drag.setPixmap(icon.pixmap(64, 64))
             drag.setHotSpot(QPoint(32, 32))
-            
         drag.exec(Qt.DropAction.CopyAction)
 
-    def mousePressEvent(self, event):
-        super().mousePressEvent(event)
-        item = self.itemAt(event.pos())
-        if item:
-            sid = item.data(Qt.ItemDataRole.UserRole)
-            self.skill_clicked.emit(sid)
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasText() and event.mimeData().text().startswith("reorder_build:"):
+            event.acceptProposedAction()
+        else:
+            super().dragEnterEvent(event)
 
-    def mouseDoubleClickEvent(self, event):
-        item = self.itemAt(event.pos())
-        if item:
-            sid = item.data(Qt.ItemDataRole.UserRole)
-            self.skill_double_clicked.emit(sid)
+    def dragLeaveEvent(self, event):
+        self.drop_row = -1
+        self.viewport().update()
+        super().dragLeaveEvent(event)
+
+    def dragMoveEvent(self, event):
+        super().dragMoveEvent(event)
+        if event.mimeData().hasText() and event.mimeData().text().startswith("reorder_build:"):
+            event.acceptProposedAction()
+            
+            # Update manual drop indicator
+            pos = event.position().toPoint()
+            item = self.itemAt(pos)
+            if item:
+                self.drop_row = self.row(item)
+                # If in bottom half of item, indicate drop AFTER it
+                if pos.y() > self.visualItemRect(item).center().y():
+                    self.drop_row += 1
+            else:
+                self.drop_row = self.count()
+            self.viewport().update()
+
+    def dropEvent(self, event):
+        self.drop_row = -1
+        self.viewport().update()
+        
+        if event.mimeData().hasText() and event.mimeData().text().startswith("reorder_build:"):
+            source_row = int(event.mimeData().text().split(":")[1])
+            drop_pos = event.position().toPoint()
+            target_item = self.itemAt(drop_pos)
+            
+            if target_item:
+                target_row = self.row(target_item)
+                if drop_pos.y() > self.visualItemRect(target_item).center().y():
+                    target_row += 1
+            else:
+                target_row = self.count()
+            
+            if source_row < target_row:
+                target_row -= 1
+                
+            if source_row != target_row and target_row >= 0:
+                self.builds_reordered.emit(source_row, target_row)
+                event.acceptProposedAction()
+            else:
+                event.ignore()
+            return
+        super().dropEvent(event)
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        if self.drop_row != -1:
+            from PyQt6.QtGui import QPen
+            painter = QPainter(self.viewport())
+            pen = QPen(QColor(get_color("text_link")))
+            pen.setWidth(3)
+            painter.setPen(pen)
+            
+            # Calculate line position
+            if self.drop_row < self.count():
+                rect = self.visualItemRect(self.item(self.drop_row))
+                y = rect.top()
+            else:
+                rect = self.visualItemRect(self.item(self.count() - 1))
+                y = rect.bottom()
+            
+            painter.drawLine(0, y, self.viewport().width(), y)
+            painter.end()
+
+    

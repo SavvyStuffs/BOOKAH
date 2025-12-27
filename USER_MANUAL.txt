@@ -7,7 +7,7 @@ WHAT IS THIS?
 This is a smart assistant for creating Guild Wars 1 builds. Unlike standard 
 template editors, Bookah uses Artificial Intelligence to suggest skills that 
 work well with what you've already picked. It learns from thousands of 
-player-created builds to help you find the perfect synergy.
+player-created builds to help you find synergy.
 
 ==============================================================================
 QUICK START
@@ -25,7 +25,7 @@ MAIN FEATURES
    As you add skills, the AI suggests what to add next.
    - Standard Mode (Default): Suggests skills that are historically popular 
      with your current choices.
-   - Smart Mode (Checkbox): Turns on the advanced "Mechanics Engine". It reads 
+   - Smart Mode (Experimental): Turns on the advanced "Mechanics Engine". It reads 
      skill descriptions to find combos you might miss and checks if you forgot 
      basics like a Self-Heal or Energy Management.
 
@@ -36,7 +36,7 @@ MAIN FEATURES
    - "Pre" Checkbox: Hides all skills that are not available in Pre-Searing.
    - "PvP" Checkbox: Switches to PvP versions of skills and hides PvE-only ones.
 
-3. TEAM SYNERGY MODE (Green Button)
+4. TEAM SYNERGY MODE (Green Button)
    Want to fit into a team?
    1. Click "Manage Teams" to create or import a team build.
    2. Check "Smart Mode" to see the "Load Teambuild to Bar" button.

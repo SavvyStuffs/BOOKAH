@@ -12,22 +12,50 @@ def resource_path(relative_path):
         base_path = os.path.abspath(".")
     return os.path.join(base_path, relative_path)
 
-# --- Persistent User Data ---
-USER_DIR = os.path.join(os.path.expanduser("~"), "Documents", "Bookah")
+# --- Application Directories ---
+if getattr(sys, 'frozen', False):
+    # Running as a packaged EXE
+    APP_ROOT = os.path.dirname(sys.executable)
+else:
+    # Running as a script
+    APP_ROOT = os.path.abspath(".")
+
+# Store user-specific data in a 'data' subfolder within the install directory
+USER_DIR = os.path.join(APP_ROOT, "data")
 if not os.path.exists(USER_DIR):
     os.makedirs(USER_DIR)
 
-# 1. Writable JSON Database
-JSON_FILE = os.path.join(USER_DIR, 'all_skills.json')
-if not os.path.exists(JSON_FILE):
-    # Copy bundled version to Documents on first run
-    default_json = resource_path('all_skills.json')
-    if os.path.exists(default_json):
-        shutil.copy(default_json, JSON_FILE)
+# 1. System Database (Read-Only bundled version)
+JSON_FILE = resource_path('all_skills.json')
 
-# 2. AI Models (Stored in Documents so they can be updated/retrained)
+# 2. User Database (Writeable, stored in install folder)
+USER_BUILDS_FILE = os.path.join(USER_DIR, 'user_builds.json')
+
+# Initialize User Builds file if it doesn't exist
+if not os.path.exists(USER_BUILDS_FILE):
+    with open(USER_BUILDS_FILE, 'w', encoding='utf-8') as f:
+        json.dump([], f)
+
+# 3. AI Models
 BEHAVIOR_MODEL_PATH = os.path.join(USER_DIR, 'skill_vectors.model')
 SEMANTIC_MODEL_PATH = os.path.join(USER_DIR, 'description_embeddings.pt')
+
+# Pre-seed models from bundled resources if they don't exist in data folder
+if not os.path.exists(BEHAVIOR_MODEL_PATH):
+    bundled_bm = resource_path('skill_vectors.model')
+    if os.path.exists(bundled_bm):
+        try:
+            shutil.copy(bundled_bm, BEHAVIOR_MODEL_PATH)
+        except Exception as e:
+            print(f"Error seeding behavior model: {e}")
+
+if not os.path.exists(SEMANTIC_MODEL_PATH):
+    bundled_sm = resource_path('description_embeddings.pt')
+    if os.path.exists(bundled_sm):
+        try:
+            shutil.copy(bundled_sm, SEMANTIC_MODEL_PATH)
+        except Exception as e:
+            print(f"Error seeding semantic model: {e}")
 
 # Pre-seed models if bundled
 if not os.path.exists(BEHAVIOR_MODEL_PATH):

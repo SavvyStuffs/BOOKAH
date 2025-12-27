@@ -584,6 +584,7 @@ class MainWindow(QMainWindow):
         self.library_widget = SkillLibraryWidget(parent=None, repo=self.repo, engine=self.engine)
         self.library_widget.skill_clicked.connect(self.handle_skill_id_clicked)
         self.library_widget.skill_double_clicked.connect(lambda sid: self.handle_skill_equipped_auto(sid))
+        self.library_widget.builds_reordered.connect(self.handle_builds_reordered)
         self.splitter.addWidget(self.library_widget)
         
         self.info_panel = SkillInfoPanel()
@@ -655,6 +656,7 @@ class MainWindow(QMainWindow):
             slot = SkillSlot(i)
             slot.skill_equipped.connect(self.handle_skill_equipped)
             slot.skill_removed.connect(self.handle_skill_removed)
+            slot.skill_swapped.connect(self.handle_skill_swapped)
             slot.clicked.connect(self.handle_skill_id_clicked)
             bar_layout.addWidget(slot)
             self.slots.append(slot)
@@ -1185,6 +1187,8 @@ class MainWindow(QMainWindow):
         self.library_widget.clear()
         self.library_widget.setViewMode(QListWidget.ViewMode.ListMode)
         self.library_widget.setSpacing(2)
+        # Enable reordering
+        self.library_widget.setDragDropMode(QListWidget.DragDropMode.InternalMove)
         
         # Filter builds
         cat = self.combo_cat.currentText()
@@ -1199,6 +1203,8 @@ class MainWindow(QMainWindow):
             item = QListWidgetItem()
             # Set size hint to match BuildPreviewWidget height
             item.setSizeHint(QSize(500, ICON_SIZE + 80)) 
+            # Store build object for reordering
+            item.setData(Qt.ItemDataRole.UserRole, b)
             self.library_widget.addItem(item)
             
             widget = BuildPreviewWidget(b, self.repo, is_pvp=is_pvp)
@@ -1207,11 +1213,51 @@ class MainWindow(QMainWindow):
             
             self.library_widget.setItemWidget(item, widget)
 
+    def handle_builds_reordered(self, source_row, target_row):
+        team_name = self.combo_team.currentText()
+        if team_name == "All":
+            return
+        cat = self.combo_cat.currentText()
+
+        # 1. Get the list of builds currently visible (the order before the move)
+        matching_builds = [b for b in self.engine.builds if b.team == team_name]
+        if cat != "All":
+            matching_builds = [b for b in matching_builds if b.category == cat]
+            
+        if not matching_builds or source_row >= len(matching_builds) or target_row >= len(matching_builds):
+            return
+
+        # 2. Map visual builds to their global indices in the master list
+        # We need these indices to know where to "swap" them back in the master list
+        indices = [i for i, b in enumerate(self.engine.builds) 
+                   if b.team == team_name and (cat == "All" or b.category == cat)]
+
+        if len(indices) != len(matching_builds):
+            return
+
+        # 3. Perform the move in the visible list
+        build_to_move = matching_builds.pop(source_row)
+        matching_builds.insert(target_row, build_to_move)
+
+        # 4. Update the master list at the original indices
+        for idx, build in zip(indices, matching_builds):
+            self.engine.builds[idx] = build
+            # Mark as user build to ensure it's saved to user_builds.json
+            build.is_user_build = True
+
+        # 5. Save changes
+        self.engine.save_user_builds()
+        
+        # 6. Refresh the view to fix broken item widgets
+        self.show_team_builds(team_name)
+
     def _on_filter_finished(self, filtered_skills):
         self.library_widget.clear()
         # Reset View Mode for Skills
         self.library_widget.setViewMode(QListWidget.ViewMode.IconMode)
         self.library_widget.setSpacing(5)
+        # Enable dragging skills OUT, but not dropping IN or reordering
+        self.library_widget.setDragDropMode(QListWidget.DragDropMode.DragOnly)
         
         # [REMOVED] self.lbl_loading.hide() <- This was causing your specific crash
         
@@ -1292,6 +1338,14 @@ class MainWindow(QMainWindow):
         self.suggestion_offset = 0 
         self.update_suggestions()
         
+    def handle_skill_swapped(self, source_index, target_index):
+        # Swap in the internal list
+        self.bar_skills[source_index], self.bar_skills[target_index] = \
+            self.bar_skills[target_index], self.bar_skills[source_index]
+        
+        # Refresh the visual slots
+        self.refresh_equipped_skills()
+        self.update_suggestions()
     def refresh_equipped_skills(self):
         is_pvp = self.check_pvp.isChecked()
         dist = self.attr_editor.get_distribution()
@@ -1624,8 +1678,9 @@ class MainWindow(QMainWindow):
         new_size = 128 if checked else 64
         self.library_widget.set_icon_size(new_size)
 
-    def process_folder_drop(self, folder_path):
-        team_name = os.path.basename(folder_path)
+    def process_folder_drop(self, folder_path, team_name=None):
+        if team_name is None:
+            team_name = os.path.basename(folder_path)
         if not team_name: return
         
         added_count = 0
@@ -1660,25 +1715,16 @@ class MainWindow(QMainWindow):
                                 break
                         
                         if not exists:
-                            self.engine.builds.append(Build(
-                                code=entry['build_code'],
-                                primary_prof=entry['primary_profession'],
-                                secondary_prof=entry['secondary_profession'],
-                                skill_ids=entry['skill_ids'],
-                                category=entry['category'],
-                                team=entry['team']
-                            ))
-                            
-                            if os.path.exists(JSON_FILE):
-                                with open(JSON_FILE, 'r', encoding='utf-8') as f:
-                                    data = json.load(f)
-                            else:
-                                data = []
-                            
-                            data.append(entry)
-                            with open(JSON_FILE, 'w', encoding='utf-8') as f:
-                                json.dump(data, f, indent=4)
-                                
+                            new_build = Build(
+                                code=code,
+                                primary_prof=str(decoded['profession']['primary']),
+                                secondary_prof=str(decoded['profession']['secondary']),
+                                skill_ids=decoded['skills'],
+                                category="User Imported",
+                                team=team_name
+                            )
+                            new_build.is_user_build = True
+                            self.engine.builds.append(new_build)
                             added_count += 1
                             
                 except Exception as e:
@@ -1686,6 +1732,7 @@ class MainWindow(QMainWindow):
 
         if added_count > 0:
             self.engine.teams.add(team_name)
+            self.engine.save_user_builds()
             self.update_team_dropdown()
             # Select the new team
             idx = self.combo_team.findText(team_name)

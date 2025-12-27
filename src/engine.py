@@ -1,12 +1,13 @@
 import sqlite3
 import json
+import os
 import collections
 from typing import List, Set, Tuple
 from collections import Counter
 from src.skill2vec import SkillBrain
 from src.utils import GuildWarsTemplateDecoder
 from src.models import Build
-from src.constants import BEHAVIOR_MODEL_PATH, SEMANTIC_MODEL_PATH
+from src.constants import BEHAVIOR_MODEL_PATH, SEMANTIC_MODEL_PATH, USER_BUILDS_FILE
 
 # =============================================================================
 # MECHANICS ENGINE
@@ -778,46 +779,84 @@ class SynergyEngine:
     def load_data(self, json_path):
         # 1. Load the raw JSON for standard lookups
         seen_builds = set() # (code, team) to prevent duplicates
-        try:
-            with open(json_path, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-                for entry in data:
-                    code = entry.get('build_code', '')
-                    team = entry.get('team', 'General')
-                    
-                    if (code, team) in seen_builds:
-                        continue
-                    seen_builds.add((code, team))
+        
+        # Helper to process a JSON file
+        def process_file(path, is_user_data=False):
+            if not os.path.exists(path): return
+            try:
+                with open(path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    for entry in data:
+                        code = entry.get('build_code', '')
+                        team = entry.get('team', 'General')
+                        
+                        if (code, team) in seen_builds:
+                            continue
+                        seen_builds.add((code, team))
 
-                    attrs = []
-                    if code:
-                        decoded = GuildWarsTemplateDecoder(code).decode()
-                        if decoded:
-                            attrs = decoded.get('attributes', [])
+                        attrs = []
+                        if code:
+                            decoded = GuildWarsTemplateDecoder(code).decode()
+                            if decoded:
+                                attrs = decoded.get('attributes', [])
 
-                    category = entry.get('category', 'Uncategorized')
-                    if category == "SC": category = "Speed Clear"
+                        category = entry.get('category', 'Uncategorized')
+                        if category == "SC": category = "Speed Clear"
+                        
+                        name = entry.get('name', '')
 
-                    b = Build(
-                        code=code,
-                        primary_prof=str(entry.get('primary_profession', 'Unknown')),
-                        secondary_prof=str(entry.get('secondary_profession', '')),
-                        skill_ids=entry.get('skill_ids', []),
-                        category=category,
-                        team=entry.get('team', 'General'),
-                        attributes=attrs
-                    )
-                    self.builds.append(b)
-                    self.professions.add(b.primary_prof)
-                    self.categories.add(b.category)
-                    self.teams.add(b.team)
-        except FileNotFoundError:
-            print("JSON file not found.")
+                        # Auto-assign to Mosquito's Teambuild category
+                        if "Mosquito" in team or "Mosquito" in name:
+                            category = "Mosquito's Teambuild"
+
+                        b = Build(
+                            code=code,
+                            primary_prof=str(entry.get('primary_profession', 'Unknown')),
+                            secondary_prof=str(entry.get('secondary_profession', '')),
+                            skill_ids=entry.get('skill_ids', []),
+                            category=category,
+                            team=team,
+                            attributes=attrs,
+                            name=name
+                        )
+                        # Tag user builds so we know where to save them later
+                        b.is_user_build = is_user_data
+                        
+                        self.builds.append(b)
+                        self.professions.add(b.primary_prof)
+                        self.categories.add(b.category)
+                        self.teams.add(b.team)
+            except Exception as e:
+                print(f"Error loading {path}: {e}")
+
+        # Load User Builds (Writable) - Process these first so they take precedence
+        process_file(USER_BUILDS_FILE, is_user_data=True)
+        # Load System Builds (Read-Only)
+        process_file(json_path, is_user_data=False)
 
         # 2. TRIGGER AUTO-TRAINING HERE
-        # Check behavioral and semantic models.
-        # We use the db_path from hamiltonian engine
-        self.brain.train(json_path, self.mechanics.db_path)
+        # We train the brain using the user builds file so it learns from user additions
+        self.brain.train(USER_BUILDS_FILE, self.mechanics.db_path)
+
+    def save_user_builds(self):
+        user_data = []
+        for b in self.builds:
+            if getattr(b, 'is_user_build', False):
+                user_data.append({
+                    "build_code": b.code,
+                    "primary_profession": b.primary_prof,
+                    "secondary_profession": b.secondary_prof,
+                    "skill_ids": b.skill_ids,
+                    "category": b.category,
+                    "team": b.team,
+                    "name": b.name
+                })
+        
+        try:
+            with open(USER_BUILDS_FILE, 'w', encoding='utf-8') as f:
+                json.dump(user_data, f, indent=4)
+        except Exception as e:
+            print(f"Error saving user builds: {e}")
 
     def get_zone_skills(self, zone_name: str) -> List[Tuple[int, bool]]:
         try:

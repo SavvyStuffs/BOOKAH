@@ -100,3 +100,4 @@ class Build:
     category: str
     team: str
     attributes: List[List[int]] = None 
+    name: str = ""

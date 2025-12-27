@@ -8,6 +8,48 @@ from src.constants import PROF_MAP, JSON_FILE
 from src.utils import GuildWarsTemplateDecoder
 from src.models import Build
 
+class NewTeamDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("New Team")
+        self.setFixedSize(300, 150)
+        self.folder_path = None
+        
+        layout = QVBoxLayout(self)
+        
+        layout.addWidget(QLabel("<b>Team Name:</b>"))
+        self.edit_name = QLineEdit()
+        self.edit_name.setPlaceholderText("Enter team name...")
+        layout.addWidget(self.edit_name)
+        
+        self.btn_import = QPushButton("Import Templates from Folder")
+        self.btn_import.clicked.connect(self.choose_folder)
+        layout.addWidget(self.btn_import)
+        
+        self.lbl_status = QLabel("No folder selected")
+        self.lbl_status.setStyleSheet("font-size: 10px; color: #888;")
+        layout.addWidget(self.lbl_status)
+        
+        btns = QHBoxLayout()
+        self.btn_create = QPushButton("Create")
+        self.btn_create.clicked.connect(self.accept)
+        self.btn_cancel = QPushButton("Cancel")
+        self.btn_cancel.clicked.connect(self.reject)
+        btns.addWidget(self.btn_create)
+        btns.addWidget(self.btn_cancel)
+        layout.addLayout(btns)
+
+    def choose_folder(self):
+        path = QFileDialog.getExistingDirectory(self, "Select Team Build Folder")
+        if path:
+            self.folder_path = path
+            self.lbl_status.setText(f"Selected: {os.path.basename(path)}")
+            if not self.edit_name.text():
+                self.edit_name.setText(os.path.basename(path))
+
+    def get_data(self):
+        return self.edit_name.text().strip(), self.folder_path
+
 class TeamManagerDialog(QDialog):
     def __init__(self, parent=None, engine=None):
         super().__init__(parent)
@@ -18,7 +60,7 @@ class TeamManagerDialog(QDialog):
         
         layout = QVBoxLayout(self)
         
-        # Header with Plus button
+        # Header with Buttons
         header = QHBoxLayout()
         header.addWidget(QLabel("<b>Teams:</b>"))
         header.addStretch()
@@ -29,12 +71,13 @@ class TeamManagerDialog(QDialog):
         self.btn_export.clicked.connect(self.export_team)
         header.addWidget(self.btn_export)
 
-        self.btn_add_folder = QPushButton("+")
-        self.btn_add_folder.setFixedSize(24, 24)
-        self.btn_add_folder.setToolTip("Import Team from Folder")
-        self.btn_add_folder.setStyleSheet("font-weight: bold; color: #00AAFF;")
-        self.btn_add_folder.clicked.connect(self.add_from_folder)
-        header.addWidget(self.btn_add_folder)
+        self.btn_new_team = QPushButton("+")
+        self.btn_new_team.setFixedSize(24, 24)
+        self.btn_new_team.setToolTip("Create New Team")
+        self.btn_new_team.setStyleSheet("font-weight: bold; color: #00AAFF;")
+        self.btn_new_team.clicked.connect(self.open_new_team_dialog)
+        header.addWidget(self.btn_new_team)
+        
         layout.addLayout(header)
         
         # Search Bar
@@ -76,6 +119,20 @@ class TeamManagerDialog(QDialog):
         filtered_teams = [t for t in teams if search_text in t.lower()]
         self.list_widget.addItems(filtered_teams)
         
+    def open_new_team_dialog(self):
+        dlg = NewTeamDialog(self)
+        if dlg.exec():
+            name, folder = dlg.get_data()
+            if not name:
+                return
+                
+            if folder:
+                self.parent_window.process_folder_drop(folder, team_name=name)
+            else:
+                self.engine.teams.add(name)
+            
+            self.refresh_list()
+        
     def export_team(self):
         item = self.list_widget.currentItem()
         if not item:
@@ -87,14 +144,6 @@ class TeamManagerDialog(QDialog):
         if idx != -1:
             self.parent_window.combo_team.setCurrentIndex(idx)
             self.parent_window.export_team_builds()
-
-    def add_from_folder(self):
-        # Open directory dialog
-        folder_path = QFileDialog.getExistingDirectory(self, "Select Team Build Folder")
-        if folder_path:
-            # Use logic from main window
-            self.parent_window.process_folder_drop(folder_path)
-            self.refresh_list()
         
     def edit_team(self):
         item = self.list_widget.currentItem()
@@ -102,6 +151,7 @@ class TeamManagerDialog(QDialog):
         team_name = item.text()
         dlg = TeamEditorDialog(team_name, self.engine, self)
         dlg.exec()
+        self.refresh_list()
 
     def add_team(self):
         # Save current build as a new Team Build entry
@@ -116,28 +166,21 @@ class TeamManagerDialog(QDialog):
             decoded = decoder.decode()
             if not decoded: return
 
-            entry = {
-                "build_code": code,
-                "primary_profession": str(decoded['profession']['primary']),
-                "secondary_profession": str(decoded['profession']['secondary']),
-                "skill_ids": decoded['skills'],
-                "category": "User Team",
-                "team": name
-            }
+            new_build = Build(
+                code=code,
+                primary_prof=str(decoded['profession']['primary']),
+                secondary_prof=str(decoded['profession']['secondary']),
+                skill_ids=decoded['skills'],
+                category="User Team",
+                team=name
+            )
+            new_build.is_user_build = True
             
-            # Append to engine data and save
-            self.engine.builds.append(Build(
-                code=entry['build_code'],
-                primary_prof=entry['primary_profession'],
-                secondary_prof=entry['secondary_profession'],
-                skill_ids=entry['skill_ids'],
-                category=entry['category'],
-                team=entry['team']
-            ))
+            self.engine.builds.append(new_build)
             self.engine.teams.add(name)
             
-            # Persist to JSON
-            self.save_to_json(entry)
+            # Save using centralized engine logic
+            self.engine.save_user_builds()
             self.refresh_list()
             
     def load_team(self):
@@ -165,34 +208,9 @@ class TeamManagerDialog(QDialog):
             self.engine.builds = [b for b in self.engine.builds if b.team != team_name]
             self.engine.teams.discard(team_name)
             
-            # Remove from JSON
-            self.remove_from_json(team_name)
+            # Save using centralized engine logic
+            self.engine.save_user_builds()
             self.refresh_list()
-
-    def save_to_json(self, entry):
-        try:
-            data = []
-            if os.path.exists(JSON_FILE):
-                with open(JSON_FILE, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
-            data.append(entry)
-            with open(JSON_FILE, 'w', encoding='utf-8') as f:
-                json.dump(data, f, indent=4)
-        except Exception as e:
-            print(f"Error saving: {e}")
-
-    def remove_from_json(self, team_name):
-        try:
-            if os.path.exists(JSON_FILE):
-                with open(JSON_FILE, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
-                
-                new_data = [d for d in data if d.get('team') != team_name]
-                
-                with open(JSON_FILE, 'w', encoding='utf-8') as f:
-                    json.dump(new_data, f, indent=4)
-        except Exception as e:
-            print(f"Error removing: {e}")
 
 class TeamEditorDialog(QDialog):
     def __init__(self, team_name, engine, parent=None):
@@ -204,16 +222,69 @@ class TeamEditorDialog(QDialog):
         
         layout = QVBoxLayout(self)
         
+        # Header with Rename Team button
+        header = QHBoxLayout()
+        header.addWidget(QLabel(f"<b>Team:</b> {team_name}"))
+        header.addStretch()
+        self.btn_rename_team = QPushButton("Rename Team")
+        self.btn_rename_team.setFixedSize(100, 24)
+        self.btn_rename_team.clicked.connect(self.rename_team)
+        header.addWidget(self.btn_rename_team)
+        layout.addLayout(header)
+
         self.list_widget = QListWidget()
         self.refresh_list()
         layout.addWidget(self.list_widget)
         
         btn_layout = QHBoxLayout()
+        self.btn_rename = QPushButton("Rename Selected Build")
+        self.btn_rename.clicked.connect(self.rename_build)
+        btn_layout.addWidget(self.btn_rename)
+
         self.btn_del = QPushButton("Remove Selected Build")
         self.btn_del.clicked.connect(self.remove_build)
         btn_layout.addWidget(self.btn_del)
         
         layout.addLayout(btn_layout)
+
+    def rename_team(self):
+        new_name, ok = QInputDialog.getText(self, "Rename Team", "Enter new team name:", text=self.team_name)
+        if ok and new_name and new_name != self.team_name:
+            # Update in memory
+            for b in self.engine.builds:
+                if b.team == self.team_name:
+                    b.team = new_name
+                    b.is_user_build = True # Mark as user build to ensure it persists in user_builds.json
+            
+            self.engine.teams.discard(self.team_name)
+            self.engine.teams.add(new_name)
+            
+            # Save using centralized engine logic
+            self.engine.save_user_builds()
+            
+            # Update UI
+            self.team_name = new_name
+            self.setWindowTitle(f"Edit Team: {self.team_name}")
+            # Update the label in header
+            for i in range(self.layout().itemAt(0).layout().count()):
+                item = self.layout().itemAt(0).layout().itemAt(i).widget()
+                if isinstance(item, QLabel) and "Team:" in item.text():
+                    item.setText(f"<b>Team:</b> {self.team_name}")
+                    break
+            
+            self.refresh_list()
+
+    def rename_build(self):
+        row = self.list_widget.currentRow()
+        if row < 0: return
+        
+        build = self.team_builds[row]
+        new_name, ok = QInputDialog.getText(self, "Rename Build", "Enter build name:", text=build.name)
+        if ok:
+            build.name = new_name.strip()
+            build.is_user_build = True
+            self.engine.save_user_builds()
+            self.refresh_list()
 
     def refresh_list(self):
         self.list_widget.clear()
@@ -223,7 +294,8 @@ class TeamEditorDialog(QDialog):
             # Try to describe the build
             p1 = PROF_MAP.get(int(b.primary_prof), "X")
             p2 = PROF_MAP.get(int(b.secondary_prof), "X")
-            item_text = f"#{i+1}: {p1}/{p2} - {b.code}"
+            name_str = f" ({b.name})" if b.name else ""
+            item_text = f"#{i+1}: {p1}/{p2}{name_str} - {b.code}"
             self.list_widget.addItem(item_text)
 
     def remove_build(self):
@@ -236,30 +308,11 @@ class TeamEditorDialog(QDialog):
         if build_to_remove in self.engine.builds:
             self.engine.builds.remove(build_to_remove)
 
-        # Remove from JSON
-        self.remove_specific_build_from_json(build_to_remove.code)
+        # Save using centralized engine logic
+        self.engine.save_user_builds()
 
         self.refresh_list()
 
-    def remove_specific_build_from_json(self, code):
-        try:
-            if os.path.exists(JSON_FILE):
-                with open(JSON_FILE, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
-                
-                # Remove FIRST match of code and team (in case of dupes)
-                new_data = []
-                removed = False
-                for d in data:
-                    if not removed and d.get('build_code') == code and d.get('team') == self.team_name:
-                        removed = True # Skip this one
-                    else:
-                        new_data.append(d)
-                
-                with open(JSON_FILE, 'w', encoding='utf-8') as f:
-                    json.dump(new_data, f, indent=4)
-        except Exception as e:
-            print(f"Error removing build: {e}")
 
 class LocationManagerDialog(QDialog):
     def __init__(self, parent=None, db_path=None):
