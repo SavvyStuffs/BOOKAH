@@ -1,8 +1,10 @@
+import time
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QGroupBox, QRadioButton, QButtonGroup, QLabel, QFrame, QCheckBox
+    QWidget, QVBoxLayout, QGroupBox, QRadioButton, QButtonGroup, QLabel, QFrame, QCheckBox, QPushButton, QMessageBox, QHBoxLayout
 )
-from PyQt6.QtCore import Qt, pyqtSignal, QSettings
-from PyQt6.QtGui import QPalette, QColor
+from PyQt6.QtCore import Qt, pyqtSignal, QSettings, QUrl
+from PyQt6.QtGui import QPalette, QColor, QDesktopServices, QIcon
+from src.ui.dialogs import FeedbackDialog, WebBrowserDialog
 
 class SettingsTab(QWidget):
     theme_changed = pyqtSignal(str) # Emits "Dark", "Light", or "Auto"
@@ -22,14 +24,6 @@ class SettingsTab(QWidget):
         font = self.lbl_attrib.font()
         font.setItalic(True)
         self.lbl_attrib.setFont(font)
-        # We can set opacity via styleSheet, but color needs to adapt. 
-        # Using "color: palette(text)" allows it to adapt to the QPalette set in MainWindow.
-        # However, style sheets often override palette. 
-        # Let's try standard palette first. If we want 75% opacity, we can set it in color.
-        # But simpler is to use the same CSS approach as before, assuming the theme engine sets global palette.
-        # Actually, since main window applies a global palette, standard labels just work.
-        # To get 75% opacity, we can use a style sheet that references the palette?
-        # Or just specific styling.
         self.lbl_attrib.setStyleSheet("QLabel { opacity: 0.75; letter-spacing: 1px; }")
         self.lbl_attrib.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(self.lbl_attrib)
@@ -71,10 +65,6 @@ class SettingsTab(QWidget):
         self.check_nightfall = QCheckBox("Nightfall")
         self.check_eotn = QCheckBox("Eye of the North")
         
-        # Core is always included? Or implies Prophecies? 
-        # Usually Core skills are available to everyone. We might need to clarify if "Prophecies" means "Prophecies Only" or includes Core.
-        # Typically Core skills have campaign=0. Prophecies=1, Factions=2, Nightfall=3, EotN=4.
-        
         camp_layout.addWidget(self.check_prophecies)
         camp_layout.addWidget(self.check_factions)
         camp_layout.addWidget(self.check_nightfall)
@@ -86,6 +76,42 @@ class SettingsTab(QWidget):
         self.check_eotn.toggled.connect(self.on_campaigns_changed)
         
         layout.addWidget(group_campaigns)
+
+        # --- Feedback & Help Section ---
+        group_feedback = QGroupBox("Feedback & Help")
+        group_feedback.setStyleSheet("QGroupBox { font-weight: bold; border: 1px solid #444; margin-top: 10px; padding-top: 10px; } QGroupBox::title { subcontrol-origin: margin; subcontrol-position: top left; padding: 0 3px; }")
+        
+        feedback_layout = QHBoxLayout(group_feedback)
+        
+        self.btn_feedback = QPushButton("Send Feedback")
+        self.btn_feedback.setStyleSheet("""
+            QPushButton { 
+                background-color: #0078D7; 
+                color: white; 
+                padding: 8px; 
+                border-radius: 4px;
+                font-weight: bold;
+            }
+            QPushButton:hover { background-color: #005A9E; }
+        """)
+        self.btn_feedback.clicked.connect(self.open_feedback)
+        feedback_layout.addWidget(self.btn_feedback)
+
+        self.btn_tutorial = QPushButton(" Tutorial")
+        self.btn_tutorial.setStyleSheet("""
+            QPushButton { 
+                background-color: #CC0000; 
+                color: white; 
+                padding: 8px; 
+                border-radius: 4px;
+                font-weight: bold;
+            }
+            QPushButton:hover { background-color: #AA0000; }
+        """)
+        self.btn_tutorial.clicked.connect(self.open_tutorial)
+        feedback_layout.addWidget(self.btn_tutorial)
+        
+        layout.addWidget(group_feedback)
         
         # Load saved settings
         current_theme = self.settings.value("theme", "Auto")
@@ -100,6 +126,25 @@ class SettingsTab(QWidget):
         self.check_factions.setChecked(True)
         self.check_nightfall.setChecked(True)
         self.check_eotn.setChecked(True)
+
+    def open_feedback(self):
+        last_time = float(self.settings.value("last_feedback_time", 0))
+        elapsed = time.time() - last_time
+        if elapsed < 300:
+            remaining_min = int((300 - elapsed) / 60) + 1
+            unit = "minute" if remaining_min == 1 else "minutes"
+            QMessageBox.warning(self, "Cooldown", f"Please wait, there is a cool down to prevent spam. {remaining_min} {unit} remaining")
+            return
+
+        dlg = FeedbackDialog(self)
+        dlg.exec()
+        self.settings.setValue("last_feedback_time", time.time())
+
+    def open_tutorial(self):
+        # Using the actual tutorial video URL with origin parameter to help fix Error 153
+        url = "https://www.youtube.com/embed/rKSEPcfZOOw?origin=https://bookah.savvy-stuff.dev" 
+        dlg = WebBrowserDialog(self, "Tutorial", url)
+        dlg.exec()
 
     def on_theme_changed(self, button):
         if button == self.radio_on:

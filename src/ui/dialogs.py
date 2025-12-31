@@ -2,8 +2,17 @@ import os
 import json
 import sqlite3
 from PyQt6.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QLineEdit, QListWidget, QMessageBox, QFileDialog, QInputDialog, QTabWidget
+    QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QLineEdit, QListWidget, QMessageBox, QFileDialog, QInputDialog, QTabWidget, QTextEdit
 )
+from PyQt6.QtCore import QUrl
+
+try:
+    from PyQt6.QtWebEngineWidgets import QWebEngineView
+    from PyQt6.QtWebEngineCore import QWebEngineHttpRequest
+    HAS_WEBENGINE = True
+except ImportError:
+    HAS_WEBENGINE = False
+
 from src.constants import PROF_MAP, JSON_FILE
 from src.utils import GuildWarsTemplateDecoder
 from src.models import Build
@@ -208,40 +217,59 @@ class TeamManagerDialog(QDialog):
         self.refresh_list()
 
     def add_team(self):
-        # Save current build as a new Team Build entry
-        name, ok = QInputDialog.getText(self, "New Team Build", "Enter Team Name:")
-        if ok and name:
-            code = self.parent_window.edit_code.text()
-            if not code:
-                QMessageBox.warning(self, "Error", "No build code to save!")
-                return
-                
-            decoder = GuildWarsTemplateDecoder(code)
-            decoded = decoder.decode()
-            if not decoded: return
+        # Get selected team
+        item = self.list_widget.currentItem()
+        if not item:
+            QMessageBox.warning(self, "Select Team", "Please select a team from the list to add this build to.")
+            return
+            
+        team_name = item.text()
+        
+        # Prompt for Build Name
+        build_name, ok = QInputDialog.getText(self, "Build Name", "Enter a name for this build (optional):")
+        if not ok: return # User cancelled
+        
+        code = self.parent_window.edit_code.text()
+        if not code:
+            QMessageBox.warning(self, "Error", "No build code to save!")
+            return
+            
+        decoder = GuildWarsTemplateDecoder(code)
+        decoded = decoder.decode()
+        if not decoded: return
 
-            new_build = Build(
-                code=code,
-                primary_prof=str(decoded['profession']['primary']),
-                secondary_prof=str(decoded['profession']['secondary']),
-                skill_ids=decoded['skills'],
-                category="User Team",
-                team=name
-            )
-            new_build.is_user_build = True
-            
-            self.engine.builds.append(new_build)
-            self.engine.teams.add(name)
-            
-            # Save using centralized engine logic
-            self.engine.save_user_builds()
-            self.refresh_list()
+        new_build = Build(
+            code=code,
+            primary_prof=str(decoded['profession']['primary']),
+            secondary_prof=str(decoded['profession']['secondary']),
+            skill_ids=decoded['skills'],
+            category="User Imported",
+            team=team_name,
+            name=build_name.strip()
+        )
+        new_build.is_user_build = True
+        
+        self.engine.builds.append(new_build)
+        self.engine.teams.add(team_name)
+        
+        # Save using centralized engine logic
+        self.engine.save_user_builds()
+        
+        # Refresh main window if it exists
+        if self.parent_window and hasattr(self.parent_window, 'apply_filters'):
+            self.parent_window.apply_filters()
+        
+        QMessageBox.information(self, "Success", f"Build '{build_name}' added to team '{team_name}'.")
             
     def load_team(self):
         # Set the main window's team filter to the selected team
         item = self.list_widget.currentItem()
         if not item: return
         team_name = item.text()
+        
+        # Ensure parent dropdown is up to date
+        if hasattr(self.parent_window, 'update_team_dropdown'):
+            self.parent_window.update_team_dropdown()
         
         # Find the team in the parent's combo box
         index = self.parent_window.combo_team.findText(team_name)
@@ -486,3 +514,52 @@ class BuildUniquenessDialog(QDialog):
         btn_close = QPushButton("Close")
         btn_close.clicked.connect(self.accept)
         layout.addWidget(btn_close)
+
+class WebBrowserDialog(QDialog):
+    def __init__(self, parent=None, title="Web Browser", url="https://google.com"):
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self.resize(1024, 768)
+        
+        layout = QVBoxLayout(self)
+        
+        if HAS_WEBENGINE:
+            self.web_view = QWebEngineView()
+            
+            if "youtube.com/embed" in url:
+                # Wrap YouTube embeds in a local HTML page to enforce Referer/Origin
+                html = f"""
+                <!DOCTYPE html>
+                <html>
+                <head>
+                    <style>
+                        body, html {{ margin: 0; padding: 0; height: 100%; overflow: hidden; background: #000; }}
+                        iframe {{ width: 100%; height: 100%; border: 0; }}
+                    </style>
+                </head>
+                <body>
+                    <iframe src="{url}" allow="autoplay; encrypted-media" allowfullscreen></iframe>
+                </body>
+                </html>
+                """
+                self.web_view.setHtml(html, QUrl("https://bookah.savvy-stuff.dev"))
+            else:
+                # Direct load for other URLs (like Google Forms)
+                req = QWebEngineHttpRequest(QUrl(url))
+                req.setHeader(b"Referer", b"https://bookah.savvy-stuff.dev")
+                self.web_view.load(req)
+                
+            layout.addWidget(self.web_view)
+        else:
+            lbl = QLabel(f"<b>Error:</b> The embedded browser component (PyQt6-WebEngine) is not installed.<br>Cannot display: {url}")
+            lbl.setWordWrap(True)
+            layout.addWidget(lbl)
+            
+        btn_close = QPushButton("Close")
+        btn_close.clicked.connect(self.accept)
+        layout.addWidget(btn_close)
+
+class FeedbackDialog(WebBrowserDialog):
+    def __init__(self, parent=None):
+        url = "https://forms.gle/71osvp76fPA3g8Tw8"
+        super().__init__(parent, "Feedback", url)

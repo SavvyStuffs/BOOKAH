@@ -17,6 +17,25 @@ if __name__ == "__main__":
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
     
+    # --- Crash Handler ---
+    def crash_handler(exctype, value, tb):
+        # Ignore KeyboardInterrupt
+        if issubclass(exctype, KeyboardInterrupt):
+            sys.__excepthook__(exctype, value, tb)
+            return
+
+        from src.crash_reporter import CrashReporter
+        print("Crash detected! Launching reporter...")
+        # Ensure stderr still gets it
+        sys.__excepthook__(exctype, value, tb)
+        
+        reporter = CrashReporter(exctype, value, tb)
+        reporter.exec()
+        sys.exit(1)
+
+    sys.excepthook = crash_handler
+    # ---------------------
+    
     # App Icon
     icon_path = resource_path("icons/bookah_icon.ico")
     if os.path.exists(icon_path):

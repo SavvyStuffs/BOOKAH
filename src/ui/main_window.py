@@ -222,26 +222,38 @@ class MainWindow(QMainWindow):
         self.update_checker = UpdateChecker()
         self.update_checker.update_available.connect(self.on_update_available)
         self.update_checker.error.connect(lambda e: print(f"Update Check Error: {e}"))
-        self.update_checker.check()
+        
+        self._update_check_triggered = False
 
-    def on_update_available(self, new_version, download_url):
+    def on_update_available(self, new_version, download_url, release_notes=""):
         if self.isVisible():
-            self._show_update_dialog(new_version, download_url)
+            self._show_update_dialog(new_version, download_url, release_notes)
         else:
-            self.pending_update = (new_version, download_url)
+            self.pending_update = (new_version, download_url, release_notes)
 
     def showEvent(self, event):
         super().showEvent(event)
-        if self.pending_update:
-            new_version, download_url = self.pending_update
-            self.pending_update = None
-            QTimer.singleShot(500, lambda: self._show_update_dialog(new_version, download_url))
+        
+        # Trigger update check once when window is shown
+        if not self._update_check_triggered:
+            self._update_check_triggered = True
+            QTimer.singleShot(1000, self.update_checker.check)
 
-    def _show_update_dialog(self, new_version, download_url):
+        if self.pending_update:
+            new_version, download_url, release_notes = self.pending_update
+            self.pending_update = None
+            QTimer.singleShot(500, lambda: self._show_update_dialog(new_version, download_url, release_notes))
+
+    def _show_update_dialog(self, new_version, download_url, release_notes=""):
+        msg = f"A new version ({new_version}) is available.\n\n"
+        if release_notes:
+            msg += f"Updates:\n{release_notes}\n\n"
+        msg += "Do you want to download and update now?"
+        
         reply = QMessageBox.question(
             self, 
             "Update Available", 
-            f"A new version ({new_version}) is available.\nDo you want to download and update now?",
+            msg,
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
         )
         
@@ -653,6 +665,22 @@ class MainWindow(QMainWindow):
             
         bar_area_layout.addLayout(bar_layout)
 
+        # Loading Indicator (Left Aligned, fixed height to prevent jumping)
+        loading_hbox = QHBoxLayout()
+        loading_hbox.setContentsMargins(10, 0, 0, 0) # Small indent from the edge
+        self.lbl_bar_loading = QLabel("Loading...")
+        self.lbl_bar_loading.setStyleSheet("color: #00AAFF; font-weight: bold; font-size: 10px;")
+        
+        # Prevent layout from shifting when label is hidden
+        sp = self.lbl_bar_loading.sizePolicy()
+        sp.setRetainSizeWhenHidden(True)
+        self.lbl_bar_loading.setSizePolicy(sp)
+        
+        self.lbl_bar_loading.setVisible(False)
+        loading_hbox.addWidget(self.lbl_bar_loading)
+        loading_hbox.addStretch()
+        bar_area_layout.addLayout(loading_hbox)
+
         # Button row (Cycle + Unique Check)
         btn_hbox = QHBoxLayout()
         btn_hbox.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -765,9 +793,8 @@ class MainWindow(QMainWindow):
         dlg.btn_load.setText("Load Team")
         dlg.btn_load.setToolTip("Load all skills from this team to use as synergy context")
         
-        # Hide export and import buttons for smart mode context
+        # Hide export button for smart mode context
         dlg.btn_export.setVisible(False)
-        dlg.btn_add_folder.setVisible(False)
         
         # Override the load_team method logic by reconnecting the button
         def synergy_load():
@@ -834,6 +861,9 @@ class MainWindow(QMainWindow):
         self.reset_zone_mode()
 
         print(f"[UI] Activating Team Context: {team_name}")
+        self.lbl_bar_loading.setVisible(True)
+        QApplication.processEvents()
+        
         self.team_synergy_skills = []
         builds = [b for b in self.engine.builds if b.team == team_name]
         
@@ -1000,7 +1030,14 @@ class MainWindow(QMainWindow):
             return
 
         primary_prof_id = build_data.get("profession", {}).get("primary", 0)
-        if primary_prof_id != 0:
+        
+        # Only auto-switch profession filter if we are NOT in a specific Team/Category view
+        # This prevents the list from suddenly filtering out other members of the team
+        current_team = self.combo_team.currentText()
+        current_cat = self.combo_cat.currentText()
+        should_switch_prof = (current_team == "All" and current_cat == "All")
+
+        if primary_prof_id != 0 and should_switch_prof:
             for i in range(self.combo_prof.count()):
                 text = self.combo_prof.itemText(i)
                 if text.startswith(f"{primary_prof_id} -"):
@@ -1077,30 +1114,37 @@ class MainWindow(QMainWindow):
             self.filter_worker.requestInterruption()
             self.filter_worker.wait(200)
 
-        # [REMOVED] self.lbl_loading.show() <- This was causing the potential next crash
-
         prof_str = self.combo_prof.currentText()
         if prof_str == "All": prof = "All"
         else: prof = prof_str.split(' ')[0]
 
         cat = self.combo_cat.currentText()
         team = self.combo_team.currentText()
+        search_text = self.edit_search.text().lower()
 
-        # --- NEW: Build View Modes ---
-        if team != "All":
-            self.show_team_builds(team)
-            return
+        # --- Mode Logic ---
+        # 1. If NOT searching and Team/Cat selected -> Show Builds
+        if not search_text:
+            if team != "All":
+                self.show_team_builds(team)
+                return
+            if cat != "All":
+                self.show_category_builds(cat)
+                return
+
+        # 2. If Searching -> Search Global Skill DB (ignore Team/Cat restriction)
+        #    Otherwise (All/All) -> Show Global Skill DB
         
-        if cat != "All":
-            self.show_category_builds(cat)
-            return
+        # Override context filters if searching
+        target_team = "All" if search_text else team
+        target_cat = "All" if search_text else cat
 
         # Gather filters
         filters = {
             'prof': prof,
-            'cat': cat,
-            'team': team,
-            'search_text': self.edit_search.text().lower(),
+            'cat': target_cat,
+            'team': target_team,
+            'search_text': search_text,
             'search_desc_mode': self.check_search_desc.isChecked() if hasattr(self, 'check_search_desc') else False,
             'is_pvp': self.check_pvp.isChecked(),
             'is_pve_only': self.check_pve_only.isChecked(),
@@ -1114,6 +1158,20 @@ class MainWindow(QMainWindow):
         self.filter_worker.finished.connect(self._on_filter_finished)
         self.filter_worker.start()
 
+    def _apply_profession_filter(self, builds):
+        prof_str = self.combo_prof.currentText()
+        if prof_str == "All":
+            return builds
+        
+        target_prof_id = prof_str.split(' ')[0] # e.g. "1"
+        
+        filtered = []
+        for b in builds:
+            # Include if matches target OR if it is "X" (0) which indicates Any/Universal
+            if b.primary_prof == target_prof_id or b.primary_prof == "0":
+                filtered.append(b)
+        return filtered
+
     def show_team_builds(self, team_name):
         self.library_widget.clear()
         self.library_widget.setViewMode(QListWidget.ViewMode.ListMode)
@@ -1125,6 +1183,8 @@ class MainWindow(QMainWindow):
         matching_builds = [b for b in self.engine.builds if b.team == team_name]
         if cat != "All":
             matching_builds = [b for b in matching_builds if b.category == cat]
+            
+        matching_builds = self._apply_profession_filter(matching_builds)
             
         self._populate_build_list(matching_builds)
 
@@ -1138,10 +1198,7 @@ class MainWindow(QMainWindow):
         matching_builds = [b for b in self.engine.builds if b.category == category_name]
         
         # Filter by profession if needed
-        prof_str = self.combo_prof.currentText()
-        if prof_str != "All":
-            prof_id = prof_str.split(' ')[0]
-            matching_builds = [b for b in matching_builds if b.primary_prof == prof_id]
+        matching_builds = self._apply_profession_filter(matching_builds)
 
         self._populate_build_list(matching_builds)
 
@@ -1186,10 +1243,8 @@ class MainWindow(QMainWindow):
                 matching_builds = [b for b in matching_builds if b.category == cat_name]
         else:
             matching_builds = [b for b in self.engine.builds if b.category == cat_name]
-            prof_str = self.combo_prof.currentText()
-            if prof_str != "All":
-                prof_id = prof_str.split(' ')[0]
-                matching_builds = [b for b in matching_builds if b.primary_prof == prof_id]
+            
+        matching_builds = self._apply_profession_filter(matching_builds)
             
         if not matching_builds or source_row >= len(matching_builds) or target_row >= len(matching_builds):
             return
@@ -1339,6 +1394,7 @@ class MainWindow(QMainWindow):
             print("Cycle: No suggestions to cycle.")
 
     def on_synergies_loaded(self, suggestions):
+        self.lbl_bar_loading.setVisible(False)
         self.current_suggestions = []
         is_pvp = self.check_pvp.isChecked()
         show_others = self.check_show_others.isChecked()

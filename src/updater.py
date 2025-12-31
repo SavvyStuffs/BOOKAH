@@ -11,8 +11,26 @@ from packaging import version
 from PyQt6.QtCore import QObject, pyqtSignal, QThread
 from src.constants import resource_path
 
+class UpdateCheckWorker(QThread):
+    result = pyqtSignal(object) # (version, url, notes) or None
+    error = pyqtSignal(str)
+
+    def __init__(self, url):
+        super().__init__()
+        self.url = url
+
+    def run(self):
+        try:
+            # Add cache-busting timestamp
+            url_with_ts = f"{self.url}?t={int(time.time())}"
+            response = requests.get(url_with_ts, timeout=10)
+            response.raise_for_status()
+            self.result.emit(response.json())
+        except Exception as e:
+            self.error.emit(str(e))
+
 class UpdateChecker(QObject):
-    update_available = pyqtSignal(str, str) # version, url
+    update_available = pyqtSignal(str, str, str) # version, url, release_notes
     no_update = pyqtSignal()
     error = pyqtSignal(str)
 
@@ -37,16 +55,20 @@ class UpdateChecker(QObject):
             self.error.emit("No version URL found.")
             return
 
-        try:
-            response = requests.get(self.version_url, timeout=10)
-            response.raise_for_status()
-            data = response.json()
-            
-            remote_version = data.get('version')
-            download_url = data.get('download_url')
+        self.worker = UpdateCheckWorker(self.version_url)
+        self.worker.result.connect(self._on_result)
+        self.worker.error.connect(self.error)
+        self.worker.start()
 
-            if remote_version and download_url and version.parse(remote_version) > version.parse(self.current_version):
-                self.update_available.emit(remote_version, download_url)
+    def _on_result(self, data):
+        try:
+            remote_version = data.get('version')
+            # Fallback to static URL if not in JSON
+            download_url = data.get('download_url', "https://bookah.savvy-stuff.dev/Bookah.zip")
+            release_notes = data.get('updates', "No release notes available.")
+
+            if remote_version and version.parse(remote_version) > version.parse(self.current_version):
+                self.update_available.emit(remote_version, download_url, release_notes)
             else:
                 self.no_update.emit()
         except Exception as e:
