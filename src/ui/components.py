@@ -563,6 +563,16 @@ class SkillLibraryWidget(QListWidget):
         self.itemDoubleClicked.connect(self._on_item_double_clicked)
         self.refresh_theme()
 
+    def wheelEvent(self, event):
+        """ Override wheel event to make scrolling less sensitive. """
+        # Adjust the delta to scroll by a smaller amount
+        # Standard delta is 120 per 'click'
+        delta = event.angleDelta().y()
+        # Scale down the scroll amount - 80 pixels per click (approx one row)
+        scroll_amount = -1 * (delta / 120) * 80 
+        self.verticalScrollBar().setValue(int(self.verticalScrollBar().value() + scroll_amount))
+        event.accept()
+
     def _on_item_clicked(self, item):
         data = item.data(Qt.ItemDataRole.UserRole)
         if not isinstance(data, Build):

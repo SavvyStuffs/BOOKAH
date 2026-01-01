@@ -141,6 +141,7 @@ class VisualAnalyzer:
 
         # 3. Detect Communities
         communities = community.greedy_modularity_communities(G)
+        print(f" -> Graph Stats: {G.number_of_nodes()} nodes, {G.number_of_edges()} edges")
         print(f" -> Found {len(communities)} distinct communities.")
         
         node_colors = {}
@@ -151,7 +152,23 @@ class VisualAnalyzer:
 
         # 4. Initialize PyVis Graph
         net = Network(height='90vh', width='100%', bgcolor='#222222', font_color='white', cdn_resources='in_line')
-        net.force_atlas_2based()
+        # Use BarnesHut and enable stabilization to prevent continuous CPU usage in the app
+        net.barnes_hut(gravity=-2000, central_gravity=0.3, spring_length=95, spring_strength=0.04, damping=0.09, overlap=0)
+        
+        # Configure stabilization
+        net.set_options("""
+        var options = {
+          "physics": {
+            "stabilization": {
+              "enabled": true,
+              "iterations": 1000,
+              "updateInterval": 25,
+              "onlyDynamicEdges": false,
+              "fit": true
+            }
+          }
+        }
+        """)
         
         added_skills = set()
         icons_base_path = "icons/skill_icons/"

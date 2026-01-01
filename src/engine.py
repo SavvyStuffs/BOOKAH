@@ -14,24 +14,24 @@ from src.constants import BEHAVIOR_MODEL_PATH, SEMANTIC_MODEL_PATH, USER_BUILDS_
 
 CONDITION_DEFINITIONS = {
     "bleeding": {
-        "providers": ["causes bleeding", "inflicts bleeding", "induces bleeding", "strike a bleeding foe"],
-        "consumers": ["if target is bleeding", "against a bleeding foe", "duration of bleeding"],
+        "providers": ["causes bleeding", "inflicts bleeding", "target foe bleeds", "strike a bleeding foe"],
+        "consumers": ["if target is bleeding", "against a bleeding foe"],
         "negatives": ["remove", "cure", "end", "lose", "immune", "reduced"]
     },
     "burning": {
-        "providers": ["causes burning", "inflicts burning", "lights target on fire", "strike a burning foe"],
+        "providers": ["causes burning", "inflicts burning", "target foe burns", "strike a burning foe"],
         "consumers": ["if target is burning", "against a burning foe", "duration of burning"],
         "negatives": ["extinguish", "remove", "cure", "less fire damage"]
     },
     "poison": {
         "providers": ["causes poison", "inflicts poison", "poisonous"],
         "consumers": ["if target is poisoned", "against a poisoned foe"],
-        "negatives": ["cure", "remove", "immune"]
+        "negatives": ["cure", "remove",]
     },
     "deep wound": {
         "providers": ["causes a deep wound", "inflicts deep wound"],
         "consumers": ["if target has a deep wound", "against a deep wounded foe"],
-        "negatives": ["cure", "remove", "mends"]
+        "negatives": ["cure", "remove",]
     },
     "dazed": {
         "providers": ["dazes target", "causes dazed", "interrupts... and dazes"],
@@ -44,12 +44,12 @@ CONDITION_DEFINITIONS = {
         "negatives": ["cure", "remove", "restore attributes"]
     },
     "blind": {
-        "providers": ["causes blindness", "inflicts blindness", "blinds target"],
+        "providers": ["causes blindness", "inflicts blindness", "target foe is blinded", "blinds target"],
         "consumers": ["against a blinded foe", "if target is blinded"],
         "negatives": ["cure", "remove", "sight"]
     },
     "cripple": {
-        "providers": ["cripples target", "causes crippled", "hobbles"],
+        "providers": ["cripples target", "causes crippled", "target foe is crippled"],
         "consumers": ["against a crippled foe", "if target is crippled"],
         "negatives": ["cure", "remove", "move speed"]
     },
@@ -86,6 +86,8 @@ class BuildState:
         self.active_enchantments = 0
         self.self_heal_count = 0
         self.energy_management_count = 0
+        self.has_high_cost = False
+        self.has_energy_denial = False
         self.knockdowns = False
         self.hexes_applied = False
         
@@ -103,11 +105,12 @@ class BuildState:
             41: "Scythe"                               # Dervish
         }
 
-    def ingest_skill(self, skill):
+    def ingest_skill(self, skill, tags=None):
         """
         Reads a skill row from the DB and updates the System Context.
         DB Index: 0:id, 1:name, 2:desc, 3:nrg, 4:act, 5:rech, 6:adr, 7:hp, 8:aft, 9:combo, 10:elite, 11:attr
         """
+        if tags is None: tags = set()
         name = skill[1].lower()
         desc = skill[2].lower() if skill[2] else ""
         nrg = skill[3] or 0
@@ -153,7 +156,16 @@ class BuildState:
 
         # 6. Basic Needs Tracking
         if "heal" in desc and ("self" in desc or "you" in desc): self.self_heal_count += 1
-        if "gain" in desc and "energy" in desc: self.energy_management_count += 1
+        
+        # Energy Management tracking
+        if ("gain" in desc and "energy" in desc) or 'Type_Energy_Management' in tags:
+            self.energy_management_count += 1
+            
+        if nrg >= 15:
+            self.has_high_cost = True
+            
+        if 'Type_Energy_Denial' in tags:
+            self.has_energy_denial = True
 
     def calculate_efficiency(self, candidate_skill):
         """ Calculates variable efficiency modifiers (Smart Logic). """
@@ -209,8 +221,8 @@ class MechanicsEngine:
 
     def check_occupancy_viability(self, candidate_row, context):
         desc = candidate_row[2].lower()
-        if "stance" in desc and context.stance_count >= 1: return False, "Stance Clog"
-        if "weapon spell" in desc and context.weapon_spell_count >= 1: return False, "Weapon Spell Clog"
+        if "stance" in desc and context.stance_count >= 2: return False, "Stance Clog"
+        if "weapon spell" in desc and context.weapon_spell_count >= 2: return False, "Weapon Spell Clog"
         return True, "OK"
 
     def check_causal_viability(self, candidate_row, context):
@@ -222,12 +234,11 @@ class MechanicsEngine:
     def check_energy_drain(self, candidate_row, context):
         nrg = candidate_row[3] or 0
         rech = candidate_row[5] or 0.0
-        if nrg > 30: return False, "Skill Cost > 30 (Impossible)"
         if rech > 0:
             candidate_eps = nrg / rech
             total_drain = context.energy_drain_per_sec + candidate_eps
             limit = 4.0 if context.is_caster else 2.5
-            if total_drain > limit: return True, f"⚠️ High Drain ({total_drain:.1f} EPS)"
+            if total_drain > limit: return True, "⚠️ High Energy Usage"
         return True, "OK"
 
     def check_resource_stability(self, skill_a_data, skill_b_data, context):
@@ -238,16 +249,12 @@ class MechanicsEngine:
 
         burst_cost = e_a + e_b
         cap = context.max_energy_capacity
-        if burst_cost > cap: return False, f"Burst > Capacity ({burst_cost}/{cap})"
-        if burst_cost > (cap * 0.8): return True, f"⚠️ Heavy Burst ({burst_cost}e)"
+        
+        if burst_cost > cap: return False, "⚠️ High Energy Usage"
+        if burst_cost > (cap * 0.8): return True, "⚠️ High Energy Usage"
 
         total_hp = hp_a + hp_b
-        if total_hp > 50 and (rech_a < 8 or rech_b < 8): return False, f"Suicide Loop (-{total_hp} HP)"
-
-        cycle_b = act_b + aft_b
-        # Relaxed Timing Clog to a Warning to prevent empty suggestion lists
-        if rech_a > 0 and (rech_a + 0.25) < cycle_b: 
-            return True, f"⚠️ Timing Clog (Wait {cycle_b - rech_a:.1f}s)"
+        if total_hp > 50 and (rech_a < 8 or rech_b < 8): return False, "⚠️ High Health Cost"
 
         return True, "Stable"
 
@@ -332,8 +339,6 @@ class MechanicsEngine:
         
         if mechanics['hex'] > 0:
             add_counters("remove hex", mechanics['hex'], "Anti-Hex")
-            # "shatter hex" is often damage, skip for pure defense? Or include as it removes?
-            # User asked for "staying alive". Removing is key.
             
         if mechanics['condition'] > 0:
             add_counters("remove condition", mechanics['condition'], "Anti-Condi")
@@ -471,7 +476,7 @@ class MechanicsEngine:
             context = BuildState(primary_prof_id)
             has_mantra = False
             for s in active_skills_data:
-                context.ingest_skill(s)
+                context.ingest_skill(s, skill_tags_map.get(s[0], set()))
                 if s[1].lower().startswith("mantra"):
                     has_mantra = True
 
@@ -496,12 +501,19 @@ class MechanicsEngine:
                 is_ench_cons = "while you are enchanted" in root_desc or "for each enchantment" in root_desc or "extend" in root_desc and "enchantment" in root_desc
                 
                 is_spirit_prov = 'Type_Spirit' in root_tags
-                is_spirit_cons = "near a spirit" in root_desc or "earshot of a spirit" in root_desc or "destroy" in root_desc and "spirit" in root_desc
+                
+                # Check for consumers of spirits (excluding "non-spirit" matches)
+                is_spirit_cons = False
+                if "non-spirit" not in root_desc:
+                    if "near a spirit" in root_desc or "earshot of a spirit" in root_desc:
+                        is_spirit_cons = True
+                    elif "destroy" in root_desc and "spirit" in root_desc:
+                        is_spirit_cons = True
                 
                 is_signet_prov = 'Type_Signet' in root_tags
                 is_signet_cons = "equipped signet" in root_desc or "signet you control" in root_desc or "recharge" in root_desc and "signet" in root_desc
                 
-                is_corpse_cons = 'Type_Corpse_Exploit' in root_tags or "exploit" in root_desc and "corpse" in root_desc
+                is_corpse_cons = 'Type_Corpse_Exploit' in root_tags or "exploit" in root_desc and "corpse" in root_desc or "minion" in root_desc
                 
                 is_kd_prov = 'Control_Knockdown' in root_tags
                 is_kd_cons = "knocked down foe" in root_desc or "against a knocked down" in root_desc
@@ -534,15 +546,25 @@ class MechanicsEngine:
                 
                 is_buff_prov = 'Type_Buff' in root_tags
                 is_stance_prov = 'Type_Stance' in root_tags
-
-                # --- 1. LAW OF AUGMENTATION (Heal Boost) ---
-                if is_heal_prov and ("target ally" in root_desc or "party" in root_desc):
-                    q_boost = f"""
-                        SELECT {cols} FROM {table}
-                        WHERE (description LIKE '%whenever you heal%' OR description LIKE '%healing prayers%' OR description LIKE '%50% extra health%')
-                        AND skill_id NOT IN ({','.join(['?']*len(existing_ids))})
-                    """
-                    self._process_matches(conn, q_boost, list(existing_ids), root, context, synergies, debug_mode, "Boosts Healing", stop_check, has_mantra=has_mantra)
+                is_pet_prov = 'Type_Pet' in root_tags or "pet" in root_desc or "beast" in root_desc or "charm animal" in root_desc
+                
+                # Check for existing pet or stance count
+                has_pet = False
+                stance_count = 0
+                
+                # We need to query tags for existing_ids to check for pets/stances properly
+                if existing_ids:
+                    q_check = f"SELECT tag FROM skill_tags WHERE skill_id IN ({','.join(['?']*len(existing_ids))})"
+                    check_rows = conn.execute(q_check, list(existing_ids)).fetchall()
+                    for (tag,) in check_rows:
+                        if tag == 'Type_Pet': has_pet = True
+                        if tag == 'Type_Stance': stance_count += 1
+                    
+                    # Also check names for specific pet skills if tags miss them
+                    q_names = f"SELECT name FROM {table} WHERE skill_id IN ({','.join(['?']*len(existing_ids))})"
+                    name_rows = conn.execute(q_names, list(existing_ids)).fetchall()
+                    for (name,) in name_rows:
+                        if name.lower() in ["charm animal", "comfort animal"]: has_pet = True
 
                 # --- 2. LAW OF ENCHANTMENT ---
                 if is_ench_prov:
@@ -559,8 +581,13 @@ class MechanicsEngine:
 
                 # --- 4. LAW OF SPIRITUALISM ---
                 if is_spirit_prov:
-                    q = f"SELECT {cols} FROM {table} WHERE (description LIKE '%near a spirit%' OR description LIKE '%earshot of a spirit%' OR description LIKE '%destroy%spirit%' OR description LIKE '%spirit%loses health%') AND skill_id NOT IN ({','.join(['?']*len(existing_ids))})"
+                    # Suggest skills that use spirits (exclude non-spirit)
+                    q = f"SELECT {cols} FROM {table} WHERE (description LIKE '%near a spirit%' OR description LIKE '%earshot of a spirit%' OR description LIKE '%destroy%spirit%' OR description LIKE '%spirit%loses health%') AND description NOT LIKE '%non-spirit%' AND skill_id NOT IN ({','.join(['?']*len(existing_ids))})"
                     self._process_matches(conn, q, list(existing_ids), root, context, synergies, debug_mode, "Uses Spirits", stop_check, has_mantra=has_mantra)
+                    # Suggest more spirits (Spirit Army)
+                    q_army = f"SELECT {cols} FROM {table} WHERE skill_id IN (SELECT skill_id FROM skill_tags WHERE tag='Type_Spirit') AND skill_id NOT IN ({','.join(['?']*len(existing_ids))})"
+                    self._process_matches(conn, q_army, list(existing_ids), root, context, synergies, debug_mode, "Spirit Army", stop_check, has_mantra=has_mantra)
+
                 if is_spirit_cons:
                     q = f"SELECT {cols} FROM {table} WHERE skill_id IN (SELECT skill_id FROM skill_tags WHERE tag='Type_Spirit') AND skill_id NOT IN ({','.join(['?']*len(existing_ids))})"
                     self._process_matches(conn, q, list(existing_ids), root, context, synergies, debug_mode, "Creates Spirits", stop_check, has_mantra=has_mantra)
@@ -583,8 +610,9 @@ class MechanicsEngine:
 
                 # --- 7. LAW OF THE DEAD ---
                 if is_corpse_cons:
-                    q = f"SELECT {cols} FROM {table} WHERE (description LIKE '%death nova%' OR (description LIKE '%create%' AND description LIKE '%corpse%')) AND skill_id NOT IN ({','.join(['?']*len(existing_ids))})"
-                    self._process_matches(conn, q, list(existing_ids), root, context, synergies, debug_mode, "Provides Corpses", stop_check, has_mantra=has_mantra)
+                    # Suggest other skills that exploit corpses or provide them (Minions included)
+                    q_exploit = f"SELECT {cols} FROM {table} WHERE (skill_id IN (SELECT skill_id FROM skill_tags WHERE tag='Type_Corpse_Exploit') OR (description LIKE '%exploit%' AND description LIKE '%corpse%') OR (description LIKE '%minion%') OR (description LIKE '%create%' AND description LIKE '%corpse%')) AND skill_id NOT IN ({','.join(['?']*len(existing_ids))})"
+                    self._process_matches(conn, q_exploit, list(existing_ids), root, context, synergies, debug_mode, "Corpse/Minion Synergy", stop_check, has_mantra=has_mantra)
 
                 # --- 8. LAW OF HEXES (Refined) ---
                 if is_hex_prov:
@@ -598,21 +626,21 @@ class MechanicsEngine:
 
                 # --- 9. LAW OF SIGNETS ---
                 if is_signet_prov:
-                    q = f"SELECT {cols} FROM {table} WHERE (description LIKE '%equipped signet%' OR description LIKE '%signet you control%' OR description LIKE '%recharge%signet%') AND skill_id NOT IN ({','.join(['?']*len(existing_ids))})"
+                    q = f"SELECT {cols} FROM {table} WHERE (description LIKE '%equipped signet%' OR description LIKE '%recharge%signets%') AND skill_id NOT IN ({','.join(['?']*len(existing_ids))})"
                     self._process_matches(conn, q, list(existing_ids), root, context, synergies, debug_mode, "Uses Signets", stop_check, has_mantra=has_mantra)
                 if is_signet_cons:
                     q = f"SELECT {cols} FROM {table} WHERE skill_id IN (SELECT skill_id FROM skill_tags WHERE tag='Type_Signet') AND skill_id NOT IN ({','.join(['?']*len(existing_ids))})"
                     self._process_matches(conn, q, list(existing_ids), root, context, synergies, debug_mode, "Provides Signet", stop_check, has_mantra=has_mantra)
 
-                # --- 11. LAW OF HEALING (Standardized & Split) ---
-                if is_heal_ally:
-                    # Healers stack heals (Redundancy is GOOD for Ally healers)
-                    q_stack = f"SELECT {cols} FROM {table} WHERE skill_id IN (SELECT skill_id FROM skill_tags WHERE tag='Type_Healing_Ally') AND skill_id NOT IN ({','.join(['?']*len(existing_ids))})"
+                # --- 11. LAW OF HEALING (Unified) ---
+                if is_heal_ally or is_heal_cons:
+                    # 1. Suggest heal providers (must have 'heal' in description to avoid tag noise like Dark Aura)
+                    q_stack = f"SELECT {cols} FROM {table} WHERE skill_id IN (SELECT skill_id FROM skill_tags WHERE tag='Type_Healing_Ally') AND description LIKE '%heal%' AND skill_id NOT IN ({','.join(['?']*len(existing_ids))})"
                     self._process_matches(conn, q_stack, list(existing_ids), root, context, synergies, debug_mode, "Healing Synergy", stop_check, has_mantra=has_mantra)
-                
-                if is_heal_cons:
-                    q = f"SELECT {cols} FROM {table} WHERE (description LIKE '%whenever you heal%' OR description LIKE '%heal bonus%') AND skill_id NOT IN ({','.join(['?']*len(existing_ids))})"
-                    self._process_matches(conn, q, list(existing_ids), root, context, synergies, debug_mode, "Boosts Healing", stop_check, has_mantra=has_mantra)
+                    
+                    # 2. Suggest heal boosters/augments (e.g. Unyielding Aura effects)
+                    q_boost = f"SELECT {cols} FROM {table} WHERE (description LIKE '%whenever you heal%' OR description LIKE '%% more health%' OR description LIKE '%healing prayers%' OR description LIKE '%extra health%') AND skill_id NOT IN ({','.join(['?']*len(existing_ids))})"
+                    self._process_matches(conn, q_boost, list(existing_ids), root, context, synergies, debug_mode, "Boosts Healing", stop_check, has_mantra=has_mantra)
 
                 # --- 12. LAW OF CHAINS (Combos) ---
                 root_combo = root[9] or 0
@@ -623,11 +651,6 @@ class MechanicsEngine:
                     q = f"SELECT {cols} FROM {table} WHERE combo_req = 2 AND skill_id NOT IN ({','.join(['?']*len(existing_ids))})"
                     self._process_matches(conn, q, list(existing_ids), root, context, synergies, debug_mode, "Combo: Dual", stop_check, has_mantra=has_mantra)
 
-                # --- 13. LAW OF THE LEGION (Spirit Stacking) ---
-                if is_spirit_prov:
-                    q = f"SELECT {cols} FROM {table} WHERE skill_id IN (SELECT skill_id FROM skill_tags WHERE tag='Type_Spirit') AND skill_id NOT IN ({','.join(['?']*len(existing_ids))})"
-                    self._process_matches(conn, q, list(existing_ids), root, context, synergies, debug_mode, "Spirit Army", stop_check, has_mantra=has_mantra)
-
                 # 14. LAW OF DEGENERATION (Entropy)
                 if is_degen_prov:
                     pass 
@@ -635,17 +658,16 @@ class MechanicsEngine:
                     q = f"SELECT {cols} FROM {table} WHERE skill_id IN (SELECT skill_id FROM skill_tags WHERE tag='Type_Degeneration') AND skill_id NOT IN ({','.join(['?']*len(existing_ids))})"
                     self._process_matches(conn, q, list(existing_ids), root, context, synergies, debug_mode, "Causes Degeneration", stop_check, has_mantra=has_mantra)
 
-                # 13. LAW OF ENERGY (Duplicate numbering in original)
-                if is_nrg_prov:
-                    q = f"SELECT {cols} FROM {table} WHERE skill_id IN (SELECT skill_id FROM skill_tags WHERE tag='Type_Energy_Consumer') AND skill_id NOT IN ({','.join(['?']*len(existing_ids))})"
-                    self._process_matches(conn, q, list(existing_ids), root, context, synergies, debug_mode, "Uses Energy", stop_check, has_mantra=has_mantra)
-                if is_nrg_cons:
-                    q = f"SELECT {cols} FROM {table} WHERE skill_id IN (SELECT skill_id FROM skill_tags WHERE tag='Type_Energy_Management') AND skill_id NOT IN ({','.join(['?']*len(existing_ids))})"
-                    self._process_matches(conn, q, list(existing_ids), root, context, synergies, debug_mode, "Provides Energy", stop_check, has_mantra=has_mantra)
+                # --- 13. LAW OF ENERGY (Provides) ---
+                if context.energy_management_count < 2 and (context.has_high_cost or context.has_energy_denial):
+                    # Trigger if the root skill itself is high cost or energy denial
+                    if (root[3] and root[3] >= 15) or 'Type_Energy_Denial' in root_tags:
+                        q = f"SELECT {cols} FROM {table} WHERE skill_id IN (SELECT skill_id FROM skill_tags WHERE tag='Type_Energy_Management') AND skill_id NOT IN ({','.join(['?']*len(existing_ids))})"
+                        self._process_matches(conn, q, list(existing_ids), root, context, synergies, debug_mode, "Provides Energy", stop_check, has_mantra=has_mantra)
 
                 # 14. LAW OF PHYSICAL ATTACKS
                 if is_phys_prov:
-                    q = f"SELECT {cols} FROM {table} WHERE (description LIKE '%physical damage%' OR description LIKE '%attack skill%') AND description LIKE '%bonus%' AND skill_id NOT IN ({','.join(['?']*len(existing_ids))})"
+                    q = f"SELECT {cols} FROM {table} WHERE (description LIKE '%attack skill%') AND description LIKE '%bonus%' AND skill_id NOT IN ({','.join(['?']*len(existing_ids))})"
                     self._process_matches(conn, q, list(existing_ids), root, context, synergies, debug_mode, "Boosts Physical", stop_check, has_mantra=has_mantra)
                 if is_phys_cons:
                     q = f"SELECT {cols} FROM {table} WHERE skill_id IN (SELECT skill_id FROM skill_tags WHERE tag='Type_Attack_Physical') AND skill_id NOT IN ({','.join(['?']*len(existing_ids))})"
@@ -653,30 +675,27 @@ class MechanicsEngine:
 
                 # 15. LAW OF RANGED ATTACKS
                 if is_ranged_prov:
-                    q = f"SELECT {cols} FROM {table} WHERE (description LIKE '%projectile%' OR description LIKE '%bow attack%') AND description LIKE '%bonus%' AND skill_id NOT IN ({','.join(['?']*len(existing_ids))})"
+                    q = f"SELECT {cols} FROM {table} WHERE (description LIKE '%bow attack%') AND description LIKE '%bonus%' AND skill_id NOT IN ({','.join(['?']*len(existing_ids))})"
                     self._process_matches(conn, q, list(existing_ids), root, context, synergies, debug_mode, "Boosts Ranged", stop_check, has_mantra=has_mantra)
                 if is_ranged_cons:
                     q = f"SELECT {cols} FROM {table} WHERE skill_id IN (SELECT skill_id FROM skill_tags WHERE tag='Type_Attack_Ranged') AND skill_id NOT IN ({','.join(['?']*len(existing_ids))})"
                     self._process_matches(conn, q, list(existing_ids), root, context, synergies, debug_mode, "Ranged Attack", stop_check, has_mantra=has_mantra)
 
-                # --- 16. LAW OF CONDITIONS ---
-                if is_cond_prov:
-                    q = f"SELECT {cols} FROM {table} WHERE (description LIKE '%if target is%' OR description LIKE '%against%') AND skill_id NOT IN ({','.join(['?']*len(existing_ids))})"
-                    self._process_matches(conn, q, list(existing_ids), root, context, synergies, debug_mode, "Feeds on Conditions", stop_check, has_mantra=has_mantra)
-                if is_cond_cons:
-                    q = f"SELECT {cols} FROM {table} WHERE skill_id IN (SELECT skill_id FROM skill_tags WHERE tag='Type_Condition') AND skill_id NOT IN ({','.join(['?']*len(existing_ids))})"
-                    self._process_matches(conn, q, list(existing_ids), root, context, synergies, debug_mode, "Provides Conditions", stop_check, has_mantra=has_mantra)
-
-                # --- 17. LAW OF UTILITY ---
-                if is_buff_prov:
-                    q = f"SELECT {cols} FROM {table} WHERE skill_id IN (SELECT skill_id FROM skill_tags WHERE tag='Type_Buff') AND skill_id NOT IN ({','.join(['?']*len(existing_ids))})"
-                    self._process_matches(conn, q, list(existing_ids), root, context, synergies, debug_mode, "Buff Redundancy", stop_check, has_mantra=has_mantra)
-
                 # --- 18. LAW OF STANCES ---
                 if is_stance_prov:
-                    # UPDATED: Exclude Mantras from the general Stance recommendation to prevent flooding.
-                    q = f"SELECT {cols} FROM {table} WHERE skill_id IN (SELECT skill_id FROM skill_tags WHERE tag='Type_Stance') AND skill_id NOT IN ({','.join(['?']*len(existing_ids))}) AND name NOT LIKE 'Mantra%'"
-                    self._process_matches(conn, q, list(existing_ids), root, context, synergies, debug_mode, "Stance Choice", stop_check, has_mantra=has_mantra)
+                    # Suggest skills that benefit from stances
+                    q_benefit = f"SELECT {cols} FROM {table} WHERE (description LIKE '%while you are in a stance%' OR description LIKE '%while in a stance%') AND skill_id NOT IN ({','.join(['?']*len(existing_ids))})"
+                    self._process_matches(conn, q_benefit, list(existing_ids), root, context, synergies, debug_mode, "Benefits from Stance", stop_check, has_mantra=has_mantra)
+
+                    # Only suggest other stances if we have fewer than 2
+                    if stance_count < 2:
+                        q = f"SELECT {cols} FROM {table} WHERE skill_id IN (SELECT skill_id FROM skill_tags WHERE tag='Type_Stance') AND skill_id NOT IN ({','.join(['?']*len(existing_ids))}) AND name NOT LIKE 'Mantra%'"
+                        self._process_matches(conn, q, list(existing_ids), root, context, synergies, debug_mode, "Stance Choice", stop_check, has_mantra=has_mantra)
+
+                # --- 19. LAW OF PETS ---
+                if is_pet_prov:
+                    q = f"SELECT {cols} FROM {table} WHERE (description LIKE '%pet%' OR description LIKE '%beast%' OR description LIKE '%companion%') AND skill_id NOT IN ({','.join(['?']*len(existing_ids))})"
+                    self._process_matches(conn, q, list(existing_ids), root, context, synergies, debug_mode, "Pet Synergy", stop_check, has_mantra=has_mantra)
 
                 # --- B. CONDITION SEARCH (Semantic) ---
                 for cond_key, def_data in CONDITION_DEFINITIONS.items():
@@ -741,8 +760,8 @@ class MechanicsEngine:
             valid, r = self.check_causal_viability(m, context)
             if not valid: fail_reasons.append(r)
             
-            valid, r = self.check_energy_drain(m, context)
-            if not valid: fail_reasons.append(r)
+            valid, drain_r = self.check_energy_drain(m, context)
+            if not valid: fail_reasons.append(drain_r)
             
             # B. Resource Checks
             stable, phys_r = self.check_resource_stability(root, m, context)
@@ -757,6 +776,7 @@ class MechanicsEngine:
                 
                 reason_str = reason_prefix
                 if "⚠️" in phys_r: reason_str += f" | {phys_r}"
+                if "⚠️" in drain_r: reason_str += f" | {drain_r}"
                 results_list.append((m[0], reason_str))
             
             elif debug_mode:
@@ -949,7 +969,7 @@ class SynergyEngine:
             print(f"[Engine] Summary Error: {e}")
             return []
 
-    def get_suggestions(self, active_skill_ids: List[int], limit=100, category=None, team=None, min_overlap=None, mode="legacy", is_pre=False, allowed_campaigns=None) -> List[tuple]:
+    def get_suggestions(self, active_skill_ids: List[int], limit=100, category=None, team=None, min_overlap=None, mode="legacy", is_pre=False, allowed_campaigns=None, is_pvp=False, primary_prof_id=0) -> List[tuple]:
         # ...
         # 1. Cold Start Check
         if not active_skill_ids:
@@ -963,13 +983,24 @@ class SynergyEngine:
             return []
 
         # Restore Context Initialization
-        context = BuildState(0) 
+        context = BuildState(primary_prof_id) 
         conn = sqlite3.connect(self.mechanics.db_path)
         placeholders = ','.join(['?'] * len(active_skill_ids))
+        
+        # Fetch tags for active skills
+        q_tags = f"SELECT skill_id, tag FROM skill_tags WHERE skill_id IN ({placeholders})"
+        cursor = conn.execute(q_tags, active_skill_ids)
+        active_tags_map = {}
+        for sid, tag in cursor.fetchall():
+            if sid not in active_tags_map: active_tags_map[sid] = set()
+            active_tags_map[sid].add(tag)
+
         q = f"SELECT skill_id, name, description, energy_cost, activation, recharge, adrenaline, health_cost, aftercast, combo_req, is_elite, attribute FROM skills WHERE skill_id IN ({placeholders})"
         cursor = conn.execute(q, active_skill_ids)
+        active_skills_data = [] # Store full data for stability checks
         for row in cursor.fetchall():
-            context.ingest_skill(row)
+            active_skills_data.append(row)
+            context.ingest_skill(row, active_tags_map.get(row[0], set()))
         conn.close()
 
         # 3. Validation Step (Relaxed)
@@ -977,52 +1008,175 @@ class SynergyEngine:
         cursor = conn.cursor()
         
         final_results = []
+        same_prof_results = []
+        other_results = []
+        seen_ids = set()
         
+        # Cols needed for stability check: id, name, desc, nrg, act, rech, adr, hp, aft, combo, elite, attr
+        cols_full = "skill_id, name, description, energy_cost, activation, recharge, adrenaline, health_cost, aftercast, combo_req, is_elite, attribute, profession, in_pre, campaign"
+
         for sid, score in neural_suggestions:
             if sid in active_skill_ids: continue
 
-            cursor.execute("SELECT skill_id, name, is_elite, profession, in_pre, campaign FROM skills WHERE skill_id = ?", (sid,))
+            cursor.execute(f"SELECT {cols_full} FROM skills WHERE skill_id = ?", (sid,))
             row = cursor.fetchone()
             
             if row:
+                name = row[1]
+                prof = row[12]
+                # PvP Check: If in PvE mode, skip skills with "(PvP)" in name
+                if not is_pvp and "(PvP)" in name:
+                    continue
+                
+                # If PvP mode is ON, swap PvE skills to PvP versions if available
+                if is_pvp and "(PvP)" not in name:
+                    pvp_name = name + " (PvP)"
+                    cursor.execute("SELECT skill_id FROM skills WHERE name = ?", (pvp_name,))
+                    pvp_row = cursor.fetchone()
+                    if pvp_row:
+                        sid = pvp_row[0]
+                        # Re-fetch row for the new ID
+                        cursor.execute(f"SELECT {cols_full} FROM skills WHERE skill_id = ?", (sid,))
+                        row = cursor.fetchone()
+                        prof = row[12]
+
+                # Deduplication check
+                if sid in seen_ids: continue
+                if sid in active_skill_ids: continue
+                seen_ids.add(sid)
+
                 # Campaign Filter
                 if allowed_campaigns is not None:
                     # 0=Core, 1=Prophecies, 2=Factions, 3=Nightfall, 4=EotN
                     # We always allow Core (0)
-                    camp = row[5]
+                    camp = row[14]
                     if camp != 0 and camp not in allowed_campaigns:
                         continue
 
             if not row: 
                 # Try PvP table fallback?
+                # If PvP mode is disabled, do NOT suggest PvP-only skills
+                if not is_pvp: continue
+
                 # If Pre-Searing is active, PvP skills are generally invalid unless they exist in Pre (which they should be in 'skills' table then)
                 if is_pre: continue 
                 
+                # PvP table doesn't have all columns, but we need basics
                 cursor.execute("SELECT skill_id, name, is_elite, profession FROM skills_pvp WHERE skill_id = ?", (sid,))
-                row = cursor.fetchone()
-                if not row:
+                row_pvp = cursor.fetchone()
+                if not row_pvp:
                     print(f"[Engine] Dropped ID {sid} (Not found in DB)")
                     continue
+                
+                if sid in seen_ids: continue
+                seen_ids.add(sid)
+                prof = row_pvp[3]
+                # Construct a fake row with 0s for stats so checks don't crash, but we can't really validate stability
+                row = (sid, row_pvp[1], "", 0, 0, 0, 0, 0, 0, 0, row_pvp[2], 0, row_pvp[3], 0, 0)
             else:
                 # Check Pre-Searing constraint
-                if is_pre and not row[4]:
+                if is_pre and not row[13]:
                     continue
 
             # Elite Filter: Only show additional elites if bar has >= 3 skills
-            if bool(row[2]) and context.elite_count > 0 and len(active_skill_ids) < 3:
+            is_elite = bool(row[10])
+            if is_elite and context.elite_count > 0 and len(active_skill_ids) < 3:
                 continue
             
-            final_results.append((sid, score))
+            # --- SAFETY CHECKS (Warnings) ---
+            warnings = []
+            
+            # Check Stability against all active skills
+            for active_row in active_skills_data:
+                # active_row indices match DB fetch order: 0:id, 1:name ... 3:nrg ... 5:rech ...
+                # row indices match cols_full: 0:id, 1:name ... 3:nrg ...
+                
+                # We need to pass data in the format check_resource_stability expects (db row style)
+                # check_resource_stability expects [3]=nrg, [5]=rech, [7]=hp, [4]=act, [8]=aft
+                
+                stable, phys_r = self.mechanics.check_resource_stability(active_row, row, context)
+                if not stable or "⚠️" in phys_r:
+                   if phys_r not in warnings: warnings.append(phys_r)
+
+            # Check Energy Drain
+            valid, drain_r = self.mechanics.check_energy_drain(row, context)
+            if not valid or "⚠️" in drain_r:
+                if drain_r not in warnings: warnings.append(drain_r)
+
+            # Construct Result
+            reason_str = ""
+            if warnings:
+                reason_str = " | ".join(warnings)
+            
+            # Prioritization Logic: Separate same-profession from others
+            if primary_prof_id > 0 and prof == primary_prof_id:
+                same_prof_results.append((sid, score, reason_str))
+            else:
+                other_results.append((sid, score, reason_str))
+
+        # Re-combine: Same profession first
+        final_results = same_prof_results + other_results
             
         # 4. Basic Needs Injection (Smart Mode Only)
+        # We only inject basic needs if the AI didn't already provide enough of them
         if mode == "smart":
+            current_ids = {item[0] for item in final_results}
             basic_needs = self.mechanics.get_basic_needs_suggestions(context, is_pre=is_pre)
-            current_ids = {sid for sid, _ in final_results}
+            
+            # Inject basic needs with a slightly higher priority but limited count
+            # This ensures builds have a heal/energy if missing, without flooding.
+            added_needs = 0
             for sid, score, reason in basic_needs:
                 if sid not in current_ids and sid not in active_skill_ids:
-                    final_results.insert(0, (sid, score, reason)) # Prioritize basic needs
-                    current_ids.add(sid)
+                    # PvP/PvE Check
+                    cursor.execute("SELECT name FROM skills WHERE skill_id = ?", (sid,))
+                    row_check = cursor.fetchone()
+                    if row_check:
+                        if not is_pvp and "(PvP)" in row_check[0]: continue
+                    elif not is_pvp:
+                        continue
 
+                    # Append to the end so AI suggestions remain prioritized at the top
+                    final_results.append((sid, score, reason))
+                    current_ids.add(sid)
+                    added_needs += 1
+                    if added_needs >= 3: break
+
+        # 5. Final Filtering (Limits)
+        filtered_final = []
+        elite_count = 0
+        self_heal_count = 0
+        
+        # Determine limits based on remaining slots
+        open_slots = 8 - len(active_skill_ids)
+        limit_elite = 1 if open_slots <= 4 else 2
+        limit_heal = 1 if open_slots <= 4 else 2
+        
+        for item in final_results:
+            sid = item[0]
+            score = item[1]
+            reason = item[2] if len(item) > 2 else ""
+
+            # Check Elite Status
+            cursor.execute("SELECT is_elite FROM skills WHERE skill_id = ?", (sid,))
+            row = cursor.fetchone()
+            if not row:
+                cursor.execute("SELECT is_elite FROM skills_pvp WHERE skill_id = ?", (sid,))
+                row = cursor.fetchone()
+
+            is_elite = bool(row[0]) if row else False
+
+            if is_elite:
+                if elite_count >= limit_elite: continue
+                elite_count += 1
+
+            if reason == "Missing Self Heal":
+                if self_heal_count >= limit_heal: continue
+                self_heal_count += 1
+
+            filtered_final.append(item)
+
+        final_results = filtered_final
         conn.close()
         print(f"[Engine] Final Results: {len(final_results)}")
         return final_results

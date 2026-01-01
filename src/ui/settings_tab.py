@@ -19,15 +19,6 @@ class SettingsTab(QWidget):
         layout = QVBoxLayout(self)
         layout.setAlignment(Qt.AlignmentFlag.AlignTop)
         
-        # Attribution Label
-        self.lbl_attrib = QLabel("Brought to you by Military Mosquito")
-        font = self.lbl_attrib.font()
-        font.setItalic(True)
-        self.lbl_attrib.setFont(font)
-        self.lbl_attrib.setStyleSheet("QLabel { opacity: 0.75; letter-spacing: 1px; }")
-        self.lbl_attrib.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(self.lbl_attrib)
-        
         # --- Appearance Section ---
         group_appearance = QGroupBox("Appearance")
         group_appearance.setStyleSheet("QGroupBox { font-weight: bold; border: 1px solid #444; margin-top: 10px; padding-top: 10px; } QGroupBox::title { subcontrol-origin: margin; subcontrol-position: top left; padding: 0 3px; }")
@@ -112,6 +103,18 @@ class SettingsTab(QWidget):
         feedback_layout.addWidget(self.btn_tutorial)
         
         layout.addWidget(group_feedback)
+
+        # Spacer to push attribution to the bottom
+        layout.addStretch()
+
+        # Attribution Label
+        self.lbl_attrib = QLabel("Brought to you by Military Mosquito")
+        font = self.lbl_attrib.font()
+        font.setItalic(True)
+        self.lbl_attrib.setFont(font)
+        self.lbl_attrib.setStyleSheet("QLabel { opacity: 0.75; letter-spacing: 1px; }")
+        self.lbl_attrib.setAlignment(Qt.AlignmentFlag.AlignLeft)
+        layout.addWidget(self.lbl_attrib)
         
         # Load saved settings
         current_theme = self.settings.value("theme", "Auto")
@@ -130,10 +133,9 @@ class SettingsTab(QWidget):
     def open_feedback(self):
         last_time = float(self.settings.value("last_feedback_time", 0))
         elapsed = time.time() - last_time
-        if elapsed < 300:
-            remaining_min = int((300 - elapsed) / 60) + 1
-            unit = "minute" if remaining_min == 1 else "minutes"
-            QMessageBox.warning(self, "Cooldown", f"Please wait, there is a cool down to prevent spam. {remaining_min} {unit} remaining")
+        if elapsed < 60:
+            remaining_sec = int(60 - elapsed)
+            QMessageBox.warning(self, "Cooldown", f"Please wait, there is a cool down to prevent spam. {remaining_sec} seconds remaining")
             return
 
         dlg = FeedbackDialog(self)

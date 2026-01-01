@@ -137,8 +137,8 @@ class AttributeEditor(QFrame):
             # QComboBox doesn't have a simple align-text property for the box itself easily via CSS
             # But making it narrower helps the visual center.
             
-            # Range: 0-12 for standard, 0-10 for PvE
-            limit = 12 if aid >= 0 else 10
+            # Range: 0-20 for standard, 0-10 for PvE
+            limit = 20 if aid >= 0 else 10
             spin.addItems([str(i) for i in range(limit + 1)])
             
             spin.setFixedWidth(40)
@@ -178,8 +178,9 @@ class AttributeEditor(QFrame):
             if aid < 0: continue # PvE attributes cost 0 points
             
             rank = int(spin.currentText())
-            if rank < len(costs):
-                total += costs[rank]
+            # Clamp rank to 12 for cost calculation, as ranks 13-20 are from external sources
+            cost_rank = min(rank, 12)
+            total += costs[cost_rank]
         
         self.current_points = total
         self.title.setText(f"Attributes ({total}/{self.max_points})")
@@ -196,5 +197,6 @@ class AttributeEditor(QFrame):
         self.current_distribution = dist
         for aid, rank in dist.items():
             if aid in self.attr_widgets:
-                self.attr_widgets[aid][1].setCurrentIndex(min(rank, 12))
+                limit = 20 if aid >= 0 else 10
+                self.attr_widgets[aid][1].setCurrentIndex(min(rank, limit))
         self._update_total()

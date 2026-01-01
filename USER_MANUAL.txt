@@ -76,3 +76,14 @@ TIPS & TRICKS
 * Hover over any suggested skill (ghost icon) to see WHY the AI suggested it.
 * If you select a Zone or Team, you can click the colored button again to 
   turn that mode off and return to normal building.
+
+==============================================================================
+WARNINGS
+==============================================================================
+* ⚠️ High Drain: Triggered if the total energy drain per second (EPS) exceeds 4.0 for casters or 2.5 for others.
+* ⚠️ Heavy Burst: Triggered if a two-skill combo costs more than 80% of your maximum energy capacity.
+* Weapon Conflict: (Preventative) Blocks suggestions that require a different weapon type than what's already locked on your bar.
+* Stance Clog: (Preventative) Prevents suggesting a stance if you already have a stance active (since most don't stack).
+* Combo Invalid: (Preventative) Prevents suggesting a "Dual Attack" if you don't have a "Lead" or "Off-hand" to trigger it.
+* Suicide Loop: (Preventative) Prevents suggesting skills that cost so much health (Sacrifice) that you would kill yourself within a standard rotation.
+* Burst > Capacity: (Preventative) Blocks skills that cost more energy than your maximum possible pool.

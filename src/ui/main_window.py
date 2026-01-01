@@ -136,7 +136,7 @@ class FilterWorker(QThread):
 class SynergyWorker(QThread):
     results_ready = pyqtSignal(list)
 
-    def __init__(self, engine, active_skill_ids, prof_id=0, mode="legacy", debug=False, is_pre=False, allowed_campaigns=None):
+    def __init__(self, engine, active_skill_ids, prof_id=0, mode="legacy", debug=False, is_pre=False, allowed_campaigns=None, is_pvp=False):
         super().__init__()
         self.engine = engine
         self.active_skill_ids = active_skill_ids
@@ -145,6 +145,7 @@ class SynergyWorker(QThread):
         self.debug = debug
         self.is_pre = is_pre
         self.allowed_campaigns = allowed_campaigns
+        self.is_pvp = is_pvp
         self._is_interrupted = False
 
     def run(self):
@@ -155,7 +156,9 @@ class SynergyWorker(QThread):
                 limit=100, 
                 mode=self.mode, 
                 is_pre=self.is_pre,
-                allowed_campaigns=self.allowed_campaigns
+                allowed_campaigns=self.allowed_campaigns,
+                is_pvp=self.is_pvp,
+                primary_prof_id=self.prof_id
             )
             
             if not self.isInterruptionRequested():
@@ -1509,9 +1512,13 @@ class MainWindow(QMainWindow):
         mode = "smart" if hasattr(self, 'check_smart_mode') and self.check_smart_mode.isChecked() else "legacy"
         is_pre = self.check_pre.isChecked() if hasattr(self, 'check_pre') else False
         allowed_campaigns = self.get_allowed_campaigns()
+        is_pvp = self.check_pvp.isChecked()
+
+        if mode == "smart":
+            self.lbl_bar_loading.setVisible(True)
 
         # ALWAYS use self.engine (Neural/Hybrid)
-        self.worker = SynergyWorker(self.engine, active_ids, pid, mode, debug=is_debug, is_pre=is_pre, allowed_campaigns=allowed_campaigns)
+        self.worker = SynergyWorker(self.engine, active_ids, pid, mode, debug=is_debug, is_pre=is_pre, allowed_campaigns=allowed_campaigns, is_pvp=is_pvp)
         self.worker.results_ready.connect(self.on_synergies_loaded)
         self.worker.start()
 

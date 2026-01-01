@@ -1,10 +1,8 @@
 import os
 import sys
 import json
-import shutil
 import subprocess
 import requests
-import zipfile
 import tempfile
 import time
 from packaging import version
@@ -63,8 +61,8 @@ class UpdateChecker(QObject):
     def _on_result(self, data):
         try:
             remote_version = data.get('version')
-            # Fallback to static URL if not in JSON
-            download_url = data.get('download_url', "https://bookah.savvy-stuff.dev/Bookah.zip")
+            # Static URL as requested
+            download_url = "https://bookah.savvy-stuff.dev/Bookah_Setup.exe"
             release_notes = data.get('updates', "No release notes available.")
 
             if remote_version and version.parse(remote_version) > version.parse(self.current_version):
@@ -86,14 +84,20 @@ class UpdateDownloader(QThread):
     def run(self):
         try:
             temp_dir = tempfile.gettempdir()
-            local_filename = os.path.join(temp_dir, "bookah_update.zip")
+            
+            # Extract filename from URL (e.g., BookahSetup.exe)
+            filename = self.url.split('/')[-1].split('?')[0]
+            if not filename:
+                filename = "BookahSetup.exe"
+            
+            local_filename = os.path.join(temp_dir, filename)
             
             with requests.get(self.url, stream=True) as r:
                 r.raise_for_status()
                 total_length = r.headers.get('content-length')
                 
                 with open(local_filename, 'wb') as f:
-                    if total_length is None: # no content length header
+                    if total_length is None:
                         f.write(r.content)
                     else:
                         dl = 0
@@ -101,64 +105,28 @@ class UpdateDownloader(QThread):
                         for chunk in r.iter_content(chunk_size=8192):
                             dl += len(chunk)
                             f.write(chunk)
-                            done = int(50 * dl / total_length)
+                            done = int(100 * dl / total_length)
                             self.progress.emit(done)
                             
             self.finished.emit(local_filename)
         except Exception as e:
             self.error.emit(str(e))
 
-def install_and_restart(zip_path):
+def install_and_restart(file_path):
     """
-    1. Extracts zip to a temp folder.
-    2. Creates a bat script.
-    3. Runs bat script and exits app.
+    Launches the external installer and exits the current application.
+    This allows the installer to overwrite files that would otherwise be 'in use'.
     """
-    # Current executable path
-    if getattr(sys, 'frozen', False):
-        app_dir = os.path.dirname(sys.executable)
-        exe_name = os.path.basename(sys.executable)
-    else:
-        app_dir = os.getcwd()
-        exe_name = "bookah.py" # Fallback for dev
-
-    # Extract zip
-    extract_path = os.path.join(tempfile.gettempdir(), "bookah_extracted")
-    if os.path.exists(extract_path):
-        shutil.rmtree(extract_path)
-    
-    with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-        zip_ref.extractall(extract_path)
-
-    # If the zip contains a root folder (e.g. Bookah/), adjust path
-    items = os.listdir(extract_path)
-    if len(items) == 1 and os.path.isdir(os.path.join(extract_path, items[0])):
-        source_dir = os.path.join(extract_path, items[0])
-    else:
-        source_dir = extract_path
-
-    # Create Batch Script
-    bat_path = os.path.join(tempfile.gettempdir(), "update_bookah.bat")
-    
-    # We use 'timeout' to give the app time to close
-    # We use 'xcopy' /E /Y to overwrite all files
-    # We restart the app
-    bat_content = f"""
-@echo off
-timeout /t 2 /nobreak > NUL
-echo Updating Bookah...
-xcopy "{source_dir}" "{app_dir}" /E /H /Y /C
-echo Cleaning up...
-rmdir /s /q "{extract_path}"
-del "{zip_path}"
-echo Restarting...
-start "" "{os.path.join(app_dir, exe_name)}"
-del "%~f0"
-"""
-    
-    with open(bat_path, 'w') as f:
-        f.write(bat_content)
-
-    # Launch batch file and exit
-    subprocess.Popen([bat_path], shell=True)
-    sys.exit(0)
+    try:
+        if sys.platform == 'win32':
+            # os.startfile handles UAC elevation prompts correctly for installers
+            os.startfile(file_path)
+        else:
+            # For Linux/macOS (if applicable)
+            subprocess.Popen(['open' if sys.platform == 'darwin' else 'xdg-open', file_path])
+        
+        # Exit application immediately
+        sys.exit(0)
+    except Exception as e:
+        print(f"Error launching installer: {e}")
+        # We don't exit if launch failed, so the user can see the error

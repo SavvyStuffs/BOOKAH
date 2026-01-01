@@ -20,8 +20,21 @@ else:
     # Running as a script
     APP_ROOT = os.path.abspath(".")
 
-# Store user-specific data in a 'data' subfolder within the install directory
-USER_DIR = os.path.join(APP_ROOT, "data")
+# Determine user data directory based on OS
+if sys.platform == 'win32':
+    local_app_data = os.environ.get('LOCALAPPDATA')
+    if local_app_data:
+        USER_DIR = os.path.join(local_app_data, "Bookah")
+    else:
+        # Fallback if env var missing
+        USER_DIR = os.path.join(os.path.expanduser("~"), "AppData", "Local", "Bookah")
+elif sys.platform == 'darwin':
+    USER_DIR = os.path.join(os.path.expanduser("~"), "Library", "Application Support", "Bookah")
+else:
+    # Linux / Other
+    xdg_data = os.environ.get('XDG_DATA_HOME', os.path.join(os.path.expanduser("~"), ".local", "share"))
+    USER_DIR = os.path.join(xdg_data, "Bookah")
+
 if not os.path.exists(USER_DIR):
     os.makedirs(USER_DIR)
 
