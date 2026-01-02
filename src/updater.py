@@ -135,25 +135,39 @@ class UpdateDownloader(QThread):
 def install_and_restart(file_path):
     """
     Windows: Launches installer and exits.
-    Linux: Opens the file location (Zip) and keeps app open for manual instructions.
+    Linux: Creates a shell script to swap the build, runs it, and exits.
     """
     try:
         if sys.platform == 'win32':
+            # --- WINDOWS PATH (Unchanged) ---
             os.startfile(file_path)
-            sys.exit(0) # Only exit on Windows where the installer takes over
+            sys.exit(0)
         else:
-            # --- FIX 3: Linux "Manual Assist" Mode ---
-            # We open the folder containing the zip so the user can see it.
-            # We do NOT exit, because the user hasn't installed it yet.
-            if sys.platform == 'darwin':
-                subprocess.Popen(['open', '--reveal', file_path])
-            else:
-                # Linux: Try to highlight file, otherwise just open folder
-                folder_path = os.path.dirname(file_path)
-                subprocess.Popen(['xdg-open', folder_path])
+            # --- LINUX PATH (New Auto-Updater) ---
+            current_executable = sys.executable
+            app_folder = os.path.dirname(current_executable)
+            parent_folder = os.path.dirname(app_folder) # Target: ~/Desktop/Bookah_App
             
-            # Optional: You could emit a signal here to show a popup saying:
-            # "Update downloaded! Please extract the zip to upgrade."
+            # Create a temporary shell script to handle the swap
+            script_path = os.path.join(tempfile.gettempdir(), "update_bookah.sh")
+            
+            # The script waits 3s, unzips (overwriting), restores permissions, and restarts
+            script_content = f"""#!/bin/bash
+sleep 3
+unzip -o "{file_path}" -d "{parent_folder}"
+chmod +x "{current_executable}"
+"{current_executable}" &
+"""
+            
+            with open(script_path, "w") as f:
+                f.write(script_content)
+            
+            # Make the update script executable
+            os.chmod(script_path, 0o755)
+            
+            # Run the script and kill this app so the file isn't locked
+            subprocess.Popen(['/bin/bash', script_path], start_new_session=True)
+            sys.exit(0)
             
     except Exception as e:
         print(f"Error launching installer: {e}")
