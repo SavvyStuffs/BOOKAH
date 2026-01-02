@@ -9,11 +9,11 @@ on:
 
 jobs:
   build:
-    name: Build on Ubuntu 20.04
+    name: Build on Ubuntu 22.04
     # We use 20.04 explicitly.
     # PRO TIP: Building on older Linux makes the binary compatible with
     # both old (20.04) and new (22.04, 24.04) systems.
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04
 
     steps:
       - name: Checkout Code
