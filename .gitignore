@@ -1,0 +1,25 @@
+# Cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.spec
+build/
+dist/
+.pytest_cache/
+.vscode/
+*.log
+tmp/
+.git/
+
+# Build artifacts
+/build
+/dist
+*.spec
+Bookah_Installer.iss
+
+# Misc
+/tests
+
+# Docker
+.dockerignore
+Dockerfile

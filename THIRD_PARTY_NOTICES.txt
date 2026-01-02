@@ -1,0 +1,53 @@
+THIRD-PARTY SOFTWARE NOTICES
+
+This software (Bookah) makes use of the following third-party software:
+
+--------------------------------------------------------------------------------
+1. PyQt6
+   License: LGPL v3
+   Copyright (C) 2025 The Qt Company Ltd.
+   
+   This application is dynamically linked against the Qt library. 
+   The Qt library is licensed under the GNU Lesser General Public License (LGPL) version 3.
+   You may obtain a copy of the LGPL at: https://www.gnu.org/licenses/lgpl-3.0.html
+   Source code for Qt is available at: https://www.qt.io/download
+
+--------------------------------------------------------------------------------
+2. Requests
+   License: Apache 2.0
+   Copyright 2019 Kenneth Reitz
+
+--------------------------------------------------------------------------------
+3. PyTorch
+   License: BSD-style
+   Copyright (c) Facebook, Inc. and its affiliates.
+
+--------------------------------------------------------------------------------
+4. NumPy
+   License: BSD
+   Copyright (c) 2005-2025, NumPy Developers.
+
+--------------------------------------------------------------------------------
+5. Boto3 & Botocore
+   License: Apache 2.0
+   Copyright Amazon.com, Inc. or its affiliates.
+
+--------------------------------------------------------------------------------
+6. Packaging
+   License: Apache 2.0 / BSD 2-Clause
+   Copyright (c) Donald Stufft and individual contributors.
+
+--------------------------------------------------------------------------------
+7. Sentence-Transformers
+   License: Apache 2.0
+   Copyright (c) 2025 UKPLab
+
+--------------------------------------------------------------------------------
+
+8. Guild Wars Game Content
+   © ArenaNet LLC. All rights reserved. NCSOFT, the interlocking NC logo, ArenaNet, Guild Wars, Guild Wars Factions, Guild Wars Nightfall, Guild Wars: Eye of the North, Guild Wars 2, Heart of Thorns, and all associated logos and designs are trademarks or registered trademarks of NCSOFT Corporation. All other trademarks are the property of their respective owners.
+   
+   This project is a fan-made tool and is not endorsed by or affiliated with ArenaNet or NCSOFT.
+   
+Note: This software is distributed as a bundle. The use of the above libraries 
+does not imply endorsement by their respective authors.
