@@ -40,14 +40,20 @@ jobs:
 
       - name: Install Python Dependencies
         run: |
-          python -m pip install --upgrade pip
-          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-          pip install pyinstaller PyQt6 PyQt6-WebEngine requests packaging
+          python -m venv venv
+          source venv/bin/activate
+          pip install --upgrade pip
+          
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          
+          pip install -r requirements.txt
+          
+          pip install pyinstaller
 
       - name: Build with PyInstaller
         run: |
-          ls -F 
-          pyinstaller --clean *.spec
+          source venv/bin/activate
+          pyinstaller --clean bookah_linux.spec
 
       - name: Prepare Distribution
         run: |
