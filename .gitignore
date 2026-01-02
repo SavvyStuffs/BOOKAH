@@ -23,3 +23,5 @@ Bookah_Installer.iss
 # Docker
 .dockerignore
 Dockerfile
+
+!.github/
