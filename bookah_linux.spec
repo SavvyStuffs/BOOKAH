@@ -32,7 +32,12 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    
+    excludes=[
+        'tkinter', 'matplotlib', 'notebook', 'jedi', 
+        'nvidia', 'PIL', 'pytest', 'pip'
+    ],
+    # ---------------------------
     noarchive=False,
 )
 pyz = PYZ(a.pure)
