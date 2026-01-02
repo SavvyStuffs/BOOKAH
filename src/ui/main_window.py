@@ -178,7 +178,7 @@ class MainWindow(QMainWindow):
         self.resize(1200, 800)
         
         # Set Window Icon
-        icon_path = resource_path("icons/bookah_icon.ico")
+        icon_path = resource_path(os.path.join("icons", "bookah_icon.ico"))
         if os.path.exists(icon_path):
             self.setWindowIcon(QIcon(icon_path))
         

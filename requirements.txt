@@ -8,6 +8,7 @@ sentence-transformers
 torch
 numpy
 scikit-learn
+pyinstaller
 
 requests
 packaging

@@ -1149,7 +1149,7 @@ class SynergyEngine:
         
         # Determine limits based on remaining slots
         open_slots = 8 - len(active_skill_ids)
-        limit_elite = 1 if open_slots <= 4 else 2
+        limit_elite = 1 if (open_slots <= 4 or context.elite_count > 0) else 2
         limit_heal = 1 if open_slots <= 4 else 2
         
         for item in final_results:

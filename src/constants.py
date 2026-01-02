@@ -82,7 +82,7 @@ if not os.path.exists(SEMANTIC_MODEL_PATH):
 # --- Static Data (Bundled in EXE) ---
 DB_FILE = resource_path('master.db') 
 AQ_DB_FILE = resource_path('skills_aq.db')
-ICON_DIR = resource_path('icons/skill_icons')
+ICON_DIR = resource_path(os.path.join('icons', 'skill_icons'))
 ICON_SIZE = 64
 PIXMAP_CACHE = {}
 

@@ -37,12 +37,12 @@ if __name__ == "__main__":
     # ---------------------
     
     # App Icon
-    icon_path = resource_path("icons/bookah_icon.ico")
+    icon_path = resource_path(os.path.join("icons", "bookah_icon.ico"))
     if os.path.exists(icon_path):
         app.setWindowIcon(QIcon(icon_path))
     
     # Splash Screen
-    logo_path = resource_path("icons/bookah_logo.png")
+    logo_path = resource_path(os.path.join("icons", "bookah_logo.png"))
     pixmap = QPixmap(logo_path)
     
     if not pixmap.isNull():

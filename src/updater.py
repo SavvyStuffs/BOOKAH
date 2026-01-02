@@ -5,12 +5,13 @@ import subprocess
 import requests
 import tempfile
 import time
+import platform # Added for better OS detection
 from packaging import version
 from PyQt6.QtCore import QObject, pyqtSignal, QThread
 from src.constants import resource_path
 
 class UpdateCheckWorker(QThread):
-    result = pyqtSignal(object) # (version, url, notes) or None
+    result = pyqtSignal(object) 
     error = pyqtSignal(str)
 
     def __init__(self, url):
@@ -28,7 +29,7 @@ class UpdateCheckWorker(QThread):
             self.error.emit(str(e))
 
 class UpdateChecker(QObject):
-    update_available = pyqtSignal(str, str, str) # version, url, release_notes
+    update_available = pyqtSignal(str, str, str)
     no_update = pyqtSignal()
     error = pyqtSignal(str)
 
@@ -61,8 +62,17 @@ class UpdateChecker(QObject):
     def _on_result(self, data):
         try:
             remote_version = data.get('version')
-            # Static URL as requested
-            download_url = "https://bookah.savvy-stuff.dev/Bookah_Setup.exe"
+            
+            # --- FIX 1: OS-Dependent Download Link ---
+            base_url = "https://bookah.savvy-stuff.dev"
+            if sys.platform == 'win32':
+                download_url = f"{base_url}/Bookah_Setup.exe"
+            else:
+                # Assuming you will name your zip this. 
+                # If you use version numbers in filenames, update logic here.
+                download_url = f"{base_url}/Bookah_Linux.zip"
+            # -----------------------------------------
+
             release_notes = data.get('updates', "No release notes available.")
 
             if remote_version and version.parse(remote_version) > version.parse(self.current_version):
@@ -74,7 +84,7 @@ class UpdateChecker(QObject):
 
 class UpdateDownloader(QThread):
     progress = pyqtSignal(int)
-    finished = pyqtSignal(str) # path to downloaded file
+    finished = pyqtSignal(str)
     error = pyqtSignal(str)
 
     def __init__(self, url):
@@ -85,10 +95,10 @@ class UpdateDownloader(QThread):
         try:
             temp_dir = tempfile.gettempdir()
             
-            # Extract filename from URL (e.g., BookahSetup.exe)
             filename = self.url.split('/')[-1].split('?')[0]
             if not filename:
-                filename = "BookahSetup.exe"
+                # Fallback names based on platform
+                filename = "Bookah_Setup.exe" if sys.platform == 'win32' else "Bookah_Linux.zip"
             
             local_filename = os.path.join(temp_dir, filename)
             
@@ -107,6 +117,16 @@ class UpdateDownloader(QThread):
                             f.write(chunk)
                             done = int(100 * dl / total_length)
                             self.progress.emit(done)
+
+            # --- FIX 2: Grant Execute Permissions (Linux) ---
+            # Even if it's a zip, good practice. If it were an AppImage, this is mandatory.
+            if sys.platform != 'win32':
+                try:
+                    st = os.stat(local_filename)
+                    os.chmod(local_filename, st.st_mode | 0o111)
+                except:
+                    pass # Ignore permission errors in temp
+            # ------------------------------------------------
                             
             self.finished.emit(local_filename)
         except Exception as e:
@@ -114,19 +134,26 @@ class UpdateDownloader(QThread):
 
 def install_and_restart(file_path):
     """
-    Launches the external installer and exits the current application.
-    This allows the installer to overwrite files that would otherwise be 'in use'.
+    Windows: Launches installer and exits.
+    Linux: Opens the file location (Zip) and keeps app open for manual instructions.
     """
     try:
         if sys.platform == 'win32':
-            # os.startfile handles UAC elevation prompts correctly for installers
             os.startfile(file_path)
+            sys.exit(0) # Only exit on Windows where the installer takes over
         else:
-            # For Linux/macOS (if applicable)
-            subprocess.Popen(['open' if sys.platform == 'darwin' else 'xdg-open', file_path])
-        
-        # Exit application immediately
-        sys.exit(0)
+            # --- FIX 3: Linux "Manual Assist" Mode ---
+            # We open the folder containing the zip so the user can see it.
+            # We do NOT exit, because the user hasn't installed it yet.
+            if sys.platform == 'darwin':
+                subprocess.Popen(['open', '--reveal', file_path])
+            else:
+                # Linux: Try to highlight file, otherwise just open folder
+                folder_path = os.path.dirname(file_path)
+                subprocess.Popen(['xdg-open', folder_path])
+            
+            # Optional: You could emit a signal here to show a popup saying:
+            # "Update downloaded! Please extract the zip to upgrade."
+            
     except Exception as e:
         print(f"Error launching installer: {e}")
-        # We don't exit if launch failed, so the user can see the error
