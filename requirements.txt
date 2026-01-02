@@ -12,5 +12,4 @@ scikit-learn
 requests
 packaging
 
-boto3
 python-dotenv

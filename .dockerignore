@@ -1,0 +1,25 @@
+# Build artifacts
+dist/
+build/
+*.egg-info/
+
+# Virtual environments (Crucial! Do not copy your local venv)
+venv/
+.venv/
+env/
+
+# Python cache
+**/__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Git metadata
+.git
+.gitignore
+
+# Environment secrets
+.env
+
+# Tests and documentation (Optional, but keeps image clean)
+docs/
