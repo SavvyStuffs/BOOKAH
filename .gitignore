@@ -20,5 +20,6 @@ Bookah_Installer.iss
 # Misc
 /tests
 
-# Legacy
-bookah_legacy.py
+# Docker
+.dockerignore
+Dockerfile
