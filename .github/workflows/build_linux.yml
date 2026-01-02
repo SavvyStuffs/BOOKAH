@@ -47,7 +47,7 @@ jobs:
       - name: Build with PyInstaller
         run: |
           ls -F 
-          pyinstaller --clean bookah_linux.spec
+          pyinstaller --clean *.spec
 
       - name: Prepare Distribution
         run: |
