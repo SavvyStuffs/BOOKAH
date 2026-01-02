@@ -133,41 +133,30 @@ class UpdateDownloader(QThread):
             self.error.emit(str(e))
 
 def install_and_restart(file_path):
-    """
-    Windows: Launches installer and exits.
-    Linux: Creates a shell script to swap the build, runs it, and exits.
-    """
     try:
         if sys.platform == 'win32':
-            # --- WINDOWS PATH (Unchanged) ---
             os.startfile(file_path)
             sys.exit(0)
         else:
-            # --- LINUX PATH (New Auto-Updater) ---
             current_executable = sys.executable
             app_folder = os.path.dirname(current_executable)
-            parent_folder = os.path.dirname(app_folder) # Target: ~/Desktop/Bookah_App
+            parent_folder = os.path.dirname(app_folder)
             
-            # Create a temporary shell script to handle the swap
             script_path = os.path.join(tempfile.gettempdir(), "update_bookah.sh")
             
-            # The script waits 3s, unzips (overwriting), restores permissions, and restarts
+            # 1. Kill the app. 2. Unzip over the top. 3. Fix permissions. 4. Restart.
             script_content = f"""#!/bin/bash
 sleep 3
+pkill -9 -f "Bookah"
 unzip -o "{file_path}" -d "{parent_folder}"
-chmod +x "{current_executable}"
+chmod -R +x "{app_folder}"
 "{current_executable}" &
 """
-            
             with open(script_path, "w") as f:
                 f.write(script_content)
             
-            # Make the update script executable
             os.chmod(script_path, 0o755)
-            
-            # Run the script and kill this app so the file isn't locked
             subprocess.Popen(['/bin/bash', script_path], start_new_session=True)
             sys.exit(0)
-            
     except Exception as e:
         print(f"Error launching installer: {e}")
