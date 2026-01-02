@@ -21,7 +21,6 @@ The system is built on a tripartite analysis engine:
 ## Prerequisites
 
 *   Python 3.10 or 3.11
-*   Cuda-capable GPU (optional, for faster embedding inference)
 
 ## Installation
 
