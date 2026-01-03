@@ -1,9 +1,10 @@
 #!/bin/bash
 
 # Resolve script directory to handle symlinks and execution from other paths
-SCRIPT_DIR=$(dirname "$(readlink -f "$0")")
-APP_NAME="Bookah_Linux"
-APP_PATH="$SCRIPT_DIR/$APP_NAME"
+SCRIPT_DIR="$(cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+APP_FOLDER="Bookah_Linux"
+APP_BINARY="Bookah_Linux"
+APP_PATH="$SCRIPT_DIR/$APP_FOLDER/$APP_BINARY"
 
 # Core Qt6 and WebEngine runtime dependencies
 QT_LIBS="libxcb-cursor0 libxkbcommon-x11-0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 libxcb-xinerama0"
@@ -22,11 +23,11 @@ check_dependencies() {
 # Verify and install dependencies if needed
 check_dependencies
 if [ -n "$MISSING_PACKAGES" ]; then
-    echo "[$APP_NAME] Installing missing system libraries: $MISSING_PACKAGES"
+    echo "[$APP_BINARY] Installing missing system libraries: $MISSING_PACKAGES"
     
     # Quiet install, only surfacing errors
     if sudo apt-get update -qq && sudo apt-get install -y -qq $MISSING_PACKAGES; then
-        echo "[$APP_NAME] Dependencies verified."
+        echo "[$APP_BINARY] Dependencies verified."
     else
         echo "Error: Failed to install dependencies. Please check network connection."
         exit 1
@@ -37,7 +38,8 @@ fi
 export QT_QPA_PLATFORM=xcb
 
 if [ -f "$APP_PATH" ]; then
-    "$APP_PATH" "$@"
+    chmod -R 755 "$SCRIPT_DIR/Bookah_Linux"
+    "$APP_PATH" "$@" &
 else
     echo "Error: Executable not found at $APP_PATH"
     exit 1
