@@ -9,6 +9,7 @@ from src.ui.dialogs import FeedbackDialog, WebBrowserDialog
 class SettingsTab(QWidget):
     theme_changed = pyqtSignal(str) # Emits "Dark", "Light", or "Auto"
     campaigns_changed = pyqtSignal(dict) # Emits { 'Prophecies': bool, ... }
+    tutorial_requested = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -143,10 +144,7 @@ class SettingsTab(QWidget):
         self.settings.setValue("last_feedback_time", time.time())
 
     def open_tutorial(self):
-        # Using the actual tutorial video URL with origin parameter to help fix Error 153
-        url = "https://www.youtube.com/embed/rKSEPcfZOOw?origin=https://bookah.savvy-stuff.dev" 
-        dlg = WebBrowserDialog(self, "Tutorial", url)
-        dlg.exec()
+        self.tutorial_requested.emit()
 
     def on_theme_changed(self, button):
         if button == self.radio_on:

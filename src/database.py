@@ -39,7 +39,7 @@ class SkillRepository:
                 SELECT p.skill_id, p.name, p.profession, p.attribute, 
                        p.energy_cost, p.activation, p.recharge, p.adrenaline, s.is_pve_only,
                        p.description, p.is_elite,
-                       s.health_cost, s.aftercast, s.combo_req, s.is_touch, s.campaign, s.in_pre
+                       s.health_cost, s.aftercast, s.combo_req, s.is_touch, s.campaign, s.in_pre, s.skill_type
                 FROM skills_pvp p
                 JOIN skills s ON p.skill_id = s.skill_id
                 WHERE p.skill_id=?
@@ -49,7 +49,7 @@ class SkillRepository:
                 SELECT skill_id, name, profession, attribute, 
                        energy_cost, activation, recharge, adrenaline, is_pve_only,
                        description, is_elite,
-                       health_cost, aftercast, combo_req, is_touch, campaign, in_pre
+                       health_cost, aftercast, combo_req, is_touch, campaign, in_pre, skill_type
                 FROM skills
                 WHERE skill_id=?
             """
@@ -92,7 +92,7 @@ class SkillRepository:
             
         # B. Get Missing Physics Data and correct is_pve_only from Main Skills Table
         query_phys = """
-            SELECT health_cost, aftercast, combo_req, is_touch, campaign, in_pre, is_pve_only
+            SELECT health_cost, aftercast, combo_req, is_touch, campaign, in_pre, is_pve_only, skill_type
             FROM skills
             WHERE skill_id=?
         """
@@ -100,17 +100,17 @@ class SkillRepository:
         phys_row = self.cursor.fetchone()
         
         # Fallback if somehow main table is missing it too
-        # Index map for phys_row: 0:hp, 1:after, 2:combo, 3:touch, 4:camp, 5:pre, 6:pve_only
-        phys_data = phys_row if phys_row else (0, 0.75, 0, 0, 0, 0, 0)
+        # Index map for phys_row: 0:hp, 1:after, 2:combo, 3:touch, 4:camp, 5:pre, 6:pve_only, 7:skill_type
+        phys_data = phys_row if phys_row else (0, 0.75, 0, 0, 0, 0, 0, "")
         
         # Re-stitch row for _create_skill_object
         # Expected order: 
         # 0:id, 1:name, 2:prof, 3:attr, 4:nrg, 5:act, 6:rech, 7:adr, 8:pve_only, 9:desc, 10:elite,
-        # 11:hp, 12:after, 13:combo, 14:touch, 15:camp, 16:pre
+        # 11:hp, 12:after, 13:combo, 14:touch, 15:camp, 16:pre, 17:skill_type
         merged_row = [
             pvp_row[0], pvp_row[1], pvp_row[2], pvp_row[3], pvp_row[4], 
             pvp_row[5], pvp_row[6], pvp_row[7], phys_data[6], pvp_row[8], pvp_row[9],
-            phys_data[0], phys_data[1], phys_data[2], phys_data[3], phys_data[4], phys_data[5]
+            phys_data[0], phys_data[1], phys_data[2], phys_data[3], phys_data[4], phys_data[5], phys_data[7]
         ]
         
         return self._create_skill_object(merged_row, True, cache_key)
@@ -121,7 +121,7 @@ class SkillRepository:
             name=row[1], 
             icon_filename=f"{row[0]}.jpg", 
             profession=int(row[2] or 0),
-            attribute=int(row[3] or -1),
+            attribute=int(row[3] if row[3] is not None else -1),
             energy=int(row[4] or 0),
             activation=float(row[5] or 0.0),
             recharge=float(row[6] or 0.0),
@@ -135,7 +135,8 @@ class SkillRepository:
             combo_req=int(row[13] or 0),
             is_touch=bool(row[14]),
             campaign=int(row[15] or 0),
-            in_pre=bool(row[16])
+            in_pre=bool(row[16]),
+            skill_type=str(row[17] or "")
         )
         
         # Load stats if available (Phase 1)
@@ -146,8 +147,14 @@ class SkillRepository:
             self.cursor.execute(q_stats, (skill.id,))
             stats = self.cursor.fetchall()
             skill.stats = stats
+
+            # Load tags
+            q_tags = "SELECT tag FROM skill_tags WHERE skill_id=?"
+            self.cursor.execute(q_tags, (skill.id,))
+            tags = [r[0].lower() for r in self.cursor.fetchall()]
+            skill.tags = tags
         except Exception as e:
-            print(f"Error loading stats for skill {skill.id}: {e}")
+            print(f"Error loading stats/tags for skill {skill.id}: {e}")
             
         self._cache[cache_key] = skill
         return skill

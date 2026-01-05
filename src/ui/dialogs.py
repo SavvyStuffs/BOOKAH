@@ -2,9 +2,10 @@ import os
 import json
 import sqlite3
 from PyQt6.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QLineEdit, QListWidget, QMessageBox, QFileDialog, QInputDialog, QTabWidget, QTextEdit
+    QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QLineEdit, QListWidget, QMessageBox, QFileDialog, QInputDialog, QTabWidget, QTextEdit, QFrame, QScrollArea, QGridLayout, QWidget
 )
-from PyQt6.QtCore import QUrl
+from PyQt6.QtCore import QUrl, QSettings
+from PyQt6.QtGui import QPixmap
 
 try:
     from PyQt6.QtWebEngineWidgets import QWebEngineView
@@ -13,9 +14,157 @@ try:
 except ImportError:
     HAS_WEBENGINE = False
 
-from src.constants import PROF_MAP, JSON_FILE
+from src.ui.theme import get_color
+from src.constants import PROF_MAP, JSON_FILE, ICON_DIR, ICON_SIZE, ATTR_MAP, PROF_SHORT_MAP, DB_FILE
 from src.utils import GuildWarsTemplateDecoder
 from src.models import Build
+from src.engine import CONDITION_DEFINITIONS
+
+class TeamSummaryDialog(QDialog):
+    def __init__(self, team_name, builds, repo, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(f"Team Summary: {team_name}")
+        self.resize(600, 600)
+        self.repo = repo
+        
+        layout = QVBoxLayout(self)
+        
+        # 1. Team-wide Conditions
+        team_conditions = set()
+        build_stats = []
+        
+        conn = sqlite3.connect(DB_FILE)
+        
+        for build in builds:
+            total_nrg = 0
+            skill_count = 0
+            active_attrs = []
+            
+            # Attributes
+            if build.attributes:
+                for attr_id, rank in build.attributes:
+                    if rank > 0:
+                        name = ATTR_MAP.get(attr_id, f"Attr {attr_id}")
+                        active_attrs.append(f"{name}: {rank}")
+            
+            # Skills
+            for sid in build.skill_ids:
+                if sid == 0: continue
+                skill = repo.get_skill(sid)
+                if not skill: continue
+                
+                total_nrg += skill.energy
+                skill_count += 1
+                
+                # Fetch Tags
+                cursor = conn.execute("SELECT tag FROM skill_tags WHERE skill_id = ?", (sid,))
+                tags = {row[0] for row in cursor.fetchall()}
+                
+                # Verify if skill applies conditions
+                if "Type_Condition" in tags:
+                    desc = skill.description.lower()
+                    for cond_name in CONDITION_DEFINITIONS.keys():
+                        if cond_name in desc:
+                            idx = desc.find(cond_name)
+                            if idx != -1:
+                                start = max(0, idx - 25)
+                                prev_text = desc[start:idx]
+                                negatives = ["remove", "cure", "lose", "end", "immune"]
+                                if not any(neg in prev_text for neg in negatives):
+                                    team_conditions.add(cond_name.title())
+
+            avg_nrg = total_nrg / skill_count if skill_count > 0 else 0
+            
+            build_stats.append({
+                'name': build.name,
+                'p1': build.primary_prof,
+                'p2': build.secondary_prof,
+                'total_nrg': total_nrg,
+                'avg_nrg': avg_nrg,
+                'attrs': active_attrs
+            })
+            
+        conn.close()
+
+        # Conditions Header
+        lbl_conds = QLabel("<b>Conditions Applied by Team:</b>")
+        lbl_conds.setStyleSheet(f"font-size: 14px; color: {get_color('text_accent')};")
+        layout.addWidget(lbl_conds)
+        
+        if team_conditions:
+            cond_str = ", ".join(sorted(list(team_conditions)))
+            lbl_cond_list = QLabel(cond_str)
+            lbl_cond_list.setWordWrap(True)
+            lbl_cond_list.setStyleSheet("color: #00FF00; font-weight: bold; margin-bottom: 10px;")
+            layout.addWidget(lbl_cond_list)
+        else:
+            layout.addWidget(QLabel("None detected."))
+            
+        # Divider
+        line = QFrame()
+        line.setFrameShape(QFrame.Shape.HLine)
+        line.setFrameShadow(QFrame.Shadow.Sunken)
+        line.setStyleSheet(f"background-color: {get_color('border')};")
+        layout.addWidget(line)
+        
+        # Build List
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setStyleSheet("border: none;")
+        container = QWidget()
+        vbox = QVBoxLayout(container)
+        vbox.setSpacing(10)
+        
+        for stats in build_stats:
+            # Build Card
+            card = QFrame()
+            card.setStyleSheet(f"background-color: {get_color('bg_tertiary')}; border-radius: 5px; padding: 5px; border: 1px solid {get_color('border')};")
+            card_layout = QVBoxLayout(card)
+            
+            # Title
+            p1_id = int(stats['p1']) if str(stats['p1']).isdigit() else 0
+            p2_id = int(stats['p2']) if str(stats['p2']).isdigit() else 0
+            p1_name = PROF_MAP.get(p1_id, "X")
+            p2_name = PROF_MAP.get(p2_id, "X")
+            p1_short = PROF_SHORT_MAP.get(p1_name, "X")
+            p2_short = PROF_SHORT_MAP.get(p2_name, "X")
+            
+            name_str = f"{stats['name']} ({p1_short}/{p2_short})" if stats['name'] else f"Build ({p1_short}/{p2_short})"
+            lbl_title = QLabel(f"<b>{name_str}</b>")
+            lbl_title.setStyleSheet(f"font-size: 13px; color: {get_color('text_primary')};")
+            card_layout.addWidget(lbl_title)
+            
+            # Data Grid
+            grid = QGridLayout()
+            grid.setContentsMargins(0,0,0,0)
+            
+            grid.addWidget(QLabel("Total Energy Cost:"), 0, 0)
+            lbl_tot = QLabel(str(stats['total_nrg']))
+            lbl_tot.setStyleSheet(f"color: {get_color('text_accent')}; font-weight: bold;")
+            grid.addWidget(lbl_tot, 0, 1)
+            
+            grid.addWidget(QLabel("Avg Energy Cost:"), 1, 0)
+            lbl_avg = QLabel(f"{stats['avg_nrg']:.1f}")
+            lbl_avg.setStyleSheet(f"color: {get_color('text_accent')};")
+            grid.addWidget(lbl_avg, 1, 1)
+            
+            grid.addWidget(QLabel("Attributes:"), 2, 0)
+            attrs_str = ", ".join(stats['attrs']) if stats['attrs'] else "None"
+            lbl_attrs = QLabel(attrs_str)
+            lbl_attrs.setWordWrap(True)
+            lbl_attrs.setStyleSheet(f"color: {get_color('text_secondary')};")
+            grid.addWidget(lbl_attrs, 2, 1)
+            
+            card_layout.addLayout(grid)
+            vbox.addWidget(card)
+            
+        vbox.addStretch()
+        scroll.setWidget(container)
+        layout.addWidget(scroll)
+        
+        btn_close = QPushButton("Close")
+        btn_close.clicked.connect(self.accept)
+        layout.addWidget(btn_close)
 
 class NewTeamDialog(QDialog):
     def __init__(self, parent=None):
@@ -49,8 +198,11 @@ class NewTeamDialog(QDialog):
         layout.addLayout(btns)
 
     def choose_folder(self):
-        path = QFileDialog.getExistingDirectory(self, "Select Team Build Folder")
+        settings = QSettings("Bookah", "Builder")
+        last_dir = settings.value("last_load_dir", "")
+        path = QFileDialog.getExistingDirectory(self, "Select Team Build Folder", last_dir)
         if path:
+            settings.setValue("last_load_dir", os.path.dirname(path))
             self.folder_path = path
             self.lbl_status.setText(f"Selected: {os.path.basename(path)}")
             if not self.edit_name.text():
@@ -65,7 +217,7 @@ class TeamManagerDialog(QDialog):
         self.setWindowTitle("Team Build Manager")
         self.resize(400, 300)
         self.engine = engine
-        self.parent_window = parent # Reference to MainWindow to get current build
+        self.parent_window = parent
         
         layout = QVBoxLayout(self)
         
@@ -141,6 +293,12 @@ class TeamManagerDialog(QDialog):
                 self.engine.teams.add(name)
             
             self.refresh_list()
+            
+            # Auto-select and open the new team
+            items = self.list_widget.findItems(name, Qt.MatchFlag.MatchExactly)
+            if items:
+                self.list_widget.setCurrentItem(items[0])
+                self.load_team()
         
     def export_team(self):
         item = self.list_widget.currentItem()
@@ -150,9 +308,13 @@ class TeamManagerDialog(QDialog):
         team_name = item.text()
         
         # Ask for export directory
-        export_dir = QFileDialog.getExistingDirectory(self, f"Select Folder to Export '{team_name}'")
+        settings = QSettings("Bookah", "Builder")
+        last_dir = settings.value("last_export_dir", "")
+        export_dir = QFileDialog.getExistingDirectory(self, f"Select Folder to Export '{team_name}'", last_dir)
         if not export_dir:
             return
+        
+        settings.setValue("last_export_dir", os.path.dirname(export_dir))
 
         # Get matching builds
         matching_builds = [b for b in self.engine.builds if b.team == team_name]
@@ -225,6 +387,10 @@ class TeamManagerDialog(QDialog):
             
         team_name = item.text()
         
+        # Determine category (Inherit from team, or default to User Created)
+        existing_builds = [b for b in self.engine.builds if b.team == team_name]
+        category = existing_builds[0].category if existing_builds else "User Created"
+        
         # Prompt for Build Name
         build_name, ok = QInputDialog.getText(self, "Build Name", "Enter a name for this build (optional):")
         if not ok: return # User cancelled
@@ -243,7 +409,7 @@ class TeamManagerDialog(QDialog):
             primary_prof=str(decoded['profession']['primary']),
             secondary_prof=str(decoded['profession']['secondary']),
             skill_ids=decoded['skills'],
-            category="User Imported",
+            category=category,
             team=team_name,
             name=build_name.strip()
         )
@@ -336,12 +502,12 @@ class TeamEditorDialog(QDialog):
             for b in self.engine.builds:
                 if b.team == self.team_name:
                     b.team = new_name
-                    b.is_user_build = True # Mark as user build to ensure it persists in user_builds.json
+                    b.is_user_build = True 
             
             self.engine.teams.discard(self.team_name)
             self.engine.teams.add(new_name)
             
-            # Save using centralized engine logic
+            # Save data
             self.engine.save_user_builds()
             
             # Update UI
@@ -472,11 +638,79 @@ class LocationManagerDialog(QDialog):
             item = self.list_missions.currentItem()
         return item.text() if item else None
 
+class BuildComparisonDialog(QDialog):
+    def __init__(self, user_skills, other_build, repo, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(f"Comparing with {other_build.name or 'Unknown Build'}")
+        self.resize(600, 300)
+        
+        layout = QVBoxLayout(self)
+        
+        # User Build
+        layout.addWidget(QLabel("<b>Your Build:</b>"))
+        user_row = QHBoxLayout()
+        user_row.setSpacing(2)
+        
+        other_ids = set([s for s in other_build.skill_ids if s != 0])
+        
+        for sid in user_skills:
+            if sid == 0: continue
+            lbl = self._create_skill_icon(sid, repo, sid in other_ids)
+            user_row.addWidget(lbl)
+        user_row.addStretch()
+        layout.addLayout(user_row)
+        
+        layout.addSpacing(20)
+        
+        # Other Build
+        p1 = PROF_MAP.get(int(other_build.primary_prof) if other_build.primary_prof.isdigit() else 0, "X")
+        p2 = PROF_MAP.get(int(other_build.secondary_prof) if other_build.secondary_prof.isdigit() else 0, "X")
+        layout.addWidget(QLabel(f"<b>Match: {p1}/{p2} - {other_build.team}:</b>"))
+        
+        other_row = QHBoxLayout()
+        other_row.setSpacing(2)
+        
+        user_ids_set = set(user_skills)
+        
+        for sid in other_build.skill_ids:
+            if sid == 0: continue
+            lbl = self._create_skill_icon(sid, repo, sid in user_ids_set)
+            other_row.addWidget(lbl)
+        other_row.addStretch()
+        layout.addLayout(other_row)
+        
+        btn_close = QPushButton("Close")
+        btn_close.clicked.connect(self.accept)
+        layout.addWidget(btn_close)
+
+    def _create_skill_icon(self, sid, repo, is_match):
+        skill = repo.get_skill(sid)
+        lbl = QLabel()
+        lbl.setFixedSize(48, 48)
+        lbl.setScaledContents(True)
+        
+        if skill:
+            path = os.path.join(ICON_DIR, skill.icon_filename)
+            if os.path.exists(path):
+                pix = QPixmap(path)
+                lbl.setPixmap(pix)
+                lbl.setToolTip(f"<b>{skill.name}</b><br>{skill.description}")
+        
+        if is_match:
+            lbl.setStyleSheet("border: 3px solid #00FF00;")
+        else:
+            lbl.setStyleSheet("border: 1px solid #555; opacity: 0.7;")
+            
+        return lbl
+
 class BuildUniquenessDialog(QDialog):
-    def __init__(self, matches, total_builds, parent=None):
+    def __init__(self, matches, total_builds, active_ids, repo, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Build Uniqueness Check")
         self.resize(500, 400)
+        self.matches = matches
+        self.active_ids = active_ids
+        self.repo = repo
         
         layout = QVBoxLayout(self)
         
@@ -508,12 +742,21 @@ class BuildUniquenessDialog(QDialog):
             
             text = f"[{score}/8 Matches] {p1}/{p2} - {b.team} ({b.category})"
             self.list_widget.addItem(text)
-            
+        
+        self.list_widget.itemClicked.connect(self.show_comparison)
         layout.addWidget(self.list_widget)
         
         btn_close = QPushButton("Close")
         btn_close.clicked.connect(self.accept)
         layout.addWidget(btn_close)
+
+    def show_comparison(self, item):
+        row = self.list_widget.row(item)
+        if row < 0 or row >= len(self.matches): return
+        
+        match_data = self.matches[row]
+        dlg = BuildComparisonDialog(self.active_ids, match_data['build'], self.repo, self)
+        dlg.exec()
 
 class WebBrowserDialog(QDialog):
     def __init__(self, parent=None, title="Web Browser", url="https://google.com"):
@@ -563,3 +806,90 @@ class FeedbackDialog(WebBrowserDialog):
     def __init__(self, parent=None):
         url = "https://forms.gle/71osvp76fPA3g8Tw8"
         super().__init__(parent, "Feedback", url)
+
+class ProfessionSelectionDialog(QDialog):
+    def __init__(self, current_primary, current_secondary, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Select Professions")
+        self.setFixedSize(300, 150)
+        self.selected_primary = current_primary
+        self.selected_secondary = current_secondary
+        
+        layout = QVBoxLayout(self)
+        
+        # Primary Profession
+        h1 = QHBoxLayout()
+        h1.addWidget(QLabel("Primary:"))
+        self.combo_primary = self._create_prof_combo()
+        self._set_combo(self.combo_primary, current_primary)
+        h1.addWidget(self.combo_primary)
+        layout.addLayout(h1)
+        
+        # Secondary Profession
+        h2 = QHBoxLayout()
+        h2.addWidget(QLabel("Secondary:"))
+        self.combo_secondary = self._create_prof_combo()
+        self._set_combo(self.combo_secondary, current_secondary)
+        h2.addWidget(self.combo_secondary)
+        layout.addLayout(h2)
+        
+        # Buttons
+        btns = QHBoxLayout()
+        self.btn_ok = QPushButton("OK")
+        self.btn_ok.clicked.connect(self.accept_selection)
+        self.btn_cancel = QPushButton("Cancel")
+        self.btn_cancel.clicked.connect(self.reject)
+        btns.addWidget(self.btn_ok)
+        btns.addWidget(self.btn_cancel)
+        layout.addLayout(btns)
+
+        # Exclusion Logic
+        self.combo_primary.currentIndexChanged.connect(self._update_exclusions)
+        self.combo_secondary.currentIndexChanged.connect(self._update_exclusions)
+        self._update_exclusions()
+
+    def _create_prof_combo(self):
+        from PyQt6.QtWidgets import QComboBox
+        cb = QComboBox()
+        cb.addItem("None", 0)
+        # Sort by ID for consistency
+        for pid in sorted(PROF_MAP.keys()):
+            if pid == 0: continue
+            cb.addItem(f"{PROF_MAP[pid]}", pid)
+        return cb
+
+    def _set_combo(self, combo, prof_id):
+        index = combo.findData(prof_id)
+        if index != -1:
+            combo.setCurrentIndex(index)
+        else:
+            combo.setCurrentIndex(0) # None
+
+    def _update_exclusions(self):
+        p1_val = self.combo_primary.currentData()
+        p2_val = self.combo_secondary.currentData()
+        
+        self._set_item_disabled(self.combo_secondary, p1_val)
+        self._set_item_disabled(self.combo_primary, p2_val)
+
+    def _set_item_disabled(self, combo, value_to_disable):
+        model = combo.model()
+        if not hasattr(model, 'item'): return
+
+        for i in range(combo.count()):
+            val = combo.itemData(i)
+            item = model.item(i)
+            
+            # If this item matches the value to disable (and is not None/0)
+            if val == value_to_disable and val != 0:
+                item.setEnabled(False)
+            else:
+                item.setEnabled(True)
+
+    def accept_selection(self):
+        self.selected_primary = self.combo_primary.currentData()
+        self.selected_secondary = self.combo_secondary.currentData()
+        self.accept()
+
+    def get_professions(self):
+        return self.selected_primary, self.selected_secondary

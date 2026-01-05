@@ -32,6 +32,7 @@ class UpdateChecker(QObject):
     update_available = pyqtSignal(str, str, str)
     no_update = pyqtSignal()
     error = pyqtSignal(str)
+    finished = pyqtSignal()
 
     def __init__(self):
         super().__init__()
@@ -52,26 +53,28 @@ class UpdateChecker(QObject):
     def check(self):
         if not self.version_url:
             self.error.emit("No version URL found.")
+            self.finished.emit()
             return
 
         self.worker = UpdateCheckWorker(self.version_url)
         self.worker.result.connect(self._on_result)
-        self.worker.error.connect(self.error)
+        self.worker.error.connect(self._on_error)
         self.worker.start()
+
+    def _on_error(self, err_msg):
+        self.error.emit(err_msg)
+        self.finished.emit()
 
     def _on_result(self, data):
         try:
             remote_version = data.get('version')
             
-            # --- FIX 1: OS-Dependent Download Link ---
+            # OS-Dependent Download Link
             base_url = "https://bookah.savvy-stuff.dev"
             if sys.platform == 'win32':
                 download_url = f"{base_url}/Bookah_Setup.exe"
             else:
-                # Assuming you will name your zip this. 
-                # If you use version numbers in filenames, update logic here.
                 download_url = f"{base_url}/Bookah_Linux.zip"
-            # -----------------------------------------
 
             release_notes = data.get('updates', "No release notes available.")
 
@@ -81,6 +84,8 @@ class UpdateChecker(QObject):
                 self.no_update.emit()
         except Exception as e:
             self.error.emit(str(e))
+        finally:
+            self.finished.emit()
 
 class UpdateDownloader(QThread):
     progress = pyqtSignal(int)
@@ -118,15 +123,13 @@ class UpdateDownloader(QThread):
                             done = int(100 * dl / total_length)
                             self.progress.emit(done)
 
-            # --- FIX 2: Grant Execute Permissions (Linux) ---
-            # Even if it's a zip, good practice. If it were an AppImage, this is mandatory.
+            # Grant Execute Permissions (Linux)
             if sys.platform != 'win32':
                 try:
                     st = os.stat(local_filename)
                     os.chmod(local_filename, st.st_mode | 0o111)
                 except:
-                    pass # Ignore permission errors in temp
-            # ------------------------------------------------
+                    pass 
                             
             self.finished.emit(local_filename)
         except Exception as e:

@@ -20,20 +20,8 @@ else:
     # Running as a script
     APP_ROOT = os.path.abspath(".")
 
-# Determine user data directory based on OS
-if sys.platform == 'win32':
-    local_app_data = os.environ.get('LOCALAPPDATA')
-    if local_app_data:
-        USER_DIR = os.path.join(local_app_data, "Bookah")
-    else:
-        # Fallback if env var missing
-        USER_DIR = os.path.join(os.path.expanduser("~"), "AppData", "Local", "Bookah")
-elif sys.platform == 'darwin':
-    USER_DIR = os.path.join(os.path.expanduser("~"), "Library", "Application Support", "Bookah")
-else:
-    # Linux / Other
-    xdg_data = os.environ.get('XDG_DATA_HOME', os.path.join(os.path.expanduser("~"), ".local", "share"))
-    USER_DIR = os.path.join(xdg_data, "Bookah")
+# Local data directory for models and user builds
+USER_DIR = os.path.join(APP_ROOT, "data")
 
 if not os.path.exists(USER_DIR):
     os.makedirs(USER_DIR)
@@ -52,32 +40,6 @@ if not os.path.exists(USER_BUILDS_FILE):
 # 3. AI Models
 BEHAVIOR_MODEL_PATH = os.path.join(USER_DIR, 'skill_vectors.model')
 SEMANTIC_MODEL_PATH = os.path.join(USER_DIR, 'description_embeddings.pt')
-
-# Pre-seed models from bundled resources if they don't exist in data folder
-if not os.path.exists(BEHAVIOR_MODEL_PATH):
-    bundled_bm = resource_path('skill_vectors.model')
-    if os.path.exists(bundled_bm):
-        try:
-            shutil.copy(bundled_bm, BEHAVIOR_MODEL_PATH)
-        except Exception as e:
-            print(f"Error seeding behavior model: {e}")
-
-if not os.path.exists(SEMANTIC_MODEL_PATH):
-    bundled_sm = resource_path('description_embeddings.pt')
-    if os.path.exists(bundled_sm):
-        try:
-            shutil.copy(bundled_sm, SEMANTIC_MODEL_PATH)
-        except Exception as e:
-            print(f"Error seeding semantic model: {e}")
-
-# Pre-seed models if bundled
-if not os.path.exists(BEHAVIOR_MODEL_PATH):
-    bundled_bm = resource_path('skill_vectors.model')
-    if os.path.exists(bundled_bm): shutil.copy(bundled_bm, BEHAVIOR_MODEL_PATH)
-
-if not os.path.exists(SEMANTIC_MODEL_PATH):
-    bundled_sm = resource_path('description_embeddings.pt')
-    if os.path.exists(bundled_sm): shutil.copy(bundled_sm, SEMANTIC_MODEL_PATH)
 
 # --- Static Data (Bundled in EXE) ---
 DB_FILE = resource_path('master.db') 
@@ -116,6 +78,19 @@ ATTR_MAP = {
 }
 
 PROF_PRIMARY_ATTR = {
-    1: 17, 2: 23, 3: 16, 5: 3, 6: 12, 
-    4: 6, 7: 30, 8: 36, 10: 44, 9: 40
+    1: 17, 2: 23, 3: 16, 5: 0, 6: 12, 
+    4: 6, 7: 35, 8: 36, 10: 44, 9: 40
+}
+
+PROF_ATTRS = {
+    1: [17, 18, 19, 20, 21],          # Warrior: Strength, Axe, Hammer, Sword, Tactics
+    2: [22, 23, 24, 25],              # Ranger: Beast, Expertise, Wild, Marks
+    3: [13, 14, 15, 16],              # Monk: Heal, Smiting, Prot, Divine
+    4: [4, 5, 6, 7],                  # Necro: Blood, Death, Soul, Curses
+    5: [0, 1, 2, 3],                  # Mesmer: Fast, Illusion, Dom, Insp
+    6: [8, 9, 10, 11, 12],            # Ele: Air, Earth, Fire, Water, Energy
+    7: [29, 30, 31, 35],              # Assassin: Dagger, Deadly, Shadow, Critical
+    8: [32, 33, 34, 36],              # Ritualist: Communing, Resto, Chan, Spawning
+    9: [37, 38, 39, 40],              # Paragon: Spear, Command, Motiv, Leadership
+    10: [41, 42, 43, 44]              # Dervish: Scythe, Wind, Earth, Mysticism
 }
