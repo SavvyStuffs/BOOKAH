@@ -65,15 +65,19 @@ class BuildState:
     Represents the instantaneous state of the build.
     Tracks resources, mechanic states, and active effects.
     """
-    def __init__(self, primary_prof_id=0):
-        # --- Profession Physics Config ---
+    def __init__(self, primary_prof_id=0, attr_dist=None, max_energy=None):
         # Casters: Monk(3), Necro(4), Mesmer(5), Ele(6), Rit(8)
         self.is_caster = primary_prof_id in [3, 4, 5, 6, 8]
         
         self.elite_count = 0
+        self.attr_dist = attr_dist or {}
         
         # Energy Capacity
-        self.max_energy_capacity = 60 if self.is_caster else 30
+        if max_energy is not None:
+            self.max_energy_capacity = max_energy
+        else:
+            self.max_energy_capacity = 60 if self.is_caster else 30
+            
         self.base_regen = 1.33 if self.is_caster else 0.66
         
         # --- Real-time State ---
@@ -104,6 +108,16 @@ class BuildState:
             37: "Spear",                               # Paragon
             41: "Scythe"                               # Dervish
         }
+        
+        # Detect Weapon Preference from Attributes
+        highest_rank = 0
+        for attr_id, weapon_name in self.WEAPON_MAP.items():
+            rank = self.attr_dist.get(attr_id, 0)
+            if rank > 0 and rank >= highest_rank:
+                highest_rank = rank
+                self.primary_weapon = weapon_name
+
+        self.weapon_locked_by_skill = False
 
     def ingest_skill(self, skill, tags=None):
         """
@@ -149,10 +163,12 @@ class BuildState:
         # 4. Combo Stages
         if skill[9]: self.combo_stages.add(skill[9])
         
-        # 5. Weapon Locking
+        # 5. Weapon Locking (Skills override Attributes)
         if attr in self.WEAPON_MAP:
-            if self.primary_weapon is None:
-                self.primary_weapon = self.WEAPON_MAP[attr]
+            skill_weapon = self.WEAPON_MAP[attr]
+            if not self.weapon_locked_by_skill:
+                self.primary_weapon = skill_weapon
+                self.weapon_locked_by_skill = True
 
         # 6. Basic Needs Tracking
         if "heal" in desc and ("self" in desc or "you" in desc): self.self_heal_count += 1
@@ -458,7 +474,7 @@ class MechanicsEngine:
             conn = sqlite3.connect(self.db_path)
             table = self._get_table()
             
-            cols = "skill_id, name, description, energy_cost, activation, recharge, adrenaline, health_cost, aftercast, combo_req, is_elite, attribute, target_type"
+            cols = "skill_id, name, description, energy_cost, activation, recharge, adrenaline, health_cost, aftercast, combo_req, is_elite, attribute, target_type, profession"
             placeholders = ','.join(['?'] * len(active_skill_ids))
             
             q_active = f"SELECT {cols} FROM {table} WHERE skill_id IN ({placeholders})"
@@ -491,6 +507,7 @@ class MechanicsEngine:
                 root_desc = root[2].lower() if root[2] else ""
                 root_hp_cost = root[7] or 0
                 root_target_type = root[12] if len(root) > 12 else 0
+                root_prof = root[13] if len(root) > 13 else 0
                 root_tags = skill_tags_map.get(root_id, set())
                 
                 # --- Mechanic Identification ---
@@ -584,9 +601,11 @@ class MechanicsEngine:
                     # Suggest skills that use spirits (exclude non-spirit)
                     q = f"SELECT {cols} FROM {table} WHERE (description LIKE '%near a spirit%' OR description LIKE '%earshot of a spirit%' OR description LIKE '%destroy%spirit%' OR description LIKE '%spirit%loses health%') AND description NOT LIKE '%non-spirit%' AND skill_id NOT IN ({','.join(['?']*len(existing_ids))})"
                     self._process_matches(conn, q, list(existing_ids), root, context, synergies, debug_mode, "Uses Spirits", stop_check, has_mantra=has_mantra)
-                    # Suggest more spirits (Spirit Army)
-                    q_army = f"SELECT {cols} FROM {table} WHERE skill_id IN (SELECT skill_id FROM skill_tags WHERE tag='Type_Spirit') AND skill_id NOT IN ({','.join(['?']*len(existing_ids))})"
-                    self._process_matches(conn, q_army, list(existing_ids), root, context, synergies, debug_mode, "Spirit Army", stop_check, has_mantra=has_mantra)
+                    
+                    # Suggest more spirits (Spirit Army), BUT NOT FOR RANGER (Prof 2)
+                    if root_prof != 2:
+                        q_army = f"SELECT {cols} FROM {table} WHERE skill_id IN (SELECT skill_id FROM skill_tags WHERE tag='Type_Spirit') AND skill_id NOT IN ({','.join(['?']*len(existing_ids))})"
+                        self._process_matches(conn, q_army, list(existing_ids), root, context, synergies, debug_mode, "Spirit Army", stop_check, has_mantra=has_mantra)
 
                 if is_spirit_cons:
                     q = f"SELECT {cols} FROM {table} WHERE skill_id IN (SELECT skill_id FROM skill_tags WHERE tag='Type_Spirit') AND skill_id NOT IN ({','.join(['?']*len(existing_ids))})"
@@ -787,7 +806,7 @@ class SynergyEngine:
     def __init__(self, json_path, db_path):
         self.builds: List[Build] = []
         self.professions = set()
-        self.categories = set()
+        self.categories = {"User Imported", "User Created"}
         self.teams = set()
         
         # Initialize the Brain and the Mechanics Validator
@@ -797,10 +816,7 @@ class SynergyEngine:
         self.load_data(json_path)
 
     def load_data(self, json_path):
-        # 1. Load the raw JSON for standard lookups
-        seen_builds = set() # (code, team) to prevent duplicates
-        
-        # Helper to process a JSON file
+        # Load builds from JSON for statistical lookups
         def process_file(path, is_user_data=False):
             if not os.path.exists(path): return
             try:
@@ -810,10 +826,6 @@ class SynergyEngine:
                         code = entry.get('build_code', '')
                         team = entry.get('team', 'General')
                         
-                        if (code, team) in seen_builds:
-                            continue
-                        seen_builds.add((code, team))
-
                         attrs = []
                         if code:
                             decoded = GuildWarsTemplateDecoder(code).decode()
@@ -821,11 +833,9 @@ class SynergyEngine:
                                 attrs = decoded.get('attributes', [])
 
                         category = entry.get('category', 'Uncategorized')
-                        if category == "SC": category = "Speed Clear"
-                        
                         name = entry.get('name', '')
 
-                        # Auto-assign to Mosquito's Teambuild category
+                        # Auto-assign teambuild category
                         if "Mosquito" in team or "Mosquito" in name:
                             category = "Mosquito's Teambuild"
 
@@ -837,9 +847,9 @@ class SynergyEngine:
                             category=category,
                             team=team,
                             attributes=attrs,
-                            name=name
+                            name=name,
+                            url=entry.get('url', '')
                         )
-                        # Tag user builds so we know where to save them later
                         b.is_user_build = is_user_data
                         
                         self.builds.append(b)
@@ -849,14 +859,13 @@ class SynergyEngine:
             except Exception as e:
                 print(f"Error loading {path}: {e}")
 
-        # Load User Builds (Writable) - Process these first so they take precedence
+        # Process user data first for precedence
         process_file(USER_BUILDS_FILE, is_user_data=True)
-        # Load System Builds (Read-Only)
+        # Process system data
         process_file(json_path, is_user_data=False)
 
-        # 2. TRIGGER AUTO-TRAINING HERE
-        # We train the brain using the user builds file so it learns from user additions
-        self.brain.train(USER_BUILDS_FILE, self.mechanics.db_path)
+        # Retrain behavioral model using both system and user data
+        self.brain.train([json_path, USER_BUILDS_FILE], self.mechanics.db_path)
 
     def save_user_builds(self):
         user_data = []
@@ -869,7 +878,8 @@ class SynergyEngine:
                     "skill_ids": b.skill_ids,
                     "category": b.category,
                     "team": b.team,
-                    "name": b.name
+                    "name": b.name,
+                    "url": getattr(b, 'url', '')
                 })
         
         try:
@@ -969,7 +979,7 @@ class SynergyEngine:
             print(f"[Engine] Summary Error: {e}")
             return []
 
-    def get_suggestions(self, active_skill_ids: List[int], limit=100, category=None, team=None, min_overlap=None, mode="legacy", is_pre=False, allowed_campaigns=None, is_pvp=False, primary_prof_id=0) -> List[tuple]:
+    def get_suggestions(self, active_skill_ids: List[int], limit=100, category=None, team=None, min_overlap=None, mode="legacy", is_pre=False, allowed_campaigns=None, is_pvp=False, primary_prof_id=0, attr_dist=None, max_energy=30) -> List[tuple]:
         # ...
         # 1. Cold Start Check
         if not active_skill_ids:
@@ -983,9 +993,17 @@ class SynergyEngine:
             return []
 
         # Restore Context Initialization
-        context = BuildState(primary_prof_id) 
+        context = BuildState(primary_prof_id, attr_dist, max_energy) 
         conn = sqlite3.connect(self.mechanics.db_path)
         placeholders = ','.join(['?'] * len(active_skill_ids))
+
+        # Normalize active skill names for duplicate prevention (handles PvP/PvE pairs)
+        active_names = set()
+        q_names = f"SELECT name FROM skills WHERE skill_id IN ({placeholders})"
+        cursor = conn.execute(q_names, active_skill_ids)
+        for (name,) in cursor.fetchall():
+            clean = name.lower().replace(" (pvp)", "").strip()
+            active_names.add(clean)
         
         # Fetch tags for active skills
         q_tags = f"SELECT skill_id, tag FROM skill_tags WHERE skill_id IN ({placeholders})"
@@ -1001,10 +1019,8 @@ class SynergyEngine:
         for row in cursor.fetchall():
             active_skills_data.append(row)
             context.ingest_skill(row, active_tags_map.get(row[0], set()))
-        conn.close()
 
         # 3. Validation Step (Relaxed)
-        conn = sqlite3.connect(self.mechanics.db_path)
         cursor = conn.cursor()
         
         final_results = []
@@ -1024,9 +1040,13 @@ class SynergyEngine:
             if row:
                 name = row[1]
                 prof = row[12]
-                # PvP Check: If in PvE mode, skip skills with "(PvP)" in name
-                if not is_pvp and "(PvP)" in name:
+                
+                # Duplicate prevention by name
+                clean_name = name.lower().replace(" (pvp)", "").strip()
+                if clean_name in active_names:
                     continue
+
+                # PvP Check: If in PvE mode, skip skills with "(PvP)" in name
                 
                 # If PvP mode is ON, swap PvE skills to PvP versions if available
                 if is_pvp and "(PvP)" not in name:
@@ -1102,6 +1122,11 @@ class SynergyEngine:
             valid, drain_r = self.mechanics.check_energy_drain(row, context)
             if not valid or "⚠️" in drain_r:
                 if drain_r not in warnings: warnings.append(drain_r)
+
+            # 1. Weapon Compatibility (Preventative)
+            valid, weapon_r = self.mechanics.check_weapon_compatibility(row[11], context)
+            if not valid:
+                continue
 
             # Construct Result
             reason_str = ""

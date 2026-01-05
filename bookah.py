@@ -67,22 +67,18 @@ if __name__ == "__main__":
     splash.show()
     app.processEvents()
     
-    # --- LOAD ENGINE WHILE SPLASH IS SHOWING ---
+    # Load Engine
     print("Loading Synergy Engine...")
-    # This trains the neural net if needed
     synergy_engine = SynergyEngine(JSON_FILE, DB_FILE)
     
-    # Initialize Main Window with the loaded engine
+    # Initialize Main Window
     window = MainWindow(engine=synergy_engine)
     
     def show_main():
         window.show()
         splash.finish(window)
         
-    # Enforce minimum 2 second splash (or until loaded)
-    # Since loading happens synchronously above, the timer starts AFTER load.
-    # So 100ms is fine just to yield UI loop, but user wanted "splash screen visible".
-    # We can use 2000ms to be safe/nice.
+    # Splash screen display timing
     QTimer.singleShot(2000, show_main)
     
     sys.exit(app.exec())

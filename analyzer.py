@@ -150,25 +150,14 @@ class VisualAnalyzer:
             for node_id in comm:
                 node_colors[node_id] = color
 
-        # 4. Initialize PyVis Graph
+        # Initialize Graph
         net = Network(height='90vh', width='100%', bgcolor='#222222', font_color='white', cdn_resources='in_line')
-        # Use BarnesHut and enable stabilization to prevent continuous CPU usage in the app
+        
+        # Physics engine configuration
         net.barnes_hut(gravity=-2000, central_gravity=0.3, spring_length=95, spring_strength=0.04, damping=0.09, overlap=0)
         
-        # Configure stabilization
-        net.set_options("""
-        var options = {
-          "physics": {
-            "stabilization": {
-              "enabled": true,
-              "iterations": 1000,
-              "updateInterval": 25,
-              "onlyDynamicEdges": false,
-              "fit": true
-            }
-          }
-        }
-        """)
+        # Configure UI Buttons
+        net.show_buttons(filter_=['physics'])
         
         added_skills = set()
         icons_base_path = "icons/skill_icons/"
@@ -196,9 +185,8 @@ class VisualAnalyzer:
 
             net.add_edge(id_a, id_b, value=weight, title=f"Synergy: {weight:.1%}", color='#555')
 
-        # 6. Save and Open
+        # Export mapping
         output_file = "synergy_map.html"
-        net.show_buttons(filter_=['physics'])
         html_content = net.generate_html()
         
         # --- Custom JS Injection for Search and Manual Grouping ---
