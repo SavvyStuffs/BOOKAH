@@ -24,7 +24,7 @@ from src.ui.components import SkillSlot, SkillInfoPanel, SkillLibraryWidget, Bui
 from src.ui.attribute_editor import AttributeEditor
 from src.ui.character_panel import CharacterPanel, WeaponsPanel, WEAPONS
 from src.ui.tutorial import TutorialOverlay, TutorialManager
-from src.ui.dialogs import TeamManagerDialog, LocationManagerDialog, BuildUniquenessDialog, ProfessionSelectionDialog
+from src.ui.dialogs import TeamManagerDialog, LocationManagerDialog, BuildUniquenessDialog, ProfessionSelectionDialog, TeamManagerWidget
 from src.ui.settings_tab import SettingsTab
 from src.ui.theme import update_theme, get_color
 from src.updater import UpdateChecker, UpdateDownloader, install_and_restart
@@ -181,7 +181,7 @@ class SynergyWorker(QThread):
             print(f"Worker Error: {e}")
 
     def stop(self):
-        self.requestInterruption() # New standard PyQt6 way
+        self.requestInterruption()
         self.quit()
         self.wait(500)
 
@@ -222,6 +222,10 @@ class MainWindow(QMainWindow):
         self.current_secondary_prof = 0
         self._last_attr_state = None
         self.settings = QSettings("Bookah", "Builder")
+        self.loading_from_selection = False 
+        self.dirty_build_ids = set() 
+        self.active_edit_build = None
+        self.build_on_bar = None
         
         self.current_bonuses = {}
         self.current_global_effects = {}
@@ -388,6 +392,7 @@ class MainWindow(QMainWindow):
         if hasattr(self, 'attr_editor'): self.attr_editor.refresh_theme()
         if hasattr(self, 'character_panel'): self.character_panel.refresh_theme()
         if hasattr(self, 'weapons_panel'): self.weapons_panel.refresh_theme()
+        if hasattr(self, 'settings_tab'): self.settings_tab.refresh_theme()
         
         # Refresh slots
         if hasattr(self, 'slots'):
@@ -474,8 +479,13 @@ class MainWindow(QMainWindow):
         self.edit_build_search.setVisible(show_search)
 
     def on_team_changed(self, text):
+        is_team = (text != "All" and text != "Solo")
+        show_summary = (text != "All")
+        
         if hasattr(self, 'btn_team_summary'):
-            self.btn_team_summary.setVisible(text != "All")
+            self.btn_team_summary.setVisible(show_summary)
+        if hasattr(self, 'btn_duplicate_team'):
+            self.btn_duplicate_team.setVisible(is_team)
             
         # Update search visibility: Show if Team!=All OR Cat!=All
         cat = self.combo_cat.currentText()
@@ -483,7 +493,65 @@ class MainWindow(QMainWindow):
         if hasattr(self, 'edit_build_search'):
             self.edit_build_search.setVisible(show_search)
             
+        # Auto-switch to Team View if a specific team is selected
+        if is_team:
+            self.btn_team_view.setChecked(True)
+            
         self.apply_filters()
+
+    def duplicate_current_team(self):
+        current_team = self.combo_team.currentText()
+        if current_team == "All" or current_team == "Solo": return
+        
+        from PyQt6.QtWidgets import QInputDialog
+        new_name, ok = QInputDialog.getText(self, "Duplicate Team", "Enter name for the new team:", text=f"Copy of {current_team}")
+        
+        if not ok or not new_name: return
+        if new_name in self.engine.teams:
+            QMessageBox.warning(self, "Error", f"Team '{new_name}' already exists!")
+            return
+            
+        # Clone builds
+        source_builds = [b for b in self.engine.builds if b.team == current_team]
+        self.engine.teams.add(new_name)
+        
+        for b in source_builds:
+            new_build = Build(
+                code=b.code,
+                primary_prof=b.primary_prof,
+                secondary_prof=b.secondary_prof,
+                skill_ids=list(b.skill_ids), # Clone list
+                category="User Created",
+                team=new_name,
+                name=b.name,
+                attributes=list(b.attributes) if b.attributes else [] # Clone attributes
+            )
+            new_build.is_user_build = True
+            self.engine.builds.append(new_build)
+            
+        self.engine.save_user_builds()
+        
+        # Manual Refresh of Dropdown
+        self.combo_team.blockSignals(True)
+        self.combo_team.clear()
+        self.combo_team.addItem("All")
+        
+        all_teams = self.engine.teams
+        if "Solo" in all_teams:
+            self.combo_team.addItem("Solo")
+            others = sorted([t for t in all_teams if t != "Solo"])
+        else:
+            others = sorted(list(all_teams))
+        self.combo_team.addItems(others)
+        
+        # Select New Team
+        idx = self.combo_team.findText(new_name)
+        if idx != -1: self.combo_team.setCurrentIndex(idx)
+        self.combo_team.blockSignals(False)
+        
+        # Trigger update
+        self.on_team_changed(new_name)
+        QMessageBox.information(self, "Success", f"Team duplicated as '{new_name}'.")
 
     def init_builder_ui(self, parent_widget):
         main_layout = QVBoxLayout(parent_widget)
@@ -541,13 +609,28 @@ class MainWindow(QMainWindow):
         
         # Col 6: Manage Teams
         self.btn_manage_teams = QPushButton("Manage Teams")
-        self.btn_manage_teams.clicked.connect(self.open_team_manager)
+        self.btn_manage_teams.setCheckable(True)
+        self.btn_manage_teams.setToolTip("Open Team Manager Pane")
+        self.btn_manage_teams.clicked.connect(self.toggle_team_manager_view)
         top_grid.addWidget(self.btn_manage_teams, 0, 6)
+        
+        # Summary & Duplicate Buttons (Row 1)
+        btn_action_layout = QHBoxLayout()
+        btn_action_layout.setContentsMargins(0, 0, 0, 0)
+        btn_action_layout.setSpacing(2)
         
         self.btn_team_summary = QPushButton("Summary")
         self.btn_team_summary.setVisible(False)
         self.btn_team_summary.clicked.connect(self.open_team_summary)
-        top_grid.addWidget(self.btn_team_summary, 1, 6)
+        btn_action_layout.addWidget(self.btn_team_summary)
+        
+        self.btn_duplicate_team = QPushButton("Duplicate")
+        self.btn_duplicate_team.setToolTip("Duplicate current team to edit")
+        self.btn_duplicate_team.setVisible(False)
+        self.btn_duplicate_team.clicked.connect(self.duplicate_current_team)
+        btn_action_layout.addWidget(self.btn_duplicate_team)
+        
+        top_grid.addLayout(btn_action_layout, 1, 6)
 
         # Build Search (Row 1, Col 4-5) - Left of Summary
         self.edit_build_search = QLineEdit()
@@ -577,21 +660,21 @@ class MainWindow(QMainWindow):
         cb_hbox.setContentsMargins(0, 0, 0, 0)
         cb_hbox.setSpacing(10)
 
-        # Group 1: PvP
+        # Group 1: PvP & PvE Only
         vbox_pvp = QVBoxLayout()
         vbox_pvp.addWidget(self.check_pvp)
         vbox_pvp.addWidget(self.check_pve_only)
         cb_hbox.addLayout(vbox_pvp)
 
-        # Group Pre
-        vbox_pre = QVBoxLayout()
-        vbox_pre.addWidget(self.check_pre)
-        vbox_pre.addStretch()
-        cb_hbox.addLayout(vbox_pre)
+        # Group 2: Pre
+        vbox_pve = QVBoxLayout()
+        vbox_pve.addWidget(self.check_pre)
+        vbox_pve.addStretch()
+        cb_hbox.addLayout(vbox_pve)
         
         cb_hbox.addSpacing(10) 
 
-        # Group 2: Elites
+        # Group 3: Elites
         vbox_elites = QVBoxLayout()
         vbox_elites.addWidget(self.check_elites_only)
         vbox_elites.addWidget(self.check_no_elites)
@@ -615,7 +698,7 @@ class MainWindow(QMainWindow):
         # 45px is approximately the width of "Search:" label + spacing
         desc_hbox.addSpacing(45) 
         self.check_search_desc = QCheckBox("Description")
-        self.check_search_desc.setStyleSheet("font-size: 10px; color: #aaa;")
+        self.check_search_desc.setStyleSheet(f"font-size: 10px; color: {get_color('text_primary')};")
         self.check_search_desc.toggled.connect(self.apply_filters)
         desc_hbox.addWidget(self.check_search_desc)
         desc_hbox.addStretch()
@@ -657,6 +740,30 @@ class MainWindow(QMainWindow):
         self.btn_char_view.toggled.connect(self.toggle_character_view)
         btn_row_layout.addWidget(self.btn_char_view)
 
+        self.btn_team_view = QPushButton("Teams")
+        self.btn_team_view.setFixedSize(60, 24)
+        self.btn_team_view.setCheckable(True)
+        self.btn_team_view.setToolTip("Toggle Team View")
+        self.btn_team_view.setStyleSheet("""
+            QPushButton { 
+                border: 1px solid transparent; 
+                background: transparent; 
+                font-size: 11px; 
+                font-weight: bold;
+                border-radius: 4px;
+            }
+            QPushButton:checked {
+                color: #00AAFF;
+                border: 2px solid #00AAFF;
+                background-color: #2a2a2a;
+            }
+            QPushButton:hover {
+                background-color: #333;
+            }
+        """)
+        self.btn_team_view.toggled.connect(self.toggle_team_view)
+        btn_row_layout.addWidget(self.btn_team_view)
+
         self.btn_max_icons = QPushButton("🔍")
         self.btn_max_icons.setFixedSize(24, 24)
         self.btn_max_icons.setCheckable(True)
@@ -687,16 +794,16 @@ class MainWindow(QMainWindow):
         # Add grid to main layout
         main_layout.addLayout(top_grid)
         
-        # --- 2. Center Stack (Skills vs Character) ---
+        # --- 2. Center Stack (Skills vs Character vs Teams) ---
         self.center_stack = QStackedWidget()
         
-        # Sub-Splitter: Library + Info
+        # Page 0: Sub-Splitter: Library + Info
         self.sub_splitter = QSplitter(Qt.Orientation.Horizontal)
         
         self.library_widget = SkillLibraryWidget(parent=None, repo=self.repo, engine=self.engine)
         self.library_widget.skill_clicked.connect(self.handle_skill_id_clicked)
         self.library_widget.skill_double_clicked.connect(lambda sid: self.handle_skill_equipped_auto(sid))
-        self.library_widget.builds_reordered.connect(self.handle_builds_reordered)
+        # Note: builds_reordered is now relevant for team_view_widget mostly, but left here for consistency
         self.sub_splitter.addWidget(self.library_widget)
         
         self.info_panel = SkillInfoPanel()
@@ -709,10 +816,20 @@ class MainWindow(QMainWindow):
         
         self.center_stack.addWidget(self.sub_splitter)
         
-        # Page 2: Character Panel
+        # Page 1: Character Panel
         self.character_panel = CharacterPanel()
         self.character_panel.stats_changed.connect(self.on_stats_changed)
         self.center_stack.addWidget(self.character_panel)
+
+        # Page 2: Team View Panel
+        self.team_view_widget = SkillLibraryWidget(repo=self.repo, engine=self.engine)
+        self.team_view_widget.builds_reordered.connect(self.handle_builds_reordered)
+        self.team_view_widget.itemSelectionChanged.connect(self.on_team_list_selection_changed)
+        self.center_stack.addWidget(self.team_view_widget)
+        
+        # Page 3: Team Manager Panel
+        self.team_manager_widget = TeamManagerWidget(self, self.engine)
+        self.center_stack.addWidget(self.team_manager_widget)
         
         # Master Splitter: Stack (Left) + Attribute Editor (Right)
         self.splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -847,7 +964,7 @@ class MainWindow(QMainWindow):
         self.check_lock_suggestions.toggled.connect(self.update_suggestions)
         control_layout.addWidget(self.check_lock_suggestions)
         
-        self.check_smart_mode = QCheckBox("Smart Mode\n(experimental)")
+        self.check_smart_mode = QCheckBox("Smart Mode")
         self.check_smart_mode.setStyleSheet("color: #FFD700; font-weight: bold;")
         self.check_smart_mode.toggled.connect(self.on_smart_mode_toggled)
         control_layout.addWidget(self.check_smart_mode)
@@ -865,14 +982,14 @@ class MainWindow(QMainWindow):
         self.btn_load_file.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_load_file.setToolTip("Click to load a build template file")
         self.btn_load_file.clicked.connect(self.load_build_from_file)
-        self.btn_load_file.setStyleSheet(f"color: {get_color('text_tertiary')}; font-weight: bold; background: transparent; border: 1px solid {get_color('border')}; border-radius: 4px; padding: 2px 5px;")
+        self.btn_load_file.setStyleSheet(f"color: {get_color('text_primary')}; font-weight: bold; background: transparent; border: 1px solid {get_color('border')}; border-radius: 4px; padding: 2px 5px;")
         header_layout.addWidget(self.btn_load_file)
         
         self.btn_prof_select = QPushButton("Prof: X/X")
         self.btn_prof_select.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_prof_select.setToolTip("Click to select professions manually")
         self.btn_prof_select.clicked.connect(self.open_prof_selection)
-        self.btn_prof_select.setStyleSheet(f"color: {get_color('text_tertiary')}; font-weight: bold; background: transparent; border: 1px solid {get_color('border')}; border-radius: 4px; padding: 2px 5px;")
+        self.btn_prof_select.setStyleSheet(f"color: {get_color('text_primary')}; font-weight: bold; background: transparent; border: 1px solid {get_color('border')}; border-radius: 4px; padding: 2px 5px;")
         header_layout.addWidget(self.btn_prof_select)
         
         self.btn_swap_prof = QPushButton("Swap")
@@ -921,13 +1038,10 @@ class MainWindow(QMainWindow):
             return
 
         # We'll use a modified TeamManagerDialog logic or just a specialized call
-        dlg = TeamManagerDialog(self, self.engine)
+        dlg = TeamManagerDialog(self, self.engine, restricted_mode=True)
         # Change button text to indicate synergy mode
         dlg.btn_load.setText("Load Team")
         dlg.btn_load.setToolTip("Load all skills from this team to use as synergy context")
-        
-        # Hide export button for smart mode context
-        dlg.btn_export.setVisible(False)
         
         # Override the load_team method logic by reconnecting the button
         def synergy_load():
@@ -1030,27 +1144,26 @@ class MainWindow(QMainWindow):
         
         self.update_suggestions()
 
-    def open_team_manager(self):
-        dlg = TeamManagerDialog(self, self.engine)
-        dlg.exec()
-        # Refresh team dropdown after dialog closes
-        current_team = self.combo_team.currentText()
-        self.combo_team.blockSignals(True)
-        self.combo_team.clear()
-        self.combo_team.addItem("All")
-        
-        all_teams = self.engine.teams
-        if "Solo" in all_teams:
-            self.combo_team.addItem("Solo")
-            others = sorted([t for t in all_teams if t != "Solo"])
+    def toggle_team_manager_view(self, checked=None):
+        if checked is None:
+            checked = self.btn_manage_teams.isChecked()
+
+        if checked:
+            self.btn_char_view.blockSignals(True)
+            self.btn_char_view.setChecked(False)
+            self.btn_char_view.blockSignals(False)
+            
+            self.btn_team_view.blockSignals(True)
+            self.btn_team_view.setChecked(False)
+            self.btn_team_view.blockSignals(False)
+
+            self.center_stack.setCurrentWidget(self.team_manager_widget)
+            self.right_stack.setCurrentIndex(0) 
         else:
-            others = sorted(list(all_teams))
-        self.combo_team.addItems(others)
-        
-        idx = self.combo_team.findText(current_team)
-        if idx != -1: self.combo_team.setCurrentIndex(idx)
-        else: self.combo_team.setCurrentIndex(0)
-        self.combo_team.blockSignals(False)
+            if not self.btn_char_view.isChecked() and not self.btn_team_view.isChecked():
+                self.center_stack.setCurrentIndex(0)
+
+
 
     def on_pvp_toggled(self, checked):
         # Update both engines and refresh
@@ -1136,6 +1249,13 @@ class MainWindow(QMainWindow):
                 w.button.blockSignals(False)
             self.character_panel.update_stats()
 
+        self.btn_team_view.blockSignals(True)
+        self.btn_team_view.setChecked(False)
+        self.btn_team_view.blockSignals(False)
+        self.center_stack.setCurrentIndex(0) # Back to Library
+        
+        self.attr_editor.set_read_only(False) # Ensure editable on reset
+        
         self.combo_prof.setCurrentIndex(0) 
         self.combo_cat.setCurrentIndex(0) 
         self.combo_team.setCurrentIndex(0) 
@@ -1344,21 +1464,29 @@ class MainWindow(QMainWindow):
         search_text = self.edit_search.text().lower()
 
         # --- Mode Logic ---
-        # 1. If NOT searching and Team/Cat selected -> Show Builds
+        # Update Center Panel (Team View) if context exists
         if not search_text:
             if team != "All":
                 self.show_team_builds(team)
-                return
-            if cat != "All":
+            elif cat != "All":
                 self.show_category_builds(cat)
-                return
+            else:
+                # All/All - Clear Team View but don't force switch
+                if hasattr(self, 'team_view_widget'):
+                    self.team_view_widget.clear()
 
-        # 2. If Searching -> Search Global Skill DB (ignore Team/Cat restriction)
-        #    Otherwise (All/All) -> Show Global Skill DB
+        # Update Left Panel (Skills) - Always run FilterWorker
         
         # Override context filters if searching
-        target_team = "All" if search_text else team
-        target_cat = "All" if search_text else cat
+        # FIX: We always want the Left Panel to show the FULL Skill Database (filtered by Prof/Attr)
+        # even if we are viewing a specific Team or Category in the Center Panel.
+        # Otherwise, selecting a new (empty) team results in an empty skill list!
+        target_team = "All" 
+        target_cat = "All" 
+        
+        if search_text:
+             # Search text logic is handled inside worker, but we ensure base is All
+             pass
 
         # Gather filters
         filters = {
@@ -1404,46 +1532,38 @@ class MainWindow(QMainWindow):
         return [b for b in builds if text in b.name.lower()]
 
     def show_team_builds(self, team_name):
-        self.library_widget.clear()
-        self.library_widget.setViewMode(QListWidget.ViewMode.ListMode)
-        self.library_widget.setSpacing(0)
-        self.library_widget.setDragDropMode(QListWidget.DragDropMode.InternalMove)
+        # We target the Team View (Center) via _populate_build_list
+        # Left Panel (Skills) remains untouched here (handled by FilterWorker)
         
-        # Filter builds
-        cat = self.combo_cat.currentText()
-        if cat in ["SC", "Speedclear"]: cat = "Speed Clear" # UI Normalization safety
-
         matching_builds = [b for b in self.engine.builds if b.team == team_name]
-        if cat != "All":
-            matching_builds = [b for b in matching_builds if b.category == cat]
-            
         matching_builds = self._apply_profession_filter(matching_builds)
         matching_builds = self._apply_name_filter(matching_builds)
         
-        # Deduplicate by Code to avoid repeating builds
+        # Smart Deduplication:
+        # We want to hide accidental duplicates (Same Name + Same Code)
+        # But we want to SHOW distinct slots that might share a code (e.g. "Hero 1" (Empty) vs "Hero 2" (Empty))
+        
         unique_builds = []
-        seen_codes = set()
+        seen_keys = set()
+        
         for b in matching_builds:
-            if b.code not in seen_codes:
+            # key = (Name, Code)
+            key = (b.name, b.code)
+            
+            if key not in seen_keys:
                 unique_builds.append(b)
-                seen_codes.add(b.code)
+                seen_keys.add(key)
         
         self._populate_build_list(unique_builds)
 
     def show_category_builds(self, category_name):
-        self.library_widget.clear()
-        self.library_widget.setViewMode(QListWidget.ViewMode.ListMode)
-        self.library_widget.setSpacing(0)
-        self.library_widget.setDragDropMode(QListWidget.DragDropMode.InternalMove)
-        
         # Filter builds by category (team is "All")
         matching_builds = [b for b in self.engine.builds if b.category == category_name]
         
-        # Filter by profession if needed
         matching_builds = self._apply_profession_filter(matching_builds)
         matching_builds = self._apply_name_filter(matching_builds)
 
-        # Deduplicate by Code
+        # Deduplicate by Code (Standard behavior for Meta libraries)
         unique_builds = []
         seen_codes = set()
         for b in matching_builds:
@@ -1457,26 +1577,169 @@ class MainWindow(QMainWindow):
         is_pvp = self.check_pvp.isChecked()
         # Use button state as source of truth for magnification
         current_icon_size = 128 if self.btn_max_icons.isChecked() else 64
-        self.library_widget.delegate.icon_size = current_icon_size
+        
+        # Target the Team View Widget now
+        target_widget = self.team_view_widget
+        target_widget.delegate.icon_size = current_icon_size
+        
+        # Ensure Team View is active (unless we are in Manage Teams mode)
+        if not self.btn_team_view.isChecked() and not self.btn_manage_teams.isChecked():
+            self.btn_team_view.setChecked(True) # This triggers toggle_team_view -> switches stack
         
         # Turn off updates for batch insertion speed and to prevent flickering
-        self.library_widget.setUpdatesEnabled(False)
+        target_widget.setUpdatesEnabled(False)
+        target_widget.clear()
+        target_widget.setViewMode(QListWidget.ViewMode.ListMode)
+        target_widget.setSpacing(0)
+        target_widget.setDragDropMode(QListWidget.DragDropMode.InternalMove)
+
         try:
             for b in matching_builds:
                 item = QListWidgetItem()
                 item.setData(Qt.ItemDataRole.UserRole, b)
-                self.library_widget.addItem(item)
+                target_widget.addItem(item)
                 
                 # Pass parent explicitly to prevent the widget from being created as a separate window
-                widget = BuildPreviewWidget(b, self.repo, is_pvp=is_pvp, parent=self.library_widget, icon_size=current_icon_size)
-                item.setSizeHint(QSize(500, widget.height())) # Match dynamic height
+                widget = BuildPreviewWidget(b, self.repo, is_pvp=is_pvp, parent=target_widget, icon_size=current_icon_size)
+                item.setSizeHint(QSize(500, widget.height() + 10)) # Match dynamic height with buffer
                 
-                widget.clicked.connect(self.load_code)
+                # RESTORE SAVE STATE
+                if b in self.dirty_build_ids:
+                    widget.set_edit_mode(True)
+                
+                widget.load_clicked.connect(self.handle_build_load)
                 widget.skill_clicked.connect(self.handle_skill_clicked)
                 widget.rename_clicked.connect(self.handle_build_rename)
-                self.library_widget.setItemWidget(item, widget)
+                widget.populate_clicked.connect(self.handle_build_populate)
+                widget.edit_clicked.connect(self.handle_build_edit_start)
+                widget.import_clicked.connect(self.handle_build_import)
+                target_widget.setItemWidget(item, widget)
         finally:
-            self.library_widget.setUpdatesEnabled(True)
+            target_widget.setUpdatesEnabled(True)
+
+    def handle_build_load(self, build):
+        self.build_on_bar = build
+        self.load_code(build.code)
+
+    def handle_build_edit_start(self, build):
+        # 1. Reset all other widgets in the list to non-edit state (Mutual Exclusion)
+        count = self.team_view_widget.count()
+        for i in range(count):
+            item = self.team_view_widget.item(i)
+            widget = self.team_view_widget.itemWidget(item)
+            if widget and widget.build != build:
+                widget.reset_edit_state()
+
+        # 2. Track this build as being on the bar
+        self.build_on_bar = build
+
+        # 3. Load the build to the main bar (Only if it has content)
+        # Check if the build is effectively empty (all skills 0)
+        is_empty = True
+        if build.skill_ids:
+            if any(sid != 0 for sid in build.skill_ids):
+                is_empty = False
+        
+        if not is_empty:
+            self.load_code(build.code)
+        else:
+            print(f"Edit started on empty build '{build.name}'. Preserving current bar.")
+        
+        # 4. No longer switching view automatically per user request
+
+    def handle_build_import(self, build):
+        last_dir = self.settings.value("last_load_dir", "")
+        file_path, _ = QFileDialog.getOpenFileName(self, "Import Build to Slot", last_dir, "Build Templates (*.txt);;All Files (*)")
+        
+        if not file_path:
+            return
+
+        try:
+            # Save dir
+            directory = os.path.dirname(file_path)
+            self.settings.setValue("last_load_dir", directory)
+            
+            with open(file_path, 'r') as f:
+                code = f.read().strip()
+                
+            if not code:
+                return
+
+            # Validate
+            decoder = GuildWarsTemplateDecoder(code)
+            decoded = decoder.decode()
+            if not decoded:
+                QMessageBox.warning(self, "Import Error", "Invalid build template file.")
+                return
+
+            # Update Build Object
+            build.code = code
+            build.primary_prof = str(decoded['profession']['primary'])
+            build.secondary_prof = str(decoded['profession']['secondary'])
+            build.skill_ids = decoded['skills']
+            build.attributes = decoded['attributes']
+            build.is_user_build = True
+
+            # Save
+            self.engine.save_user_builds()
+
+            # Refresh View (Re-render the list to show new icons)
+            team_name = self.combo_team.currentText()
+            cat_name = self.combo_cat.currentText()
+            if team_name != "All":
+                self.show_team_builds(team_name)
+            elif cat_name != "All":
+                self.show_category_builds(cat_name)
+            
+            QMessageBox.information(self, "Success", f"Imported build to slot '{build.name}'.")
+
+        except Exception as e:
+            QMessageBox.critical(self, "Import Error", f"Failed to import file: {e}")
+
+    def handle_build_populate(self, build):
+        # DETECT SOURCE: Is this build currently loaded on the main bar?
+        # If so, we use the bar code (Foreground Save).
+        # Otherwise, we use its original skills + memory attributes (Background Save).
+        
+        if build == self.build_on_bar:
+            # Foreground Save: Read from Bar
+            code = self.edit_code.text().strip()
+            if not code: return
+            
+            decoder = GuildWarsTemplateDecoder(code)
+            decoded = decoder.decode()
+            if decoded:
+                build.code = code
+                build.primary_prof = str(decoded['profession']['primary'])
+                build.secondary_prof = str(decoded['profession']['secondary'])
+                build.skill_ids = decoded['skills']
+                build.attributes = decoded['attributes']
+        else:
+            # Background Save: Preserve existing skills, update code from memory attributes
+            data = {
+                "header": {"type": 14, "version": 0},
+                "profession": {
+                    "primary": int(build.primary_prof) if build.primary_prof.isdigit() else 0,
+                    "secondary": int(build.secondary_prof) if build.secondary_prof.isdigit() else 0
+                },
+                "attributes": build.attributes, 
+                "skills": build.skill_ids 
+            }
+            encoder = GuildWarsTemplateEncoder(data)
+            build.code = encoder.encode()
+
+        build.is_user_build = True
+        self.dirty_build_ids.discard(build) 
+
+        # Save & Refresh
+        self.engine.save_user_builds()
+        team_name = self.combo_team.currentText()
+        cat_name = self.combo_cat.currentText()
+        if team_name != "All": self.show_team_builds(team_name)
+        elif cat_name != "All": self.show_category_builds(cat_name)
+        
+        if build == self.build_on_bar:
+            QMessageBox.information(self, "Success", f"Build slot '{build.name}' updated.")
 
     def handle_build_rename(self, build):
         from PyQt6.QtWidgets import QInputDialog
@@ -1801,10 +2064,11 @@ class MainWindow(QMainWindow):
         if (hasattr(self, 'check_lock_suggestions') and self.check_lock_suggestions.isChecked()) or getattr(self, 'active_zone_mode', False):
             return
             
-        # Optimization: If worker is already running, let it finish. 
-        # Don't kill and restart rapidly.
+        # Optimization: Restart worker if parameters changed
         if hasattr(self, 'worker') and self.worker.isRunning():
-            return
+            try: self.worker.results_ready.disconnect()
+            except: pass
+            self.worker.stop()
             
         # Normalize all IDs to integers
         active_ids = []
@@ -1904,6 +2168,58 @@ class MainWindow(QMainWindow):
                 
         self.update_build_code()
 
+    def on_team_list_selection_changed(self):
+        selected_items = self.team_view_widget.selectedItems()
+        if not selected_items:
+            self.active_edit_build = None
+            self.attr_editor.set_read_only(False) # Default to editable
+            return
+        
+        item = selected_items[0]
+        build = item.data(Qt.ItemDataRole.UserRole)
+        
+        if not isinstance(build, Build): 
+            self.active_edit_build = None
+            self.attr_editor.set_read_only(False) # Default to editable
+            return
+        
+        self.active_edit_build = build # BINDING
+        
+        # --- READ ONLY LOGIC ---
+        is_user = getattr(build, 'is_user_build', False)
+        self.attr_editor.set_read_only(not is_user)
+        
+        self.loading_from_selection = True
+        try:
+            # 1. Update Professions in Editor
+            p1 = int(build.primary_prof) if build.primary_prof.isdigit() else 0
+            p2 = int(build.secondary_prof) if build.secondary_prof.isdigit() else 0
+            
+            # Need to get skills to determine available attributes correctly (PvE)
+            # We can use the build's skill list for this context
+            active_skill_objs = []
+            for sid in build.skill_ids:
+                if sid != 0:
+                    s = self.repo.get_skill(sid)
+                    if s: active_skill_objs.append(s)
+            
+            # Update Editor State
+            self.attr_editor.set_professions(p1, p2, active_skill_objs)
+            
+            # 2. Update Attributes
+            attr_dist = {a[0]: a[1] for a in build.attributes}
+            self.attr_editor.set_distribution(attr_dist)
+            
+            # 3. Sync Main Window State variables so Code Box updates correctly
+            self.current_primary_prof = p1
+            self.current_secondary_prof = p2
+            # Note: We do NOT update bar_skills here to preserve the bar state as requested
+            
+        finally:
+            self.loading_from_selection = False
+            # Force code update to reflect new attributes + existing bar
+            self.update_build_code()
+
     def on_attributes_changed(self, distribution):
         self.update_build_code()
         
@@ -1919,6 +2235,22 @@ class MainWindow(QMainWindow):
 
         # Phase 3: Refresh skill tooltips/displays
         self.refresh_skill_displays()
+        
+        # Phase 4: Handle "Save" button state if in Team View
+        if not self.loading_from_selection and self.active_edit_build:
+            # Update attributes in memory IMMEDIATELY for the active build
+            new_attrs = [[k, v] for k, v in distribution.items() if v > 0]
+            self.active_edit_build.attributes = new_attrs
+            self.dirty_build_ids.add(self.active_edit_build)
+            
+            # Find the widget to update visual state
+            if self.btn_team_view.isChecked():
+                for i in range(self.team_view_widget.count()):
+                    item = self.team_view_widget.item(i)
+                    widget = self.team_view_widget.itemWidget(item)
+                    if widget and widget.build == self.active_edit_build:
+                        widget.set_edit_mode(True)
+                        break
 
     def on_stats_changed(self, bonuses, globals_dict):
         self.current_bonuses = bonuses
@@ -2157,11 +2489,37 @@ class MainWindow(QMainWindow):
 
     def toggle_character_view(self, checked):
         if checked:
+            self.btn_team_view.blockSignals(True)
+            self.btn_team_view.setChecked(False)
+            self.btn_team_view.blockSignals(False)
+            
+            self.btn_manage_teams.blockSignals(True)
+            self.btn_manage_teams.setChecked(False)
+            self.btn_manage_teams.blockSignals(False)
+
             self.center_stack.setCurrentIndex(1)
             self.right_stack.setCurrentIndex(1) # Show Weapons
         else:
-            self.center_stack.setCurrentIndex(0)
+            if not self.btn_manage_teams.isChecked() and not self.btn_team_view.isChecked():
+                self.center_stack.setCurrentIndex(0)
+                self.right_stack.setCurrentIndex(0) # Show Attributes
+
+    def toggle_team_view(self, checked):
+        if checked:
+            self.btn_char_view.blockSignals(True)
+            self.btn_char_view.setChecked(False)
+            self.btn_char_view.blockSignals(False)
+            
+            self.btn_manage_teams.blockSignals(True)
+            self.btn_manage_teams.setChecked(False)
+            self.btn_manage_teams.blockSignals(False)
+
+            self.center_stack.setCurrentIndex(2) # Team View
             self.right_stack.setCurrentIndex(0) # Show Attributes
+        else:
+            if not self.btn_manage_teams.isChecked() and not self.btn_char_view.isChecked():
+                self.center_stack.setCurrentIndex(0)
+                self.right_stack.setCurrentIndex(0) # Show Attributes
 
     def process_folder_drop(self, folder_path, team_name=None):
         if team_name is None:

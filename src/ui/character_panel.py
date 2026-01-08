@@ -673,11 +673,12 @@ class CharacterPanel(QWidget):
         
         # Clear Button
         clear_hbox = QHBoxLayout()
-        clear_hbox.addStretch()
         
-        self.lbl_rune_hint = QLabel("Right click to remove a single rune")
+        self.lbl_rune_hint = QLabel("Right click a rune to remove only that rune")
         self.lbl_rune_hint.setStyleSheet(f"color: {get_color('text_primary')}; font-size: 12px; font-style: italic;")
         clear_hbox.addWidget(self.lbl_rune_hint)
+        
+        clear_hbox.addStretch()
         
         self.btn_clear_runes = QPushButton("Clear Runes")
         self.btn_clear_runes.setFixedWidth(100)

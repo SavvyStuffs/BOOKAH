@@ -3,6 +3,7 @@ from PyQt6.QtCore import Qt, QPoint, QRect, pyqtSignal, QPropertyAnimation, QEas
 from PyQt6.QtGui import QPainter, QColor, QBrush, QRegion, QFont, QPen
 
 from src.ui.theme import get_color
+from src.ui.dialogs import TeamManagerDialog, TeamManagerWidget
 
 class TutorialOverlay(QWidget):
     """
@@ -128,7 +129,10 @@ class TutorialOverlay(QWidget):
             else:
                 self.target_widgets = step_widgets
         
-        self.lbl_title.setText(step['title'])
+        # Update Title with Counter
+        total = len(self.steps)
+        current = self.current_step + 1
+        self.lbl_title.setText(f"{step['title']} ({current}/{total})")
         self.lbl_desc.setText(step['desc'])
         
         # Toggle back button visibility
@@ -163,21 +167,33 @@ class TutorialOverlay(QWidget):
             self.info_box.move((self.width() - box_width) // 2, (self.height() - box_height) // 2)
             return
         
-        # Calculate bounding box of all target widgets
+        # Calculate bounding box of all target widgets in OVERLAY LOCAL coordinates
         min_x, min_y = 99999, 99999
         max_x, max_y = -99999, -99999
         
+        found_valid = False
         for widget in self.target_widgets:
             try:
                 # Ensure widget is still valid
-                pos = widget.mapTo(self.parent(), QPoint(0, 0))
-                min_x = min(min_x, pos.x())
-                min_y = min(min_y, pos.y())
-                max_x = max(max_x, pos.x() + widget.width())
-                max_y = max(max_y, pos.y() + widget.height())
+                if not widget or not widget.isVisible(): continue
+                
+                # Use Global Coordinates for robustness across windows
+                global_pos = widget.mapToGlobal(QPoint(0, 0))
+                # Map back to the Overlay's coordinate system
+                local_pos = self.mapFromGlobal(global_pos)
+                
+                min_x = min(min_x, local_pos.x())
+                min_y = min(min_y, local_pos.y())
+                max_x = max(max_x, local_pos.x() + widget.width())
+                max_y = max(max_y, local_pos.y() + widget.height())
+                found_valid = True
             except:
                 continue
             
+        if not found_valid: # No valid widgets found
+             self.info_box.move((self.width() - box_width) // 2, (self.height() - box_height) // 2)
+             return
+
         x, y = min_x, min_y
         w, h = max_x - min_x, max_y - min_y
         
@@ -191,7 +207,11 @@ class TutorialOverlay(QWidget):
         
         if new_x < 0:
             new_x = x + (w // 2) - (box_width // 2)
-            new_y = y + h + 20
+            # Try placing ABOVE the target first
+            new_y = y - box_height - 20
+            if new_y < 0:
+                # If no room above, place BELOW
+                new_y = y + h + 20
             
         if new_y + box_height > self.height():
             new_y = self.height() - box_height - 20
@@ -220,9 +240,13 @@ class TutorialOverlay(QWidget):
         hole_rects = []
         for widget in self.target_widgets:
             try:
-                if not widget.isVisible(): continue
-                global_pos = widget.mapTo(self.parent(), QPoint(0, 0))
-                hr = QRect(global_pos.x(), global_pos.y(), widget.width(), widget.height())
+                if not widget or not widget.isVisible(): continue
+                
+                # Use Global Coordinates for robustness
+                global_pos = widget.mapToGlobal(QPoint(0, 0))
+                local_pos = self.mapFromGlobal(global_pos)
+                
+                hr = QRect(local_pos.x(), local_pos.y(), widget.width(), widget.height())
                 hr.adjust(-5, -5, 5, 5)
                 hole_rects.append(hr)
                 holes_region = holes_region.united(QRegion(hr))
@@ -276,31 +300,23 @@ class TutorialManager:
         self.mw.center_stack.setCurrentIndex(0)
         self.mw.right_stack.setCurrentIndex(0)
         
+        self.dlg = None # Keep reference to dialog
+        
         steps = [
             {
-                "widget": self.mw.library_widget,
-                "title": "Skill Library",
-                "desc": "This is where all skills are listed. You can search by name or description using the search box above."
-            },
-            {
-                "widget": self.mw.combo_prof,
-                "title": "Profession Filtering",
-                "desc": "Use this dropdown to filter skills by profession. 'All' shows everything."
-            },
-            {
-                "widget": self.mw.combo_attr,
-                "title": "Attribute Filtering",
-                "desc": "Once a profession is selected, you can narrow down the list to a specific attribute here."
+                "widget": [self.mw.combo_prof, self.mw.combo_attr],
+                "title": "Skill Filtering",
+                "desc": "Use these dropdowns to filter skills by profession and attribute."
             },
             {
                 "widget": self.mw.btn_load_file,
                 "title": "Build Library",
-                "desc": "Click here to load existing build templates (.txt files) from your computer."
+                "desc": "Click here to load existing build templates from your computer."
             },
             {
                 "widget": self.mw.btn_prof_select,
                 "title": "Manual Profession Selection",
-                "desc": "Manually select your primary and secondary professions if you aren't loading a code."
+                "desc": "Manually select your primary and secondary professions if you aren't loading a build code."
             },
             {
                 "widget": self.mw.code_box,
@@ -308,14 +324,9 @@ class TutorialManager:
                 "desc": "Paste codes here to load them instantly, copy your current build code, or reset the bar to start fresh."
             },
             {
-                "widget": self.mw.attr_editor,
-                "title": "Attribute Editor",
-                "desc": "After loading a build, you can adjust your attribute points here. Let's load a sample build now."
-            },
-            {
                 "widget": None, # Will be set in action
-                "title": "Inherent Attributes",
-                "desc": "The primary attribute (underlined) often has a passive bonus. At rank 12, Mysticism reduces Dervish enchantment costs by 48, as well as +12 armor.",
+                "title": "Attribute Editor",
+                "desc": "After loading a build, you can adjust your attribute points here. Note that primary attributes (underlined) have passive bonuses, like Mysticism's cost reduction and armor bonus. Hover over the underlined word for more info.",
                 "action": lambda: self._prep_mysticism_step()
             },
             {
@@ -337,7 +348,7 @@ class TutorialManager:
             },
             {
                 "widget": self.mw.character_panel.stats_group,
-                "title": "Live Calculations",
+                "title": "Consumable Calculations",
                 "desc": "Your health, energy, and attributes are recalculated in real-time.",
                 "action": lambda: [self.mw.character_panel.toggle_consumable(k, True) for k in ["armor", "bu", "grail"]]
             },
@@ -349,8 +360,8 @@ class TutorialManager:
             },
             {
                 "widget": self.mw.character_panel.stats_group,
-                "title": "Final Result",
-                "desc": "With our runes applied, we can see the final stats. Note the health bonus from Superior Vigor (+50) minus the penalty from Superior Earth Prayers (-75), plus energy from Attunement.",
+                "title": "Rune calculations",
+                "desc": "With our runes applied, we can see the stats. Note the health bonus from Superior Vigor (+50) minus the penalty from Superior Earth Prayers (-75), plus energy from Attunement.",
                 "action": lambda: self._prep_final_step()
             },
             {
@@ -379,26 +390,14 @@ class TutorialManager:
             },
             {
                 "widget": self.mw.bar_area,
-                "title": "Skill Bar",
-                "desc": "Here is where you will add your skills. Lets pop one on.",
-                "action": lambda: self.mw.reset_build()
+                "title": "Skill Bar & Suggestions",
+                "desc": "Add skills to your bar here. The ghost icons are pairing suggestions based on PvX Wiki data, helping you find common synergies.",
+                "action": lambda: [self.mw.reset_build(), self.mw.handle_skill_equipped(0, 1759)]
             },
             {
-                "widget": self.mw.bar_area,
-                "title": "Pairing Suggestions",
-                "desc": "The suggestions (ghost icons) are based off of how often skills are paired together on PvX Wiki. Let's add Vow of Strength.",
-                "action": lambda: self.mw.handle_skill_equipped(0, 1759)
-            },
-            {
-                "widget": self.mw.check_smart_mode,
-                "title": "Smart Mode",
-                "desc": "This experimental feature uses AI to find deeper synergies.",
-                "action": None
-            },
-            {
-                "widget": self.mw.bar_area,
-                "title": "AI Suggestions",
-                "desc": "These are not based on hard data and may provide unique suggestions (note: it may take a few seconds to load).",
+                "widget": [self.mw.check_smart_mode, self.mw.bar_area],
+                "title": "Smart Mode & Suggestions",
+                "desc": "This feature uses local AI to find deeper synergies. Note: this may take a few seconds to load.",
                 "action": lambda: self.mw.check_smart_mode.setChecked(True)
             },
             {
@@ -417,7 +416,7 @@ class TutorialManager:
                 "widget": self.mw.btn_team_summary,
                 "title": "Team Summary",
                 "desc": "Click here to see a high-level overview of the entire team's composition and conditions.",
-                "action": None
+                "action": lambda: self.mw.btn_team_summary.setVisible(True)
             },
             {
                 "widget": self.mw.btn_manage_teams,
@@ -426,10 +425,52 @@ class TutorialManager:
                 "action": lambda: self.mw.open_team_summary()
             },
             {
+                "widget": None, # Set in action
+                "title": "Export Teams",
+                "desc": "Export the selected teambuild directly to your templates folder.",
+                "action": lambda: self._open_manager_step()
+            },
+            {
+                "widget": None, # Set in action
+                "title": "Manage List",
+                "desc": "Add new builds to existing teams, edit team/build names, or delete teams.",
+                "action": lambda: self._highlight_manager_buttons()
+            },
+            {
+                "widget": None, # Set in action
+                "title": "Create New Teams",
+                "desc": "Create new teambuilds (4, 6, 8, 12 man, or import from your templates folder).",
+                "action": lambda: self._highlight_new_team_button()
+            },
+            {
+                "widget": None, # Set in action
+                "title": "Load Team",
+                "desc": "Load selected teambuild to the Teams window here.",
+                "action": lambda: self._prep_speedbooking_select()
+            },
+            {
+                "widget": self.mw.btn_duplicate_team,
+                "title": "Duplicate Team",
+                "desc": "Duplicate PvX builds to edit them. These default to the User Created category.",
+                "action": lambda: self._prep_duplicate_step()
+            },
+            {
+                "widget": None, # Set in action
+                "title": "Edit Build",
+                "desc": "Click Edit to load the build to the main bar. Switch to the skill library, make your changes, then switch back to the Teams view and click Save to update the slot. Use populate to add your equipped skills to an empty build, Import to add an existing build from your Templates, and Load to apply it to your bar.",
+                "action": lambda: self._highlight_edit_button()
+            },
+            {
+                "widget": self.mw.btn_load_team_synergy,
+                "title": "Smart Mode Synergy",
+                "desc": "Click here to select a teambuild and have Smart Mode suggest skills that may pair well with your team.",
+                "action": lambda: self.mw.check_smart_mode.setChecked(True)
+            },
+            {
                 "widget": None,
                 "title": "Tutorial Complete",
-                "desc": "You're all set! Click Finish to reset the builder and start creating your own optimized builds.",
-                "action": None
+                "desc": "You're all set! Click Finish to reset the builder and start creating your own optimized builds. This tutorial can be repeated at any time in the Settings page.",
+                "action": lambda: self._cleanup_step()
             }
         ]
         
@@ -438,8 +479,130 @@ class TutorialManager:
             self.mw.reset_build()
             
         self.overlay.finished.connect(on_tutorial_finished)
+        
+        # Start full tutorial
         self.overlay.start_tutorial(steps)
 
+    def _open_manager_step(self):
+        # Switch to the Team Manager Pane
+        self.mw.toggle_team_manager_view(True)
+        self.overlay.target_widgets = [self.mw.team_manager_widget.btn_export]
+
+    def _highlight_manager_buttons(self):
+        tm = self.mw.team_manager_widget
+        self.overlay.target_widgets = [tm.btn_add, tm.btn_edit, tm.btn_del]
+
+    def _highlight_new_team_button(self):
+        self.overlay.target_widgets = [self.mw.team_manager_widget.btn_new_team]
+
+    def _prep_speedbooking_select(self):
+        tm = self.mw.team_manager_widget
+        items = tm.list_widget.findItems("7 Hero Speedbooking", Qt.MatchFlag.MatchContains)
+        if items:
+            tm.list_widget.setCurrentItem(items[0])
+        self.overlay.target_widgets = [tm.btn_load]
+
+    def _prep_duplicate_step(self):
+        # Switch back to Team View to show the duplicate button if it wasn't visible
+        self.mw.toggle_team_manager_view(False) 
+        
+        if hasattr(self.mw, 'btn_duplicate_team'):
+            self.overlay.target_widgets = [self.mw.btn_duplicate_team]
+
+    def _highlight_edit_button(self):
+        # We need to simulate duplicating the team to show an editable version
+        # without showing the blocking input dialog.
+        current_team = "7 Hero Speedbooking"
+        new_name = "Copy of 7 Hero Speedbooking"
+        
+        # CLEANUP: Always remove existing copy to ensure clean state
+        if new_name in self.mw.engine.teams:
+            self.mw.engine.teams.discard(new_name)
+            self.mw.engine.builds = [b for b in self.mw.engine.builds if b.team != new_name]
+            self.mw.engine.save_user_builds()
+            
+            # Refresh main window dropdowns silently
+            self.mw.combo_team.blockSignals(True)
+            idx = self.mw.combo_team.findText(new_name)
+            if idx != -1: self.mw.combo_team.removeItem(idx)
+            self.mw.combo_team.blockSignals(False)
+
+        # RECREATE
+        source_builds = [b for b in self.mw.engine.builds if b.team == current_team]
+        if source_builds:
+            self.mw.engine.teams.add(new_name)
+            from src.models import Build
+            for b in source_builds:
+                new_build = Build(
+                    code=b.code,
+                    primary_prof=b.primary_prof,
+                    secondary_prof=b.secondary_prof,
+                    skill_ids=list(b.skill_ids),
+                    category="User Created",
+                    team=new_name,
+                    name=b.name,
+                    attributes=list(b.attributes) if b.attributes else []
+                )
+                new_build.is_user_build = True
+                self.mw.engine.builds.append(new_build)
+            self.mw.engine.save_user_builds()
+            
+            # Refresh main window dropdowns silently
+            self.mw.combo_team.blockSignals(True)
+            self.mw.combo_team.addItem(new_name)
+            self.mw.combo_team.blockSignals(False)
+
+        # Switch to the new team to show the Edit buttons
+        index = self.mw.combo_team.findText(new_name)
+        if index != -1:
+            self.mw.combo_team.setCurrentIndex(index)
+            # Force immediate population to bypass the debounce timer
+            self.mw.show_team_builds(new_name)
+            
+            # Allow time for widgets to render
+            QApplication.processEvents()
+            
+        # Highlight the first Edit button
+        # Use recursion to find the button as it might be nested
+        from src.ui.components import BuildPreviewWidget # Ensure class is available if needed, or check via type name
+        
+        target = None
+        
+        # Retry loop for finding the button
+        from time import sleep
+        for _ in range(5): # Try for up to 1 second
+            # Option 1: Try standard item widget
+            if self.mw.team_view_widget.count() > 0:
+                item = self.mw.team_view_widget.item(0)
+                widget = self.mw.team_view_widget.itemWidget(item)
+                if widget and hasattr(widget, 'btn_edit'):
+                    target = widget.btn_edit
+            
+            # Option 2: Brute force search children if standard failed
+            if not target:
+                for child in self.mw.team_view_widget.findChildren(QPushButton):
+                    if child.text() == "Edit" and child.isVisible():
+                        target = child
+                        break
+            
+            if target:
+                break
+                
+            QApplication.processEvents()
+            sleep(0.2)
+        
+        if target:
+            self.overlay.target_widgets = [target]
+            # Force update position immediately after finding
+            self.overlay.update()
+            self.overlay.position_info_box()
+
+    def _cleanup_step(self):
+        if hasattr(self, 'dlg') and self.dlg:
+            self.dlg.close()
+            self.dlg = None
+        # Could delete the tutorial copy team here, but maybe user wants it?
+        
     def _prep_final_step(self):
         self.mw.character_panel.clear_runes()
         # Superior Vigor

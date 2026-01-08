@@ -422,15 +422,16 @@ function highlightFilter(filter) {
         "hideNodesOnDrag": false
     },
     "physics": {
-        "barnesHut": {
-            "avoidOverlap": 0,
-            "centralGravity": 0.3,
-            "damping": 0.09,
-            "gravitationalConstant": -2000,
-            "springConstant": 0.04,
-            "springLength": 95
-        },
         "enabled": true,
+        "forceAtlas2Based": {
+            "avoidOverlap": 0,
+            "centralGravity": 0.01,
+            "damping": 0.4,
+            "gravitationalConstant": -50,
+            "springConstant": 0.08,
+            "springLength": 100
+        },
+        "solver": "forceAtlas2Based",
         "stabilization": {
             "enabled": true,
             "fit": true,

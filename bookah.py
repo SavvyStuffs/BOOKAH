@@ -1,11 +1,17 @@
 import sys
 import os
-from PyQt6.QtWidgets import QApplication, QSplashScreen
+from PyQt6.QtWidgets import QApplication, QSplashScreen, QProxyStyle, QStyle
 from PyQt6.QtGui import QPixmap, QCursor, QIcon
 from PyQt6.QtCore import Qt, QTimer
 from src.ui.main_window import MainWindow
 from src.constants import resource_path, JSON_FILE, DB_FILE
 from src.engine import SynergyEngine 
+
+class TooltipProxyStyle(QProxyStyle):
+    def styleHint(self, hint, option=None, widget=None, returnData=None):
+        if hint == QStyle.StyleHint.SH_ToolTip_WakeUpDelay:
+            return 350
+        return super().styleHint(hint, option, widget, returnData)
 
 if __name__ == "__main__":
     # Fix Taskbar Icon on Windows
@@ -16,6 +22,7 @@ if __name__ == "__main__":
 
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
+    app.setStyle(TooltipProxyStyle(app.style()))
     
     # --- Crash Handler ---
     def crash_handler(exctype, value, tb):

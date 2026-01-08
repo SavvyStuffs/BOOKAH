@@ -57,11 +57,14 @@ jobs:
 
       - name: Prepare Distribution
         run: |
-          cp install_and_run.sh dist/Bookah_Linux/
-          chmod +x dist/Bookah_Linux/install_and_run.sh
+          cp install.sh dist/
+          cp run.sh dist/
+
+          chmod +x dist/setup.sh
+          chmod +x dist/run.sh
           
           cd dist
-          zip -r Bookah_Linux.zip Bookah_Linux
+          zip -r Bookah_Linux.zip Bookah_Linux setup.sh run.sh
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4  

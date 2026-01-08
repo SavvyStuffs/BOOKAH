@@ -63,7 +63,7 @@ class Skill:
 
             # Mysticism: Dervish enchantments
             if self.profession == 10 and "Mysticism" in bonuses:
-                if "type_enchantment" in self.tags or "type_form" in self.tags:
+                if "type_enchantment" in self.tags:
                     reduction = max(reduction, bonuses.get("Mysticism", 0.0) * 0.04)
                 
         if reduction > 0:
@@ -215,3 +215,9 @@ class Build:
     attributes: List[List[int]] = None 
     name: str = ""
     url: str = ""
+
+    def __hash__(self):
+        return id(self)
+
+    def __eq__(self, other):
+        return isinstance(other, Build) and id(self) == id(other)

@@ -32,7 +32,7 @@ class AttributeEditor(QFrame):
         title_layout.addStretch()
         
         lbl_hr = QLabel("HR Bonus:")
-        lbl_hr.setStyleSheet(f"font-size: 10px; color: {get_color('text_secondary')};")
+        lbl_hr.setStyleSheet(f"font-size: 10px; color: {get_color('text_primary')};")
         title_layout.addWidget(lbl_hr)
         
         self.hr_combo = QComboBox()
@@ -149,6 +149,12 @@ class AttributeEditor(QFrame):
                 if aid != -1 and aid not in relevant_attrs:
                     relevant_attrs.append(aid)
 
+        # SPECIAL: If no primary profession selected, allow editing of ALL displayed attributes
+        if primary_id == 0:
+            for aid in relevant_attrs:
+                if aid >= 0:
+                    editable_attrs.add(aid)
+
         # Sort: Standard attributes first (by name), then PvE attributes
         std_attrs = [a for a in relevant_attrs if a >= 0]
         pve_attrs = [a for a in relevant_attrs if a < 0]
@@ -194,14 +200,16 @@ class AttributeEditor(QFrame):
             
             # --- EDITABILITY LOGIC ---
             is_editable = aid in editable_attrs
+            spin._originally_disabled = not is_editable # STORE ORIGINAL STATE
             if not is_editable:
                 spin.setCurrentIndex(0)
                 spin.setEnabled(False)
-                lbl.setToolTip("<b>Special Attribute:</b><br>This attribute is provided by your weapon and cannot be increased with points.")
+                lbl.setToolTip("This attribute is class specific and doesnt match your primary profession.")
             else:
                 # Set previous value if it existed and was valid
                 prev_val = self.current_distribution.get(aid, 0)
                 spin.setCurrentIndex(min(prev_val, limit))
+                spin.setEnabled(True) # Ensure enabled if it is editable
             
             spin.currentIndexChanged.connect(lambda _, a=aid: self._on_attr_changed(a))
             
@@ -339,7 +347,7 @@ class AttributeEditor(QFrame):
         self.current_distribution = dist
         
         # Iterate over ALL active widgets to ensure full sync
-        for aid, (lbl, spin) in self.attr_widgets.items():
+        for aid, (lbl, spin) in list(self.attr_widgets.items()):
             target_val = dist.get(aid, 0)
             
             # Re-calculate limit for this attribute
@@ -354,3 +362,23 @@ class AttributeEditor(QFrame):
     def get_attribute_widget(self, attr_id):
         """ Returns the label and spinbox for a specific attribute if it exists. """
         return self.attr_widgets.get(attr_id)
+
+    def set_read_only(self, read_only: bool):
+        """
+        Enables or disables user interaction with the attribute controls.
+        Used to prevent editing of meta builds.
+        """
+        self.hr_combo.setEnabled(not read_only)
+        for aid, (lbl, spin) in self.attr_widgets.items():
+            # If the attribute wasn't editable to begin with (e.g. weapon-only), 
+            # we keep it disabled.
+            if hasattr(spin, '_originally_disabled') and spin._originally_disabled:
+                spin.setEnabled(False)
+            else:
+                spin.setEnabled(not read_only)
+            
+            # Update visual style to reflect state
+            if read_only:
+                lbl.setToolTip(f"<b>Read Only</b><br>Meta builds cannot be edited directly.")
+            else:
+                lbl.setToolTip("") # Restore default or clear
