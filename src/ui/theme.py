@@ -35,7 +35,7 @@ DARK_PALETTE = {
     "input_bg": "#222222",
     "input_text": "#00AAFF",
     
-    "tooltip_bg": "#111111",
+    "tooltip_bg": "#222222",
     "tooltip_text": "#FFFFFF"
 }
 
@@ -71,7 +71,7 @@ LIGHT_PALETTE = {
     "input_bg": "#FFFFFF",
     "input_text": "#0066CC",
 
-    "tooltip_bg": "#FFFFFF",
+    "tooltip_bg": "#D0D0D0",
     "tooltip_text": "#000000"
 }
 
@@ -118,8 +118,8 @@ def _get_dark_qpalette():
     p.setColor(QPalette.ColorRole.WindowText, QColor(CURRENT_THEME["text_primary"]))
     p.setColor(QPalette.ColorRole.Base, QColor(CURRENT_THEME["bg_primary"]))
     p.setColor(QPalette.ColorRole.AlternateBase, QColor(CURRENT_THEME["bg_tertiary"]))
-    p.setColor(QPalette.ColorRole.ToolTipBase, QColor(CURRENT_THEME["bg_primary"]))
-    p.setColor(QPalette.ColorRole.ToolTipText, QColor(CURRENT_THEME["text_primary"]))
+    p.setColor(QPalette.ColorRole.ToolTipBase, QColor(CURRENT_THEME["tooltip_bg"]))
+    p.setColor(QPalette.ColorRole.ToolTipText, QColor(CURRENT_THEME["tooltip_text"]))
     p.setColor(QPalette.ColorRole.Text, QColor(CURRENT_THEME["text_primary"]))
     p.setColor(QPalette.ColorRole.Button, QColor(CURRENT_THEME["btn_bg"]))
     p.setColor(QPalette.ColorRole.ButtonText, QColor(CURRENT_THEME["btn_text"]))

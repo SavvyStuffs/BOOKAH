@@ -1,1 +1,686 @@
-[]
+[
+    {
+        "build_code": "OAcR0Zam0hhh5gBAAAgm0mE",
+        "primary_profession": "0",
+        "secondary_profession": "7",
+        "skill_ids": [
+            2355,
+            782,
+            780,
+            775,
+            0,
+            0,
+            2356,
+            2358
+        ],
+        "category": "User Created",
+        "team": "Copy of 7 Hero Speedbooking",
+        "name": "A Time for Heroes",
+        "url": ""
+    },
+    {
+        "build_code": "Owkj8wQjJPHE9x1nmkS4xm4bM",
+        "primary_profession": "3",
+        "secondary_profession": "9",
+        "skill_ids": [
+            263,
+            250,
+            2007,
+            308,
+            297,
+            1596,
+            1574,
+            1591
+        ],
+        "category": "User Created",
+        "team": "Copy of 7 Hero Speedbooking",
+        "name": "A Time for Heroes",
+        "url": ""
+    },
+    {
+        "build_code": "OwAT04HDn4g6Tk/Ll+DAAA",
+        "primary_profession": "3",
+        "secondary_profession": "0",
+        "skill_ids": [
+            263,
+            250,
+            290,
+            255,
+            297,
+            254,
+            0,
+            0
+        ],
+        "category": "User Created",
+        "team": "Copy of 7 Hero Speedbooking",
+        "name": "A Time for Heroes",
+        "url": ""
+    },
+    {
+        "build_code": "OwAT44HDn4g6beyLlAAAAA",
+        "primary_profession": "3",
+        "secondary_profession": "0",
+        "skill_ids": [
+            263,
+            250,
+            243,
+            242,
+            297,
+            0,
+            0,
+            0
+        ],
+        "category": "User Created",
+        "team": "Copy of 7 Hero Speedbooking",
+        "name": "A Time for Heroes",
+        "url": ""
+    },
+    {
+        "build_code": "OAcS05PTHQqisZ5izkOMMMHMA",
+        "primary_profession": "0",
+        "secondary_profession": "7",
+        "skill_ids": [
+            1031,
+            2218,
+            1644,
+            2233,
+            2355,
+            782,
+            780,
+            775
+        ],
+        "category": "User Created",
+        "team": "Copy of 7 Hero Speedbooking",
+        "name": "Against the Charr",
+        "url": ""
+    },
+    {
+        "build_code": "OwAS8YILAU9ERAAAAAvEUD",
+        "primary_profession": "3",
+        "secondary_profession": "0",
+        "skill_ids": [
+            256,
+            245,
+            273,
+            0,
+            0,
+            0,
+            303,
+            848
+        ],
+        "category": "User Created",
+        "team": "Copy of 7 Hero Speedbooking",
+        "name": "Against the Charr",
+        "url": ""
+    },
+    {
+        "build_code": "OwAT0YH/mZeIPEJ+DQCAAAwpB",
+        "primary_profession": "3",
+        "secondary_profession": "0",
+        "skill_ids": [
+            243,
+            242,
+            290,
+            254,
+            288,
+            0,
+            0,
+            1692
+        ],
+        "category": "User Created",
+        "team": "Copy of 7 Hero Speedbooking",
+        "name": "Against the Charr",
+        "url": ""
+    },
+    {
+        "build_code": "OQijEymM6MD7dMPGAYivx1bAA",
+        "primary_profession": "9",
+        "secondary_profession": "8",
+        "skill_ids": [
+            1731,
+            1595,
+            1596,
+            0,
+            1574,
+            1591,
+            1781,
+            0
+        ],
+        "category": "User Created",
+        "team": "Copy of 7 Hero Speedbooking",
+        "name": "Against the Charr",
+        "url": ""
+    },
+    {
+        "build_code": "OAcR8ZiHRnZC6A6uEBC3BAA",
+        "primary_profession": "0",
+        "secondary_profession": "7",
+        "skill_ids": [
+            572,
+            826,
+            1043,
+            1031,
+            2423,
+            1032,
+            952,
+            0
+        ],
+        "category": "User Created",
+        "team": "Copy of 7 Hero Speedbooking",
+        "name": "Curse of the Nornbear",
+        "url": ""
+    },
+    {
+        "build_code": "OAcR0Zam0hhh5gBAAAgm0mE",
+        "primary_profession": "0",
+        "secondary_profession": "7",
+        "skill_ids": [
+            2355,
+            782,
+            780,
+            775,
+            0,
+            0,
+            2356,
+            2358
+        ],
+        "category": "User Created",
+        "team": "Copy of 7 Hero Speedbooking",
+        "name": "A Time for Heroes",
+        "url": ""
+    },
+    {
+        "build_code": "Owkj8wQjJPHE9x1nmkS4xm4bM",
+        "primary_profession": "3",
+        "secondary_profession": "9",
+        "skill_ids": [
+            263,
+            250,
+            2007,
+            308,
+            297,
+            1596,
+            1574,
+            1591
+        ],
+        "category": "User Created",
+        "team": "Copy of 7 Hero Speedbooking",
+        "name": "A Time for Heroes",
+        "url": ""
+    },
+    {
+        "build_code": "OwAT04HDn4g6Tk/Ll+DAAA",
+        "primary_profession": "3",
+        "secondary_profession": "0",
+        "skill_ids": [
+            263,
+            250,
+            290,
+            255,
+            297,
+            254,
+            0,
+            0
+        ],
+        "category": "User Created",
+        "team": "Copy of 7 Hero Speedbooking",
+        "name": "A Time for Heroes",
+        "url": ""
+    },
+    {
+        "build_code": "OwAT44HDn4g6beyLlAAAAA",
+        "primary_profession": "3",
+        "secondary_profession": "0",
+        "skill_ids": [
+            263,
+            250,
+            243,
+            242,
+            297,
+            0,
+            0,
+            0
+        ],
+        "category": "User Created",
+        "team": "Copy of 7 Hero Speedbooking",
+        "name": "A Time for Heroes",
+        "url": ""
+    },
+    {
+        "build_code": "OAcS05PTHQqisZ5izkOMMMHMA",
+        "primary_profession": "0",
+        "secondary_profession": "7",
+        "skill_ids": [
+            1031,
+            2218,
+            1644,
+            2233,
+            2355,
+            782,
+            780,
+            775
+        ],
+        "category": "User Created",
+        "team": "Copy of 7 Hero Speedbooking",
+        "name": "Against the Charr",
+        "url": ""
+    },
+    {
+        "build_code": "OwAS8YILAU9ERAAAAAvEUD",
+        "primary_profession": "3",
+        "secondary_profession": "0",
+        "skill_ids": [
+            256,
+            245,
+            273,
+            0,
+            0,
+            0,
+            303,
+            848
+        ],
+        "category": "User Created",
+        "team": "Copy of 7 Hero Speedbooking",
+        "name": "Against the Charr",
+        "url": ""
+    },
+    {
+        "build_code": "OwAT0YH/mZeIPEJ+DQCAAAwpB",
+        "primary_profession": "3",
+        "secondary_profession": "0",
+        "skill_ids": [
+            243,
+            242,
+            290,
+            254,
+            288,
+            0,
+            0,
+            1692
+        ],
+        "category": "User Created",
+        "team": "Copy of 7 Hero Speedbooking",
+        "name": "Against the Charr",
+        "url": ""
+    },
+    {
+        "build_code": "OQijEymM6MD7dMPGAYivx1bAA",
+        "primary_profession": "9",
+        "secondary_profession": "8",
+        "skill_ids": [
+            1731,
+            1595,
+            1596,
+            0,
+            1574,
+            1591,
+            1781,
+            0
+        ],
+        "category": "User Created",
+        "team": "Copy of 7 Hero Speedbooking",
+        "name": "Against the Charr",
+        "url": ""
+    },
+    {
+        "build_code": "OAcR8ZiHRnZC6A6uEBC3BAA",
+        "primary_profession": "0",
+        "secondary_profession": "7",
+        "skill_ids": [
+            572,
+            826,
+            1043,
+            1031,
+            2423,
+            1032,
+            952,
+            0
+        ],
+        "category": "User Created",
+        "team": "Copy of 7 Hero Speedbooking",
+        "name": "Curse of the Nornbear",
+        "url": ""
+    },
+    {
+        "build_code": "OAcR0Zam0hhh5gBAAAgm0mE",
+        "primary_profession": "0",
+        "secondary_profession": "7",
+        "skill_ids": [
+            2355,
+            782,
+            780,
+            775,
+            0,
+            0,
+            2356,
+            2358
+        ],
+        "category": "User Created",
+        "team": "Copy of 7 Hero Speedbooking",
+        "name": "A Time for Heroes",
+        "url": ""
+    },
+    {
+        "build_code": "Owkj8wQjJPHE9x1nmkS4xm4bM",
+        "primary_profession": "3",
+        "secondary_profession": "9",
+        "skill_ids": [
+            263,
+            250,
+            2007,
+            308,
+            297,
+            1596,
+            1574,
+            1591
+        ],
+        "category": "User Created",
+        "team": "Copy of 7 Hero Speedbooking",
+        "name": "A Time for Heroes",
+        "url": ""
+    },
+    {
+        "build_code": "OwAT04HDn4g6Tk/Ll+DAAA",
+        "primary_profession": "3",
+        "secondary_profession": "0",
+        "skill_ids": [
+            263,
+            250,
+            290,
+            255,
+            297,
+            254,
+            0,
+            0
+        ],
+        "category": "User Created",
+        "team": "Copy of 7 Hero Speedbooking",
+        "name": "A Time for Heroes",
+        "url": ""
+    },
+    {
+        "build_code": "OwAT44HDn4g6beyLlAAAAA",
+        "primary_profession": "3",
+        "secondary_profession": "0",
+        "skill_ids": [
+            263,
+            250,
+            243,
+            242,
+            297,
+            0,
+            0,
+            0
+        ],
+        "category": "User Created",
+        "team": "Copy of 7 Hero Speedbooking",
+        "name": "A Time for Heroes",
+        "url": ""
+    },
+    {
+        "build_code": "OAcS05PTHQqisZ5izkOMMMHMA",
+        "primary_profession": "0",
+        "secondary_profession": "7",
+        "skill_ids": [
+            1031,
+            2218,
+            1644,
+            2233,
+            2355,
+            782,
+            780,
+            775
+        ],
+        "category": "User Created",
+        "team": "Copy of 7 Hero Speedbooking",
+        "name": "Against the Charr",
+        "url": ""
+    },
+    {
+        "build_code": "OwAS8YILAU9ERAAAAAvEUD",
+        "primary_profession": "3",
+        "secondary_profession": "0",
+        "skill_ids": [
+            256,
+            245,
+            273,
+            0,
+            0,
+            0,
+            303,
+            848
+        ],
+        "category": "User Created",
+        "team": "Copy of 7 Hero Speedbooking",
+        "name": "Against the Charr",
+        "url": ""
+    },
+    {
+        "build_code": "OwAT0YH/mZeIPEJ+DQCAAAwpB",
+        "primary_profession": "3",
+        "secondary_profession": "0",
+        "skill_ids": [
+            243,
+            242,
+            290,
+            254,
+            288,
+            0,
+            0,
+            1692
+        ],
+        "category": "User Created",
+        "team": "Copy of 7 Hero Speedbooking",
+        "name": "Against the Charr",
+        "url": ""
+    },
+    {
+        "build_code": "OQijEymM6MD7dMPGAYivx1bAA",
+        "primary_profession": "9",
+        "secondary_profession": "8",
+        "skill_ids": [
+            1731,
+            1595,
+            1596,
+            0,
+            1574,
+            1591,
+            1781,
+            0
+        ],
+        "category": "User Created",
+        "team": "Copy of 7 Hero Speedbooking",
+        "name": "Against the Charr",
+        "url": ""
+    },
+    {
+        "build_code": "OAcR8ZiHRnZC6A6uEBC3BAA",
+        "primary_profession": "0",
+        "secondary_profession": "7",
+        "skill_ids": [
+            572,
+            826,
+            1043,
+            1031,
+            2423,
+            1032,
+            952,
+            0
+        ],
+        "category": "User Created",
+        "team": "Copy of 7 Hero Speedbooking",
+        "name": "Curse of the Nornbear",
+        "url": ""
+    },
+    {
+        "build_code": "OAcR0Zam0hhh5gBAAAgm0mE",
+        "primary_profession": "0",
+        "secondary_profession": "7",
+        "skill_ids": [
+            2355,
+            782,
+            780,
+            775,
+            0,
+            0,
+            2356,
+            2358
+        ],
+        "category": "User Created",
+        "team": "Copy of 7 Hero Speedbooking",
+        "name": "A Time for Heroes",
+        "url": ""
+    },
+    {
+        "build_code": "Owkj8wQjJPHE9x1nmkS4xm4bM",
+        "primary_profession": "3",
+        "secondary_profession": "9",
+        "skill_ids": [
+            263,
+            250,
+            2007,
+            308,
+            297,
+            1596,
+            1574,
+            1591
+        ],
+        "category": "User Created",
+        "team": "Copy of 7 Hero Speedbooking",
+        "name": "A Time for Heroes",
+        "url": ""
+    },
+    {
+        "build_code": "OwAT04HDn4g6Tk/Ll+DAAA",
+        "primary_profession": "3",
+        "secondary_profession": "0",
+        "skill_ids": [
+            263,
+            250,
+            290,
+            255,
+            297,
+            254,
+            0,
+            0
+        ],
+        "category": "User Created",
+        "team": "Copy of 7 Hero Speedbooking",
+        "name": "A Time for Heroes",
+        "url": ""
+    },
+    {
+        "build_code": "OwAT44HDn4g6beyLlAAAAA",
+        "primary_profession": "3",
+        "secondary_profession": "0",
+        "skill_ids": [
+            263,
+            250,
+            243,
+            242,
+            297,
+            0,
+            0,
+            0
+        ],
+        "category": "User Created",
+        "team": "Copy of 7 Hero Speedbooking",
+        "name": "A Time for Heroes",
+        "url": ""
+    },
+    {
+        "build_code": "OAcS05PTHQqisZ5izkOMMMHMA",
+        "primary_profession": "0",
+        "secondary_profession": "7",
+        "skill_ids": [
+            1031,
+            2218,
+            1644,
+            2233,
+            2355,
+            782,
+            780,
+            775
+        ],
+        "category": "User Created",
+        "team": "Copy of 7 Hero Speedbooking",
+        "name": "Against the Charr",
+        "url": ""
+    },
+    {
+        "build_code": "OwAS8YILAU9ERAAAAAvEUD",
+        "primary_profession": "3",
+        "secondary_profession": "0",
+        "skill_ids": [
+            256,
+            245,
+            273,
+            0,
+            0,
+            0,
+            303,
+            848
+        ],
+        "category": "User Created",
+        "team": "Copy of 7 Hero Speedbooking",
+        "name": "Against the Charr",
+        "url": ""
+    },
+    {
+        "build_code": "OwAT0YH/mZeIPEJ+DQCAAAwpB",
+        "primary_profession": "3",
+        "secondary_profession": "0",
+        "skill_ids": [
+            243,
+            242,
+            290,
+            254,
+            288,
+            0,
+            0,
+            1692
+        ],
+        "category": "User Created",
+        "team": "Copy of 7 Hero Speedbooking",
+        "name": "Against the Charr",
+        "url": ""
+    },
+    {
+        "build_code": "OQijEymM6MD7dMPGAYivx1bAA",
+        "primary_profession": "9",
+        "secondary_profession": "8",
+        "skill_ids": [
+            1731,
+            1595,
+            1596,
+            0,
+            1574,
+            1591,
+            1781,
+            0
+        ],
+        "category": "User Created",
+        "team": "Copy of 7 Hero Speedbooking",
+        "name": "Against the Charr",
+        "url": ""
+    },
+    {
+        "build_code": "OAcR8ZiHRnZC6A6uEBC3BAA",
+        "primary_profession": "0",
+        "secondary_profession": "7",
+        "skill_ids": [
+            572,
+            826,
+            1043,
+            1031,
+            2423,
+            1032,
+            952,
+            0
+        ],
+        "category": "User Created",
+        "team": "Copy of 7 Hero Speedbooking",
+        "name": "Curse of the Nornbear",
+        "url": ""
+    }
+]

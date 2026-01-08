@@ -9,6 +9,7 @@ from src.ui.dialogs import FeedbackDialog, WebBrowserDialog
 class SettingsTab(QWidget):
     theme_changed = pyqtSignal(str) # Emits "Dark", "Light", or "Auto"
     campaigns_changed = pyqtSignal(dict) # Emits { 'Prophecies': bool, ... }
+    tutorial_requested = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -68,13 +69,15 @@ class SettingsTab(QWidget):
         
         layout.addWidget(group_campaigns)
 
-        # --- Feedback & Help Section ---
-        group_feedback = QGroupBox("Feedback & Help")
+        # --- Feedback and Help Section ---
+        group_feedback = QGroupBox("Feedback and Help")
         group_feedback.setStyleSheet("QGroupBox { font-weight: bold; border: 1px solid #444; margin-top: 10px; padding-top: 10px; } QGroupBox::title { subcontrol-origin: margin; subcontrol-position: top left; padding: 0 3px; }")
         
         feedback_layout = QHBoxLayout(group_feedback)
+        feedback_layout.setAlignment(Qt.AlignmentFlag.AlignLeft)
         
         self.btn_feedback = QPushButton("Send Feedback")
+        self.btn_feedback.setFixedWidth(150)
         self.btn_feedback.setStyleSheet("""
             QPushButton { 
                 background-color: #0078D7; 
@@ -89,6 +92,7 @@ class SettingsTab(QWidget):
         feedback_layout.addWidget(self.btn_feedback)
 
         self.btn_tutorial = QPushButton(" Tutorial")
+        self.btn_tutorial.setFixedWidth(150)
         self.btn_tutorial.setStyleSheet("""
             QPushButton { 
                 background-color: #CC0000; 
@@ -102,22 +106,46 @@ class SettingsTab(QWidget):
         self.btn_tutorial.clicked.connect(self.open_tutorial)
         feedback_layout.addWidget(self.btn_tutorial)
         
+        feedback_layout.addStretch()
         layout.addWidget(group_feedback)
 
         # Spacer to push attribution to the bottom
         layout.addStretch()
 
-        # Attribution Label
+        # Footer Layout (Attribution + Version)
+        footer_layout = QHBoxLayout()
+        
         self.lbl_attrib = QLabel("Brought to you by Military Mosquito")
         font = self.lbl_attrib.font()
         font.setItalic(True)
         self.lbl_attrib.setFont(font)
         self.lbl_attrib.setStyleSheet("QLabel { opacity: 0.75; letter-spacing: 1px; }")
-        self.lbl_attrib.setAlignment(Qt.AlignmentFlag.AlignLeft)
-        layout.addWidget(self.lbl_attrib)
+        footer_layout.addWidget(self.lbl_attrib)
+        
+        footer_layout.addStretch()
+        
+        # Version Label
+        import json
+        import os
+        version = "Unknown"
+        try:
+            with open("version.json", "r") as f:
+                v_data = json.load(f)
+                version = v_data.get("version", "Unknown")
+        except:
+            pass
+            
+        self.lbl_version = QLabel(f"v{version}")
+        self.lbl_version.setStyleSheet("QLabel { opacity: 0.5; color: gray; font-size: 10px; }")
+        footer_layout.addWidget(self.lbl_version)
+        
+        layout.addLayout(footer_layout)
         
         # Load saved settings
         current_theme = self.settings.value("theme", "Auto")
+        
+        self.refresh_theme() # Apply dynamic colors
+        
         if current_theme == "Dark":
             self.radio_on.setChecked(True)
         elif current_theme == "Light":
@@ -143,10 +171,13 @@ class SettingsTab(QWidget):
         self.settings.setValue("last_feedback_time", time.time())
 
     def open_tutorial(self):
-        # Using the actual tutorial video URL with origin parameter to help fix Error 153
-        url = "https://www.youtube.com/embed/rKSEPcfZOOw?origin=https://bookah.savvy-stuff.dev" 
-        dlg = WebBrowserDialog(self, "Tutorial", url)
-        dlg.exec()
+        self.tutorial_requested.emit()
+
+    def refresh_theme(self):
+        from src.ui.theme import get_color
+        text_color = get_color('text_primary')
+        self.lbl_version.setStyleSheet(f"QLabel {{ opacity: 0.5; color: {text_color}; font-size: 10px; }}")
+        self.lbl_attrib.setStyleSheet(f"QLabel {{ opacity: 0.75; color: {text_color}; letter-spacing: 1px; }}")
 
     def on_theme_changed(self, button):
         if button == self.radio_on:
@@ -157,6 +188,7 @@ class SettingsTab(QWidget):
             mode = "Auto"
             
         self.settings.setValue("theme", mode)
+        self.refresh_theme() # Update local styles
         self.theme_changed.emit(mode)
 
     def on_campaigns_changed(self):

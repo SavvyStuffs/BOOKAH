@@ -23,8 +23,7 @@ class SkillBrain:
 
     def _get_embedder(self):
         """
-        Lazy loader for SentenceTransformer to prevent lag on App Startup.
-        Only imports the heavy library when the Splash Screen is actually running.
+        Lazy loader for SentenceTransformer.
         """
         try:
             from sentence_transformers import SentenceTransformer
@@ -59,25 +58,39 @@ class SkillBrain:
                 desc_map[sid] = text
         return desc_map
 
-    def train(self, json_path="all_skills.json", db_path="master.db"):
+    def train(self, json_paths: List[str], db_path="master.db"):
         """
-        Trains models if missing. 
-        CRITICAL: Always calls load() at the end to ensure RAM residency.
+        Trains models if missing or if data is newer than the model.
         """
+        if isinstance(json_paths, str):
+            json_paths = [json_paths]
+
         # 1. Behavioral Training (Fast)
-        if not os.path.exists(self.model_path):
-            print("[Brain] Training Behavioral Lobe...")
-            if os.path.exists(json_path):
-                with open(json_path, 'r', encoding='utf-8') as f:
-                    raw_data = json.load(f)
-                
-                training_sentences = []
-                for entry in raw_data:
-                    skill_ids = entry.get('skill_ids', [])
-                    clean = [str(sid) for sid in skill_ids if sid not in self.IGNORE_IDS]
-                    if len(clean) > 1:
-                        training_sentences.append(clean)
-                
+        # Check if the model is "stale" (older than the data source)
+        stale = False
+        if os.path.exists(self.model_path):
+            model_time = os.path.getmtime(self.model_path)
+            for path in json_paths:
+                if os.path.exists(path) and os.path.getmtime(path) > model_time:
+                    stale = True
+                    break
+
+        if not os.path.exists(self.model_path) or stale:
+            print(f"[Brain] {'Retraining' if stale else 'Training'} Behavioral Lobe...")
+            training_sentences = []
+            
+            for path in json_paths:
+                if os.path.exists(path):
+                    with open(path, 'r', encoding='utf-8') as f:
+                        raw_data = json.load(f)
+                    
+                    for entry in raw_data:
+                        skill_ids = entry.get('skill_ids', [])
+                        clean = [str(sid) for sid in skill_ids if sid not in self.IGNORE_IDS]
+                        if len(clean) > 1:
+                            training_sentences.append(clean)
+            
+            if training_sentences:
                 self.behavior_model = Word2Vec(
                     sentences=training_sentences, 
                     vector_size=100, 
@@ -88,10 +101,13 @@ class SkillBrain:
                     epochs=30
                 )
                 self.behavior_model.save(self.model_path)
+                print(f"[Brain] Behavioral Lobe saved to {self.model_path}")
+            else:
+                print("[Brain] Warning: No training data found.")
 
         # 2. Semantic Training (Slow on first run)
         if not os.path.exists(self.semantic_path):
-            print("[Brain] Training Semantic Lobe (This runs once)...")
+            print("[Brain] Training Semantic Lobe (Description Embeddings)...")
             embedder = self._get_embedder()
             
             if embedder:
@@ -107,37 +123,31 @@ class SkillBrain:
                     torch.save({'ids': ids, 'embeddings': embeddings}, self.semantic_path)
                     print("[Brain] Semantics Saved.")
 
-        # 3. CRITICAL: Force load everything into RAM now.
-        # This ensures the lag happens NOW (Splash Screen), not LATER (User Click).
+        # 3. Force load everything into RAM
         self.load()
 
     def load(self):
         """Loads models from disk into RAM."""
         # Load Behavioral
-        if os.path.exists(self.model_path) and self.behavior_model is None:
-            self.behavior_model = Word2Vec.load(self.model_path)
+        if os.path.exists(self.model_path):
+            try:
+                self.behavior_model = Word2Vec.load(self.model_path)
+                print(f"[Brain] Behavioral Model Loaded ({len(self.behavior_model.wv)} terms).")
+            except Exception as e:
+                print(f"[Brain] Behavioral Load Error: {e}")
         
         # Load Semantics
         if os.path.exists(self.semantic_path) and not self.description_vectors:
-            # Import Torch here to keep startup fast
             import torch
             
-            # Load Tensors (Fast I/O)
             try:
-                # map_location ensures we don't crash if moving from GPU PC to CPU PC
                 data = torch.load(self.semantic_path, map_location=torch.device('cpu'))
                 ids = data['ids']
                 embeddings = data['embeddings']
                 self.description_vectors = {sid: emb for sid, emb in zip(ids, embeddings)}
-                print(f"[Brain] Neural Network Ready ({len(ids)} concepts loaded).")
-                
-                # OPTIMIZATION: If we loaded the cache, we DO NOT need the heavy model instance.
-                # We only need the Embedder if we plan to encode NEW text (Training).
-                # self.semantic_model = self._get_embedder() <--- SKIPPED
-                
+                print(f"[Brain] Semantic Vectors Ready ({len(ids)} descriptions loaded).")
             except Exception as e:
                 print(f"[Brain] Semantic Load Error: {e}")
-                # Fallback: Try to load the model if cache failed?
                 self.semantic_model = self._get_embedder()
 
     def suggest(self, current_skills: List[int], top_n=50, use_semantic=True) -> List[Tuple[int, float]]:
@@ -198,8 +208,8 @@ class SkillBrain:
             s_score = semantic_scores.get(sid, 0.0)
             
             # Weighted Average
-            # Behavior 0.6 / Semantic 0.4
-            final_score = (b_score * 0.6) + (s_score * 0.4)
+            # Behavior 0.4 / Semantic 0.6
+            final_score = (b_score * 0.4) + (s_score * 0.6)
             final_scores[sid] = final_score
 
         return sorted(final_scores.items(), key=lambda x: x[1], reverse=True)[:top_n]
