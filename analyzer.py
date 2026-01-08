@@ -154,8 +154,9 @@ class VisualAnalyzer:
         net = Network(height='90vh', width='100%', bgcolor='#222222', font_color='white', cdn_resources='in_line')
         
         # Physics engine configuration
-        net.barnes_hut(gravity=-2000, central_gravity=0.3, spring_length=95, spring_strength=0.04, damping=0.09, overlap=0)
-        
+        net.force_atlas_2based(gravity=-50, central_gravity=0.01, spring_length=100, spring_strength=0.08, damping=0.4, overlap=0)
+        net.toggle_stabilization(True)
+
         # Configure UI Buttons
         net.show_buttons(filter_=['physics'])
         

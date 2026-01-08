@@ -1,11 +1,12 @@
 import os
+import sys
 import json
 import sqlite3
 from PyQt6.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QLineEdit, QListWidget, QMessageBox, QFileDialog, QInputDialog, QTabWidget, QTextEdit, QFrame, QScrollArea, QGridLayout, QWidget
+    QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QLineEdit, QListWidget, QMessageBox, QFileDialog, QInputDialog, QTabWidget, QTextEdit, QFrame, QScrollArea, QGridLayout, QWidget, QMenu
 )
-from PyQt6.QtCore import QUrl, QSettings
-from PyQt6.QtGui import QPixmap
+from PyQt6.QtCore import QUrl, QSettings, Qt
+from PyQt6.QtGui import QPixmap, QAction
 
 try:
     from PyQt6.QtWebEngineWidgets import QWebEngineView
@@ -16,7 +17,7 @@ except ImportError:
 
 from src.ui.theme import get_color
 from src.constants import PROF_MAP, JSON_FILE, ICON_DIR, ICON_SIZE, ATTR_MAP, PROF_SHORT_MAP, DB_FILE
-from src.utils import GuildWarsTemplateDecoder
+from src.utils import GuildWarsTemplateDecoder, GuildWarsTemplateEncoder
 from src.models import Build
 from src.engine import CONDITION_DEFINITIONS
 
@@ -211,13 +212,15 @@ class NewTeamDialog(QDialog):
     def get_data(self):
         return self.edit_name.text().strip(), self.folder_path
 
-class TeamManagerDialog(QDialog):
-    def __init__(self, parent=None, engine=None):
+class TeamManagerWidget(QWidget):
+    def __init__(self, parent=None, engine=None, dialog_parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Team Build Manager")
-        self.resize(400, 300)
         self.engine = engine
-        self.parent_window = parent
+        mw_module = sys.modules.get('src.ui.main_window')
+        MainWindowClass = getattr(mw_module, 'MainWindow', object) if mw_module else object
+        self.parent_window = parent if isinstance(parent, MainWindowClass) else None
+        # If embedded in dialog, we might need a ref to it to close it
+        self.dialog_parent = dialog_parent 
         
         layout = QVBoxLayout(self)
         
@@ -232,11 +235,11 @@ class TeamManagerDialog(QDialog):
         self.btn_export.clicked.connect(self.export_team)
         header.addWidget(self.btn_export)
 
-        self.btn_new_team = QPushButton("+")
-        self.btn_new_team.setFixedSize(24, 24)
+        self.btn_new_team = QPushButton("New...")
+        self.btn_new_team.setFixedSize(60, 24)
         self.btn_new_team.setToolTip("Create New Team")
         self.btn_new_team.setStyleSheet("font-weight: bold; color: #00AAFF;")
-        self.btn_new_team.clicked.connect(self.open_new_team_dialog)
+        self.btn_new_team.clicked.connect(self.show_new_team_menu)
         header.addWidget(self.btn_new_team)
         
         layout.addLayout(header)
@@ -268,7 +271,7 @@ class TeamManagerDialog(QDialog):
         
         self.btn_del = QPushButton("Delete Team")
         self.btn_del.clicked.connect(self.remove_team)
-        self.btn_del.setStyleSheet("background-color: #552222;")
+        self.btn_del.setStyleSheet("background-color: #552222; color: white;")
         btn_layout.addWidget(self.btn_del)
         
         layout.addLayout(btn_layout)
@@ -280,6 +283,75 @@ class TeamManagerDialog(QDialog):
         filtered_teams = [t for t in teams if search_text in t.lower()]
         self.list_widget.addItems(filtered_teams)
         
+    def show_new_team_menu(self):
+        menu = QMenu(self)
+        
+        act_4 = QAction("4-Man Team", self)
+        act_4.triggered.connect(lambda: self.create_empty_team(4))
+        menu.addAction(act_4)
+        
+        act_6 = QAction("6-Man Team", self)
+        act_6.triggered.connect(lambda: self.create_empty_team(6))
+        menu.addAction(act_6)
+        
+        act_8 = QAction("8-Man Team", self)
+        act_8.triggered.connect(lambda: self.create_empty_team(8))
+        menu.addAction(act_8)
+        
+        act_12 = QAction("12-Man Team", self)
+        act_12.triggered.connect(lambda: self.create_empty_team(12))
+        menu.addAction(act_12)
+        
+        menu.addSeparator()
+        
+        act_import = QAction("Import from Folder...", self)
+        act_import.triggered.connect(self.open_new_team_dialog)
+        menu.addAction(act_import)
+        
+        menu.exec(self.btn_new_team.mapToGlobal(self.btn_new_team.rect().bottomLeft()))
+
+    def create_empty_team(self, size):
+        name, ok = QInputDialog.getText(self, "New Team", f"Enter name for {size}-man team:")
+        if not ok or not name:
+            return
+            
+        if name in self.engine.teams:
+            QMessageBox.warning(self, "Error", f"Team '{name}' already exists!")
+            return
+
+        empty_data = {
+            'header': {'type': 14, 'version': 0},
+            'profession': {'primary': 0, 'secondary': 0},
+            'attributes': [],
+            'skills': [0] * 8
+        }
+        encoder = GuildWarsTemplateEncoder(empty_data)
+        empty_code = encoder.encode()
+        
+        self.engine.teams.add(name)
+        
+        for i in range(size):
+            b = Build(
+                code=empty_code,
+                primary_prof="0",
+                secondary_prof="0",
+                skill_ids=[0]*8,
+                category="User Created",
+                team=name,
+                name=f"Hero {i+1}",
+                attributes=[]
+            )
+            b.is_user_build = True
+            self.engine.builds.append(b)
+            
+        self.engine.save_user_builds()
+        self.refresh_list()
+        
+        items = self.list_widget.findItems(name, Qt.MatchFlag.MatchExactly)
+        if items:
+            self.list_widget.setCurrentItem(items[0])
+            self.load_team()
+
     def open_new_team_dialog(self):
         dlg = NewTeamDialog(self)
         if dlg.exec():
@@ -288,13 +360,14 @@ class TeamManagerDialog(QDialog):
                 return
                 
             if folder:
-                self.parent_window.process_folder_drop(folder, team_name=name)
+                # Need access to main window logic for drop processing
+                if self.parent_window:
+                    self.parent_window.process_folder_drop(folder, team_name=name)
             else:
                 self.engine.teams.add(name)
             
             self.refresh_list()
             
-            # Auto-select and open the new team
             items = self.list_widget.findItems(name, Qt.MatchFlag.MatchExactly)
             if items:
                 self.list_widget.setCurrentItem(items[0])
@@ -307,7 +380,6 @@ class TeamManagerDialog(QDialog):
             return
         team_name = item.text()
         
-        # Ask for export directory
         settings = QSettings("Bookah", "Builder")
         last_dir = settings.value("last_export_dir", "")
         export_dir = QFileDialog.getExistingDirectory(self, f"Select Folder to Export '{team_name}'", last_dir)
@@ -316,13 +388,11 @@ class TeamManagerDialog(QDialog):
         
         settings.setValue("last_export_dir", os.path.dirname(export_dir))
 
-        # Get matching builds
         matching_builds = [b for b in self.engine.builds if b.team == team_name]
         if not matching_builds:
             QMessageBox.information(self, "Export", "No builds found to export.")
             return
 
-        # Ensure we only export unique codes within this export batch
         unique_builds = []
         seen_codes = set()
         for b in matching_builds:
@@ -334,7 +404,6 @@ class TeamManagerDialog(QDialog):
         from src.constants import PROF_MAP, PROF_SHORT_MAP
         
         for b in unique_builds:
-            # Determine File Name
             p1_id = int(b.primary_prof) if b.primary_prof.isdigit() else 0
             p2_id = int(b.secondary_prof) if b.secondary_prof.isdigit() else 0
             
@@ -343,18 +412,15 @@ class TeamManagerDialog(QDialog):
             p1 = PROF_SHORT_MAP.get(p1_name, "X")
             p2 = PROF_SHORT_MAP.get(p2_name, "X")
             
-            # Use build name if available, otherwise just professions
             if b.name:
                 base_name = f"{b.name} ({p1}-{p2})"
             else:
                 base_name = f"{p1}-{p2}"
                 
-            # Sanitize filename
             safe_name = "".join(c for c in base_name if c.isalnum() or c in (' ', '-', '_', '(', ')')).strip()
             filename = f"{safe_name}.txt"
             full_path = os.path.join(export_dir, filename)
             
-            # Handle duplicates in the file system
             counter = 1
             while os.path.exists(full_path):
                 name_part, ext = os.path.splitext(filename)
@@ -379,23 +445,23 @@ class TeamManagerDialog(QDialog):
         self.refresh_list()
 
     def add_team(self):
-        # Get selected team
         item = self.list_widget.currentItem()
         if not item:
             QMessageBox.warning(self, "Select Team", "Please select a team from the list to add this build to.")
             return
             
         team_name = item.text()
-        
-        # Determine category (Inherit from team, or default to User Created)
         existing_builds = [b for b in self.engine.builds if b.team == team_name]
         category = existing_builds[0].category if existing_builds else "User Created"
         
-        # Prompt for Build Name
         build_name, ok = QInputDialog.getText(self, "Build Name", "Enter a name for this build (optional):")
-        if not ok: return # User cancelled
+        if not ok: return 
         
-        code = self.parent_window.edit_code.text()
+        if self.parent_window:
+            code = self.parent_window.edit_code.text()
+        else:
+            code = "" # Should handle gracefully if no parent
+            
         if not code:
             QMessageBox.warning(self, "Error", "No build code to save!")
             return
@@ -417,33 +483,35 @@ class TeamManagerDialog(QDialog):
         
         self.engine.builds.append(new_build)
         self.engine.teams.add(team_name)
-        
-        # Save using centralized engine logic
         self.engine.save_user_builds()
         
-        # Refresh main window if it exists
         if self.parent_window and hasattr(self.parent_window, 'apply_filters'):
             self.parent_window.apply_filters()
         
         QMessageBox.information(self, "Success", f"Build '{build_name}' added to team '{team_name}'.")
             
     def load_team(self):
-        # Set the main window's team filter to the selected team
         item = self.list_widget.currentItem()
         if not item: return
         team_name = item.text()
         
-        # Ensure parent dropdown is up to date
-        if hasattr(self.parent_window, 'update_team_dropdown'):
-            self.parent_window.update_team_dropdown()
-        
-        # Find the team in the parent's combo box
-        index = self.parent_window.combo_team.findText(team_name)
-        if index != -1:
-            self.parent_window.combo_team.setCurrentIndex(index)
-            self.close()
-        else:
-            QMessageBox.warning(self, "Error", f"Team '{team_name}' not found in main list.")
+        if self.parent_window:
+            # Reset Category to "All" to ensure team is visible
+            if hasattr(self.parent_window, 'combo_cat'):
+                self.parent_window.combo_cat.blockSignals(True)
+                self.parent_window.combo_cat.setCurrentIndex(0) # "All"
+                self.parent_window.combo_cat.blockSignals(False)
+
+            if hasattr(self.parent_window, 'update_team_dropdown'):
+                self.parent_window.update_team_dropdown()
+            
+            index = self.parent_window.combo_team.findText(team_name)
+            if index != -1:
+                self.parent_window.combo_team.setCurrentIndex(index)
+                if self.dialog_parent:
+                    self.dialog_parent.close()
+            else:
+                QMessageBox.warning(self, "Error", f"Team '{team_name}' not found in main list.")
 
     def remove_team(self):
         item = self.list_widget.currentItem()
@@ -452,13 +520,46 @@ class TeamManagerDialog(QDialog):
         
         confirm = QMessageBox.question(self, "Confirm", f"Delete all builds for team '{team_name}'?", QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
         if confirm == QMessageBox.StandardButton.Yes:
-            # Remove from memory
             self.engine.builds = [b for b in self.engine.builds if b.team != team_name]
             self.engine.teams.discard(team_name)
-            
-            # Save using centralized engine logic
             self.engine.save_user_builds()
             self.refresh_list()
+            
+            if self.parent_window and hasattr(self.parent_window, 'update_team_dropdown'):
+                self.parent_window.update_team_dropdown()
+                # Stay on Team Manager view
+
+class TeamManagerDialog(QDialog):
+    def __init__(self, parent=None, engine=None, restricted_mode=False):
+        super().__init__(parent)
+        self.setWindowTitle("Team Build Manager")
+        self.resize(400, 300)
+        
+        layout = QVBoxLayout(self)
+        self.widget = TeamManagerWidget(parent, engine, dialog_parent=self)
+        layout.addWidget(self.widget)
+        
+        # Expose widgets for tutorial compatibility (optional proxy)
+        self.btn_export = self.widget.btn_export
+        self.btn_new_team = self.widget.btn_new_team
+        self.list_widget = self.widget.list_widget
+        self.btn_load = self.widget.btn_load
+        self.btn_add = self.widget.btn_add
+        self.btn_edit = self.widget.btn_edit
+        self.btn_del = self.widget.btn_del
+        
+        if restricted_mode:
+            self.btn_new_team.setVisible(False)
+            self.btn_add.setVisible(False)
+            self.btn_edit.setVisible(False)
+            self.btn_export.setVisible(False)
+
+    def show_new_team_menu(self):
+        self.widget.show_new_team_menu()
+    
+    def load_team(self):
+        self.widget.load_team()
+
 
 class TeamEditorDialog(QDialog):
     def __init__(self, team_name, engine, parent=None):
