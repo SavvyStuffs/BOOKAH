@@ -60,23 +60,14 @@ class SkillBrain:
 
     def train(self, json_paths: List[str], db_path="master.db"):
         """
-        Trains models if missing or if data is newer than the model.
+        Trains models only if they are missing.
         """
         if isinstance(json_paths, str):
             json_paths = [json_paths]
 
         # 1. Behavioral Training (Fast)
-        # Check if the model is "stale" (older than the data source)
-        stale = False
-        if os.path.exists(self.model_path):
-            model_time = os.path.getmtime(self.model_path)
-            for path in json_paths:
-                if os.path.exists(path) and os.path.getmtime(path) > model_time:
-                    stale = True
-                    break
-
-        if not os.path.exists(self.model_path) or stale:
-            print(f"[Brain] {'Retraining' if stale else 'Training'} Behavioral Lobe...")
+        if not os.path.exists(self.model_path):
+            print(f"[Brain] Training Behavioral Lobe...")
             training_sentences = []
             
             for path in json_paths:
