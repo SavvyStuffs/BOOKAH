@@ -16,9 +16,11 @@ def resource_path(relative_path):
 if getattr(sys, 'frozen', False):
     # Running as a packaged EXE
     APP_ROOT = os.path.dirname(sys.executable)
+    USER_DIR = os.path.join(os.path.expanduser("~"), ".local", "share", "Bookah_Linux")
 else:
     # Running as a script
     APP_ROOT = os.path.abspath(".")
+    USER_DIR = os.path.join(APP_ROOT, "data")
 
 # Local data directory for models and user builds
 USER_DIR = os.path.join(APP_ROOT, "data")
