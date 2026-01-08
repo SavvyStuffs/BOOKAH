@@ -42,6 +42,18 @@ if not os.path.exists(USER_BUILDS_FILE):
 BEHAVIOR_MODEL_PATH = resource_path('skill_vectors.model')
 SEMANTIC_MODEL_PATH = resource_path('description_embeddings.pt')
 
+if not os.path.exists(BEHAVIOR_MODEL_PATH) and os.path.exists(_BUNDLED_BEHAVIOR):
+    try:
+        shutil.copy2(_BUNDLED_BEHAVIOR, BEHAVIOR_MODEL_PATH)
+    except Exception:
+        pass 
+
+if not os.path.exists(SEMANTIC_MODEL_PATH) and os.path.exists(_BUNDLED_SEMANTIC):
+    try:
+        shutil.copy2(_BUNDLED_SEMANTIC, SEMANTIC_MODEL_PATH)
+    except Exception:
+        pass
+
 # --- Static Data (Bundled in EXE) ---
 DB_FILE = resource_path('master.db') 
 AQ_DB_FILE = resource_path('skills_aq.db')
