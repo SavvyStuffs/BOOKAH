@@ -14,11 +14,13 @@ def resource_path(relative_path):
 
 # --- Application Directories ---
 if getattr(sys, 'frozen', False):
-    # Running as a packaged EXE
     APP_ROOT = os.path.dirname(sys.executable)
-    USER_DIR = os.path.join(os.path.expanduser("~"), ".local", "share", "Bookah_Linux")
+    
+    if sys.platform.startswith('linux'):
+        USER_DIR = os.path.join(os.path.expanduser("~"), ".local", "share", "Bookah_Linux")
+    else:
+        USER_DIR = os.path.join(APP_ROOT, "data")
 else:
-    # Running as a script
     APP_ROOT = os.path.abspath(".")
     USER_DIR = os.path.join(APP_ROOT, "data")
 
@@ -40,8 +42,8 @@ if not os.path.exists(USER_BUILDS_FILE):
         json.dump([], f)
 
 # 3. AI Models
-BEHAVIOR_MODEL_PATH = os.path.join(USER_DIR, 'skill_vectors.model')
-SEMANTIC_MODEL_PATH = os.path.join(USER_DIR, 'description_embeddings.pt')
+BEHAVIOR_MODEL_PATH = resource_path('skill_vectors.model')
+SEMANTIC_MODEL_PATH = resource_path('description_embeddings.pt')
 
 # --- Static Data (Bundled in EXE) ---
 DB_FILE = resource_path('master.db') 
