@@ -1,4 +1,4 @@
-name: Build Linux Release
+name: Build Linux AppImage
 
 on:
   workflow_dispatch:
@@ -8,66 +8,81 @@ on:
 
 jobs:
   build:
-    name: Build on Ubuntu 22.04
+    name: Build AppImage on Ubuntu 22.04
     runs-on: ubuntu-22.04
 
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v4 
-
-      - name: Free Disk Space (Aggressive Cleanup)
-        run: |
-          sudo rm -rf /usr/share/dotnet
-          sudo rm -rf /usr/local/lib/android
-          sudo rm -rf /opt/ghc
-          sudo rm -rf /opt/hostedtoolcache/CodeQL
-          sudo docker image prune --all --force
-          df -h # Shows us exactly how much space we reclaimed
+        uses: actions/checkout@v4
 
       - name: Setup Python
-        uses: actions/setup-python@v5  
+        uses: actions/setup-python@v5
         with:
-          python-version: '3.10' 
+          python-version: '3.10'
 
       - name: Install System Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y \
-            libxcb-cursor0 libxkbcommon-x11-0 libxcb-icccm4 libxcb-image0 \
-            libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 libxcb-xinerama0 \
-            libnss3 libxcomposite1 libxcursor1 libasound2 \
-            libegl1-mesa libgl1-mesa-glx
+          # libfuse2 is CRITICAL on Ubuntu 22.04+ for AppImage tools to work
+          sudo apt-get install -y libfuse2 file
 
       - name: Install Python Dependencies
         run: |
           python -m venv venv
           source venv/bin/activate
           pip install --upgrade pip
-          
           pip install torch --index-url https://download.pytorch.org/whl/cpu
-          
           pip install -r requirements.txt
-          
           pip install pyinstaller
 
       - name: Build with PyInstaller
         run: |
           source venv/bin/activate
+          # This creates dist/Bookah_Linux (folder)
           pyinstaller --clean bookah_linux.spec
 
-      - name: Prepare Distribution
+      - name: Package as AppImage
         run: |
-          cp install.sh dist/
-          cp run.sh dist/
+          # 1. Download AppImageTool
+          wget https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x appimagetool-x86_64.AppImage
 
-          chmod +x dist/setup.sh
-          chmod +x dist/run.sh
+          # 2. Prepare the AppDir structure
+          mkdir -p AppDir/usr/bin
+          # Copy your PyInstaller output into the bundle
+          cp -r dist/Bookah_Linux/* AppDir/usr/bin/
           
-          cd dist
-          zip -r Bookah_Linux.zip Bookah_Linux setup.sh run.sh
+          # 3. Handle Icon
+          # We copy your specific icon to the root of the AppDir and name it 'bookah.png'
+          # This matches the 'Icon=bookah' line in the desktop file below
+          cp icons/bookah_logo.png AppDir/bookah.png
+
+          # 4. Create the Entry Point (AppRun)
+          cat > AppDir/AppRun <<EOF
+          #!/bin/bash
+          export APPDIR="\$(dirname "\$(readlink -f "\${0}")")"
+          export PATH="\${APPDIR}/usr/bin:\${PATH}"
+          export LD_LIBRARY_PATH="\${APPDIR}/usr/bin:\${LD_LIBRARY_PATH}"
+          exec "\${APPDIR}/usr/bin/Bookah_Linux" "\$@"
+          EOF
+          chmod +x AppDir/AppRun
+
+          # 5. Create Desktop File
+          cat > AppDir/bookah.desktop <<EOF
+          [Desktop Entry]
+          Type=Application
+          Name=Bookah
+          Exec=Bookah_Linux
+          Icon=bookah
+          Categories=Game;Utility;
+          EOF
+
+          # 6. Build the final AppImage
+          # We use ARCH=x86_64 to ensure the tool runs correctly in the CI environment
+          ARCH=x86_64 ./appimagetool-x86_64.AppImage AppDir Bookah_Linux.AppImage
 
       - name: Upload Artifact
-        uses: actions/upload-artifact@v4  
+        uses: actions/upload-artifact@v4
         with:
-          name: Bookah_Linux_Build
-          path: dist/Bookah_Linux.zip
+          name: Bookah_Linux_AppImage
+          path: Bookah_Linux.AppImage
