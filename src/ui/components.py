@@ -1,9 +1,9 @@
 import os
 from PyQt6.QtWidgets import (
-    QLabel, QFrame, QVBoxLayout, QHBoxLayout, QPushButton, QSizePolicy, QListWidget, QStyle, QStyledItemDelegate, QListWidgetItem, QAbstractItemView, QScrollArea, QWidget
+    QLabel, QFrame, QVBoxLayout, QHBoxLayout, QPushButton, QSizePolicy, QListWidget, QStyle, QStyledItemDelegate, QListWidgetItem, QAbstractItemView, QScrollArea, QWidget, QApplication
 )
-from PyQt6.QtCore import Qt, pyqtSignal, QMimeData, QPoint, QSize, QRect
-from PyQt6.QtGui import QDrag, QPixmap, QPainter, QColor, QFont, QIcon
+from PyQt6.QtCore import Qt, pyqtSignal, QMimeData, QPoint, QSize, QRect, QUrl
+from PyQt6.QtGui import QDrag, QPixmap, QPainter, QColor, QFont, QIcon, QDesktopServices
 
 from src.constants import ICON_DIR, ICON_SIZE, ATTR_MAP, PROF_MAP, PROF_SHORT_MAP, PIXMAP_CACHE
 from src.models import Skill, Build
@@ -18,19 +18,15 @@ class ClickableLabel(QLabel):
 class DraggableSkillIcon(QLabel):
     clicked = pyqtSignal(Skill)
 
-    def __init__(self, skill: Skill, parent=None):
+    def __init__(self, skill: Skill, parent=None, size=None):
         super().__init__(parent)
         self.skill = skill
-        self.setFixedSize(ICON_SIZE, ICON_SIZE)
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         
-        path = os.path.join(ICON_DIR, skill.icon_filename)
-        if os.path.exists(path):
-            self.setPixmap(QPixmap(path).scaled(ICON_SIZE, ICON_SIZE, Qt.AspectRatioMode.KeepAspectRatio))
-        else:
-            self.setText(skill.name)
-            self.refresh_theme()
+        # Initialize with correct size and use cache
+        current_size = size or ICON_SIZE
+        self.set_icon_size(current_size)
 
     def refresh_theme(self):
         if not self.pixmap():
@@ -47,14 +43,31 @@ class DraggableSkillIcon(QLabel):
             
             if self.pixmap():
                 drag.setPixmap(self.pixmap())
-                drag.setHotSpot(QPoint(ICON_SIZE // 2, ICON_SIZE // 2))
+                drag.setHotSpot(QPoint(self.width() // 2, self.height() // 2))
                 
             drag.exec(Qt.DropAction.CopyAction)
+
+    def set_icon_size(self, size):
+        self.setFixedSize(size, size)
+        
+        # Use size-aware caching
+        cache_key = f"{self.skill.icon_filename}_{size}"
+        if cache_key in PIXMAP_CACHE:
+            self.setPixmap(PIXMAP_CACHE[cache_key])
+        else:
+            path = os.path.join(ICON_DIR, self.skill.icon_filename)
+            if os.path.exists(path):
+                pix = QPixmap(path).scaled(size, size, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+                PIXMAP_CACHE[cache_key] = pix
+                self.setPixmap(pix)
+            else:
+                self.setText(self.skill.name[:2])
+                self.refresh_theme()
 
 class SkillSlot(QFrame):
     skill_equipped = pyqtSignal(int, int) 
     skill_removed = pyqtSignal(int)       
-    skill_swapped = pyqtSignal(int, int) # NEW: source_index, target_index
+    skill_swapped = pyqtSignal(int, int)
     clicked = pyqtSignal(int)             
 
     def __init__(self, index, parent=None):
@@ -62,6 +75,7 @@ class SkillSlot(QFrame):
         self.index = index
         self.current_skill_id = None
         self.is_ghost = False
+        self.drag_start_pos = None
         
         self.setFixedSize(ICON_SIZE + 4, ICON_SIZE + 4)
         self.setAcceptDrops(True)
@@ -92,39 +106,58 @@ class SkillSlot(QFrame):
                 source_index = int(mime_text.split(":")[1])
                 if source_index != self.index:
                     self.skill_swapped.emit(source_index, self.index)
-                    event.accept()
-                else:
-                    event.ignore()
+                event.accept()
+            # Explicitly reject build reordering drops
+            elif mime_text.startswith("reorder_build:"):
+                event.ignore()
             else:
                 skill_id = int(mime_text)
                 self.skill_equipped.emit(self.index, skill_id)
                 event.accept()
         except ValueError:
             event.ignore()
+        finally:
+            self.update_style()
 
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
             if self.current_skill_id is not None:
+                self.drag_start_pos = event.position().toPoint()
                 self.clicked.emit(self.current_skill_id)
-                
-                # Initiate Drag for reordering
-                if not self.is_ghost:
-                    drag = QDrag(self)
-                    mime_data = QMimeData()
-                    # Prefix with "slot:" to distinguish from library drags
-                    mime_data.setText(f"slot:{self.index}")
-                    drag.setMimeData(mime_data)
-                    
-                    pix = self.icon_label.pixmap()
-                    if pix and not pix.isNull():
-                        drag.setPixmap(pix)
-                        drag.setHotSpot(QPoint(ICON_SIZE // 2, ICON_SIZE // 2))
-                    
-                    drag.exec(Qt.DropAction.MoveAction)
                     
         elif event.button() == Qt.MouseButton.RightButton:
             if self.current_skill_id is not None:
                 self.clear_slot()
+
+    def mouseMoveEvent(self, event):
+        if not (event.buttons() & Qt.MouseButton.LeftButton):
+            return
+        if not self.drag_start_pos:
+            return
+        if self.current_skill_id is None or self.is_ghost:
+            return
+            
+        if (event.position().toPoint() - self.drag_start_pos).manhattanLength() < QApplication.startDragDistance():
+            return
+            
+        drag = QDrag(self)
+        mime_data = QMimeData()
+        # Prefix with "slot:" to distinguish from library drags
+        mime_data.setText(f"slot:{self.index}")
+        drag.setMimeData(mime_data)
+        
+        pix = self.icon_label.pixmap()
+        if pix and not pix.isNull():
+            drag.setPixmap(pix)
+            drag.setHotSpot(QPoint(ICON_SIZE // 2, ICON_SIZE // 2))
+        
+        # Execute Drag
+        result = drag.exec(Qt.DropAction.MoveAction)
+        
+        # If result is IgnoreAction, it means it wasn't dropped on a valid drop target (including self)
+        # So we treat it as "dragged off bar" -> remove.
+        if result == Qt.DropAction.IgnoreAction:
+            self.clear_slot()
 
     def mouseDoubleClickEvent(self, event):
         if self.current_skill_id is not None:
@@ -133,7 +166,7 @@ class SkillSlot(QFrame):
             else:
                 self.clear_slot()
 
-    def set_skill(self, skill_id, skill_obj: Skill = None, ghost=False, confidence=0.0, rank=0):
+    def set_skill(self, skill_id, skill_obj: Skill = None, ghost=False, confidence=0.0, rank=0, bonuses: dict = None, global_act=0.0, global_rech=0.0):
         self.current_skill_id = skill_id
         self.is_ghost = ghost
         
@@ -167,11 +200,37 @@ class SkillSlot(QFrame):
 
         # Build detailed tooltip
         if skill_obj:
-            desc = skill_obj.get_description_for_rank(rank)
+            desc = skill_obj.get_description_for_rank(rank, bonuses)
             attr_name = ATTR_MAP.get(skill_obj.attribute, "None")
             tooltip = f"<b>{skill_obj.name}</b><br/>"
             if skill_obj.attribute != -1:
                 tooltip += f"<i>{attr_name} ({rank})</i><br/>"
+            
+            if skill_obj.skill_type:
+                tooltip += f"<i>{skill_obj.skill_type.title()}</i><br/>"
+            
+            # Energy Cost in Tooltip
+            eff_energy = skill_obj.get_effective_energy(rank, bonuses)
+            if skill_obj.energy > 0:
+                if eff_energy < skill_obj.energy:
+                    tooltip += f"Energy: <span style='color:#00FF00;'>{eff_energy}</span> (Base: {skill_obj.energy})<br/>"
+                else:
+                    tooltip += f"Energy: {skill_obj.energy}<br/>"
+
+            # Cast & Recharge in Tooltip
+            eff_act = skill_obj.get_effective_activation(rank, bonuses, global_act)
+            if eff_act < skill_obj.activation:
+                tooltip += f"Activation: <span style='color:#00FF00;'>{eff_act}s</span> (Base: {skill_obj.activation}s)<br/>"
+            else:
+                tooltip += f"Activation: {skill_obj.activation}s<br/>"
+
+            eff_rech = skill_obj.get_effective_recharge(rank, bonuses, global_rech)
+            if skill_obj.recharge > 0:
+                if eff_rech < skill_obj.recharge:
+                    tooltip += f"Recharge: <span style='color:#00FF00;'>{eff_rech}s</span> (Base: {skill_obj.recharge}s)<br/>"
+                else:
+                    tooltip += f"Recharge: {skill_obj.recharge}s<br/>"
+
             tooltip += f"<br/>{desc}"
             
             if ghost:
@@ -235,6 +294,11 @@ class SkillInfoPanel(QFrame):
         
         self.details = QLabel("")
         self.details.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        
+        # Manual Link Handling for Tooltips
+        self.details.setOpenExternalLinks(False)
+        self.details.linkHovered.connect(self.on_link_hovered)
+        self.details.linkActivated.connect(self.on_link_activated)
 
         self.refresh_labels()
         
@@ -248,6 +312,17 @@ class SkillInfoPanel(QFrame):
         self.scroll_area.setWidget(self.content_widget)
         main_layout.addWidget(self.scroll_area)
 
+    def on_link_hovered(self, link):
+        if link == "aftercast":
+            self.details.setToolTip("What's this?<br>Every skill has an unavoidable .75s aftercast, this factors that in.")
+        else:
+            self.details.setToolTip("")
+
+    def on_link_activated(self, link):
+        if link == "aftercast":
+            return
+        QDesktopServices.openUrl(QUrl(link))
+
     def refresh_theme(self):
         self.setStyleSheet(f"background-color: {get_color('bg_tertiary')}; border-left: 1px solid {get_color('border')};")
         # Check if initialized fully
@@ -260,7 +335,7 @@ class SkillInfoPanel(QFrame):
         self.txt_desc.setStyleSheet(f"color: {get_color('text_secondary')}; font-style: italic;")
         self.details.setStyleSheet(f"color: {get_color('text_tertiary')};")
 
-    def update_info(self, skill: Skill, repo=None, rank=0):
+    def update_info(self, skill: Skill, repo=None, rank=0, bonuses: dict = None, global_act=0.0, global_rech=0.0):
         self.lbl_name.setText(skill.name)
         
         path = os.path.join(ICON_DIR, skill.icon_filename)
@@ -269,7 +344,7 @@ class SkillInfoPanel(QFrame):
         else:
             self.lbl_icon.clear()
             
-        self.txt_desc.setText(skill.get_description_for_rank(rank))
+        self.txt_desc.setText(skill.get_description_for_rank(rank, bonuses))
         
         info = []
         info.append(f"Profession: {skill.get_profession_str()}")
@@ -278,19 +353,42 @@ class SkillInfoPanel(QFrame):
              info.append(f"Attribute: {attr_name} ({rank})")
         else:
              info.append(f"Attribute: {attr_name}")
-        if skill.energy: info.append(f"Energy: {skill.energy}")
-        if skill.health_cost: info.append(f"<b>Sacrifice: {skill.health_cost} HP</b>") # NEW
+        
+        if skill.skill_type:
+            info.append(f"Type: {skill.skill_type.title()}")
+        
+        # Energy Calculation
+        eff_energy = skill.get_effective_energy(rank, bonuses)
+        if skill.energy > 0:
+            if eff_energy < skill.energy:
+                info.append(f"Energy: <span style='color:#00FF00;'><b>{eff_energy}</b></span> (Base: {skill.energy})")
+            else:
+                info.append(f"Energy: {skill.energy}")
+
+        if skill.health_cost: info.append(f"<b>Sacrifice: {skill.health_cost} HP</b>")
         if skill.adrenaline: info.append(f"Adrenaline: {skill.adrenaline}")
         
         # Combined Timing Display
-        total_time = skill.activation + skill.aftercast
-        info.append(f"Cast: {skill.activation}s + {skill.aftercast}s ({total_time}s)") # NEW
+        eff_act = skill.get_effective_activation(rank, bonuses, global_act)
+        total_time = round(eff_act + skill.aftercast, 2)
         
-        if skill.recharge: info.append(f"Recharge: {skill.recharge}s")
+        act_str = f"{eff_act}s"
+        if eff_act < skill.activation:
+            act_str = f"<span style='color:#00FF00;'><b>{eff_act}s</b></span> (Base: {skill.activation}s)"
+        
+        aftercast_link = f"<a href='aftercast' style='text-decoration: underline; color: {get_color('text_tertiary')};'>+ {skill.aftercast}s</a>"
+        info.append(f"Cast: {act_str} {aftercast_link} ({total_time}s)") 
+        
+        eff_rech = skill.get_effective_recharge(rank, bonuses, global_rech)
+        if skill.recharge: 
+            if eff_rech < skill.recharge:
+                info.append(f"Recharge: <span style='color:#00FF00;'><b>{eff_rech}s</b></span> (Base: {skill.recharge}s)")
+            else:
+                info.append(f"Recharge: {skill.recharge}s")
         
         if skill.is_elite: info.append("<b>Elite Skill</b>")
         if skill.is_pve_only: info.append("<i>PvE Only</i>")
-        if skill.combo_req > 0: info.append(f"Combo Stage: {skill.combo_req}") # NEW
+        if skill.combo_req > 0: info.append(f"Combo Stage: {skill.combo_req}")
 
         # --- Acquisition Info ---
         if repo:
@@ -331,7 +429,7 @@ class SkillInfoPanel(QFrame):
         
         self.details.setWordWrap(True)
         self.details.setText("<br/><br/>".join(info))
-        self.details.setOpenExternalLinks(True)
+        self.details.setOpenExternalLinks(False)
 
     def update_monster_info(self, monster_data):
         self.lbl_name.setText(monster_data['name'])
@@ -359,99 +457,218 @@ class SkillInfoPanel(QFrame):
             
         self.details.setText("<br/>".join(analysis))
 
-class BuildPreviewWidget(QFrame): # Restored to QFrame
-    clicked = pyqtSignal(str) 
+class BuildPreviewWidget(QFrame):
+    load_clicked = pyqtSignal(Build) 
     skill_clicked = pyqtSignal(Skill) 
     rename_clicked = pyqtSignal(Build) 
+    populate_clicked = pyqtSignal(Build)
+    edit_clicked = pyqtSignal(Build)
+    import_clicked = pyqtSignal(Build)
 
-    def __init__(self, build: Build, repo, is_pvp=False, parent=None):
+    def __init__(self, build: Build, repo, is_pvp=False, parent=None, icon_size=64):
         super().__init__(parent)
         self.build = build
         self.repo = repo
-        # Increased height for a more spacious and centered layout
-        self.setFixedHeight(130) 
+        self.icon_size = icon_size
+        self.is_editing = False
+        
+        # Dynamic height based on icon size
+        self.setFixedHeight(icon_size + 140) 
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         
         main_layout = QVBoxLayout(self)
-        main_layout.setContentsMargins(10, 5, 10, 5)
-        main_layout.setSpacing(0)
+        main_layout.setContentsMargins(10, 2, 10, 5) # Further reduced margins
+        main_layout.setSpacing(2) # Tighter spacing
 
         # 1. Top Row: Build Name (Compact)
         if hasattr(build, 'name') and build.name:
             lbl_name = QLabel(build.name)
-            lbl_name.setStyleSheet(f"color: {get_color('text_accent')}; font-weight: bold; font-size: 10px; border: none; background: transparent;")
+            lbl_name.setStyleSheet(f"color: {get_color('text_accent')}; font-weight: bold; font-size: 20px; border: none; background: transparent;")
             lbl_name.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
-            lbl_name.setFixedHeight(14) 
+            lbl_name.setFixedHeight(28) # Increased to prevent descender clipping
             main_layout.addWidget(lbl_name)
-            main_layout.addSpacing(15) # Increased spacing to push skills down
         else:
             # Small spacer to keep layout consistent
-            main_layout.addSpacing(29)
+            main_layout.addSpacing(2)
 
-        # 2. Bottom Row: Info and Icons (Centered in remaining space)
-        content_layout = QHBoxLayout()
-        content_layout.setSpacing(10)
-        content_layout.setContentsMargins(0, 0, 0, 0)
-        content_layout.setAlignment(Qt.AlignmentFlag.AlignVCenter)
+        # 2. Bottom Row: Info and Icons
+        self.content_layout = QHBoxLayout()
+        self.content_layout.setSpacing(10)
+        self.content_layout.setContentsMargins(0, 5, 0, 0)
+        self.content_layout.setAlignment(Qt.AlignmentFlag.AlignTop) # ALIGN TO TOP
         
         p1_name = PROF_MAP.get(int(build.primary_prof) if build.primary_prof.isdigit() else 0, "No Profession")
         p2_name = PROF_MAP.get(int(build.secondary_prof) if build.secondary_prof.isdigit() else 0, "No Profession")
         p1 = PROF_SHORT_MAP.get(p1_name, "X")
         p2 = PROF_SHORT_MAP.get(p2_name, "X")
         
-        lbl_prof = QLabel(f"{p1}/{p2}")
+        lbl_prof = QLabel(f"{p1}/{p2}", self) # Parented
         lbl_prof.setStyleSheet(f"color: {get_color('text_tertiary')}; font-weight: bold; font-size: 14px; border: none; background: transparent;")
         lbl_prof.setFixedWidth(50)
         lbl_prof.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        content_layout.addWidget(lbl_prof)
+        self.content_layout.addWidget(lbl_prof)
         
         for sid in build.skill_ids:
             skill_widget = None
             if sid != 0:
                 skill = repo.get_skill(sid, is_pvp=is_pvp)
                 if skill:
-                    skill_widget = DraggableSkillIcon(skill)
+                    skill_widget = DraggableSkillIcon(skill, parent=self, size=icon_size) # Parented
                     skill_widget.setStyleSheet("background: transparent; border: none;")
                     skill_widget.clicked.connect(self.skill_clicked.emit)
             
             if skill_widget:
-                content_layout.addWidget(skill_widget)
+                self.content_layout.addWidget(skill_widget)
             else:
-                placeholder = QFrame()
-                placeholder.setFixedSize(ICON_SIZE, ICON_SIZE)
+                placeholder = QFrame(self) # Parented
+                placeholder.setFixedSize(icon_size, icon_size)
                 placeholder.setStyleSheet(f"background: transparent; border: 1px dashed {get_color('border')};")
-                content_layout.addWidget(placeholder)
+                self.content_layout.addWidget(placeholder)
             
-        content_layout.addStretch() 
+        self.content_layout.addStretch() 
         
         # Right Side Buttons
         btn_vbox = QVBoxLayout()
-        btn_vbox.setSpacing(2)
+        btn_vbox.setSpacing(4)
+        btn_vbox.setAlignment(Qt.AlignmentFlag.AlignTop)
         
-        self.btn_load = QPushButton("Load")
-        self.btn_load.setFixedSize(60, 28)
-        self.btn_load.clicked.connect(lambda: self.clicked.emit(self.build.code))
+        self.btn_populate = QPushButton("Populate", self) # Parented
+        self.btn_populate.setFixedSize(60, 18)
+        self.btn_populate.setStyleSheet("font-size: 9px;")
+        self.btn_populate.setToolTip("Overwrite this slot with the current bar skills and attributes")
+        self.btn_populate.clicked.connect(lambda: self.populate_clicked.emit(self.build))
+        # Only show for user builds
+        is_user = getattr(build, 'is_user_build', False)
+        is_user_cat = build.category in ["User Created", "User Imported"]
+        self.btn_populate.setVisible(is_user or is_user_cat)
+
+        self.btn_edit = QPushButton("Edit", self) # Parented
+        self.btn_edit.setFixedSize(60, 18)
+        self.btn_edit.setStyleSheet("font-size: 9px;")
+        self.btn_edit.setToolTip("Load to bar and Edit")
+        self.btn_edit.clicked.connect(self.toggle_edit_state)
         
-        self.btn_rename = QPushButton("Rename")
+        # Only show Edit button for User Created or User Imported builds
+        is_user = getattr(build, 'is_user_build', False)
+        is_user_cat = build.category in ["User Created", "User Imported"]
+        self.btn_edit.setVisible(is_user or is_user_cat)
+
+        self.btn_import = QPushButton("Import", self) # Parented
+        self.btn_import.setFixedSize(60, 18)
+        self.btn_import.setStyleSheet("font-size: 9px;")
+        self.btn_import.setToolTip("Import a build code from file into this slot")
+        self.btn_import.clicked.connect(lambda: self.import_clicked.emit(self.build))
+        # Only show Import for user builds too
+        self.btn_import.setVisible(is_user or is_user_cat)
+
+        self.btn_load = QPushButton("Load", self) # Parented
+        self.btn_load.setFixedSize(60, 18)
+        self.btn_load.setStyleSheet("font-size: 9px;")
+        self.btn_load.clicked.connect(lambda: self.load_clicked.emit(self.build))
+        
+        self.btn_rename = QPushButton("Rename", self) # Parented
         self.btn_rename.setFixedSize(60, 18)
         self.btn_rename.setStyleSheet("font-size: 9px;")
         self.btn_rename.clicked.connect(lambda: self.rename_clicked.emit(self.build))
         
+        self.btn_wiki = QPushButton("Wiki Page", self) # Parented
+        self.btn_wiki.setFixedSize(60, 18)
+        self.btn_wiki.setStyleSheet("font-size: 9px;")
+        self.btn_wiki.clicked.connect(self.open_wiki)
+        # Only show if URL exists
+        self.btn_wiki.setVisible(bool(getattr(self.build, 'url', '')))
+        
+        btn_vbox.addWidget(self.btn_populate)
+        btn_vbox.addWidget(self.btn_edit)
+        btn_vbox.addWidget(self.btn_import)
         btn_vbox.addWidget(self.btn_load)
         btn_vbox.addWidget(self.btn_rename)
+        btn_vbox.addWidget(self.btn_wiki)
         
         self.refresh_button_style()
-        content_layout.addLayout(btn_vbox)
+        self.content_layout.addLayout(btn_vbox)
         
-        main_layout.addStretch() # Push skills to center
-        main_layout.addLayout(content_layout)
-        main_layout.addStretch() # Push skills to center
-        
+        main_layout.addLayout(self.content_layout)
         self.refresh_theme()
 
+    def toggle_edit_state(self):
+        if self.is_editing:
+            # Was Editing, now Saving
+            self.populate_clicked.emit(self.build)
+            self.reset_edit_state()
+        else:
+            # Was Normal, now Editing
+            self.is_editing = True
+            self.btn_edit.setText("Save")
+            self.btn_edit.setStyleSheet(f"""
+                QPushButton {{
+                    background-color: {get_color('text_warning')}; 
+                    color: #000000; 
+                    border: none; 
+                    border-radius: 4px;
+                    font-weight: bold;
+                    font-size: 9px;
+                }}
+                QPushButton:hover {{
+                    background-color: #FFAA00;
+                }}
+            """)
+            self.edit_clicked.emit(self.build)
+
+    def set_edit_mode(self, active=True):
+        if self.is_editing == active: return
+        self.is_editing = active
+        
+        if self.is_editing:
+            self.btn_edit.setText("Save")
+            self.btn_edit.setStyleSheet(f"""
+                QPushButton {{
+                    background-color: {get_color('text_warning')}; 
+                    color: #000000; 
+                    border: none; 
+                    border-radius: 4px;
+                    font-weight: bold;
+                    font-size: 9px;
+                }}
+                QPushButton:hover {{
+                    background-color: #FFAA00;
+                }}
+            """)
+        else:
+            self.btn_edit.setText("Edit")
+            self.refresh_button_style()
+
+    def reset_edit_state(self):
+        self.set_edit_mode(False)
+
+    def open_wiki(self):
+        url = getattr(self.build, 'url', '')
+        if url:
+            QDesktopServices.openUrl(QUrl(url))
+
+    def set_icon_size(self, size):
+        self.setFixedHeight(size + 140) # Dynamic height based on icon size
+        
+        # Update placeholder and skill icon sizes
+        for i in range(self.content_layout.count()):
+            item = self.content_layout.itemAt(i)
+            if not item: continue
+            widget = item.widget()
+            if not widget: continue
+            
+            if isinstance(widget, DraggableSkillIcon):
+                widget.set_icon_size(size)
+            elif isinstance(widget, QFrame): # Placeholder
+                widget.setFixedSize(size, size)
+
     def refresh_theme(self):
-        # Remove the internal box styling. We let the QListWidget handle the item background/hover.
-        self.setStyleSheet("background: transparent; border: none;")
+        self.setStyleSheet(f"""
+            BuildPreviewWidget {{
+                background-color: {get_color('bg_secondary')};
+                border: 1px solid {get_color('border')};
+                border-radius: 8px;
+            }}
+        """)
         if hasattr(self, 'btn_load'):
             self.refresh_button_style()
 
@@ -463,15 +680,26 @@ class BuildPreviewWidget(QFrame): # Restored to QFrame
                 border: none; 
                 border-radius: 4px;
                 font-weight: bold;
+                font-size: 9px;
             }}
             QPushButton:hover {{
                 background-color: {get_color('text_link')};
             }}
         """
+        if hasattr(self, 'btn_populate'):
+            self.btn_populate.setStyleSheet(style)
+        if hasattr(self, 'btn_edit'):
+            # Only apply default style if NOT in edit mode
+            if not getattr(self, 'is_editing', False):
+                self.btn_edit.setStyleSheet(style)
+        if hasattr(self, 'btn_import'):
+            self.btn_import.setStyleSheet(style)
         if hasattr(self, 'btn_load'):
             self.btn_load.setStyleSheet(style)
         if hasattr(self, 'btn_rename'):
             self.btn_rename.setStyleSheet(style)
+        if hasattr(self, 'btn_wiki'):
+            self.btn_wiki.setStyleSheet(style)
 
 class SkillItemDelegate(QStyledItemDelegate):
     """
@@ -551,7 +779,7 @@ class SkillLibraryWidget(QListWidget):
         self.setUniformItemSizes(True)
         self.setDragEnabled(True)
         self.setAcceptDrops(True)
-        self.setDropIndicatorShown(True) # NEW: Show where item will land
+        self.setDropIndicatorShown(True)
         self.setSelectionMode(QListWidget.SelectionMode.SingleSelection)
         self.setSpacing(5)
         self.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
@@ -620,8 +848,14 @@ class SkillLibraryWidget(QListWidget):
             list_item.setData(Qt.ItemDataRole.UserRole, sid)
             
             confidence_pct = int(score * 100)
+            attr_name = skill.get_attribute_str()
+            type_str = f"<i>{skill.skill_type.title()}</i><br/>" if skill.skill_type else ""
+            attr_str = f"<i>{attr_name}</i><br/>" if skill.attribute != -1 else ""
+
             tooltip_text = (
                 f"<b>{skill.name}</b><br/>"
+                f"{attr_str}"
+                f"{type_str}"
                 f"<span style='color:{get_color('text_accent')};'>Match: {reason}</span><br/>"
                 f"Confidence: {confidence_pct}%<br/><hr/>"
                 f"{skill.description}"
@@ -658,14 +892,25 @@ class SkillLibraryWidget(QListWidget):
             list_item = QListWidgetItem()
             list_item.setText(skill.name)
             list_item.setData(Qt.ItemDataRole.UserRole, sid)
-            list_item.setToolTip(f"<b>{skill.name}</b><br>{skill.description}")
+            
+            attr_name = skill.get_attribute_str()
+            type_str = f"<i>{skill.skill_type.title()}</i><br/>" if skill.skill_type else ""
+            attr_str = f"<i>{attr_name}</i><br/>" if skill.attribute != -1 else ""
+            
+            list_item.setToolTip(f"<b>{skill.name}</b><br/>{attr_str}{type_str}<hr/>{skill.description}")
             
             icon_path = os.path.join(ICON_DIR, skill.icon_filename)
             if os.path.exists(icon_path):
-                pix = QPixmap(icon_path).scaled(
-                    self.delegate.icon_size, self.delegate.icon_size,
-                    Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
-                )
+                current_size = self.delegate.icon_size
+                key = f"{skill.icon_filename}_{current_size}"
+                if key in PIXMAP_CACHE:
+                    pix = PIXMAP_CACHE[key]
+                else:
+                    pix = QPixmap(icon_path).scaled(
+                        current_size, current_size,
+                        Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
+                    )
+                    PIXMAP_CACHE[key] = pix
                 list_item.setIcon(QIcon(pix))
             
             self.addItem(list_item)
@@ -687,6 +932,16 @@ class SkillLibraryWidget(QListWidget):
 
     def set_icon_size(self, size):
         self.delegate.icon_size = size
+        
+        # Propagate to BuildPreviewWidgets if they exist
+        for i in range(self.count()):
+            item = self.item(i)
+            widget = self.itemWidget(item)
+            if isinstance(widget, BuildPreviewWidget):
+                widget.set_icon_size(size)
+                # Adjust item size hint
+                item.setSizeHint(QSize(500, widget.sizeHint().height()))
+        
         self.model().layoutChanged.emit()
         self.viewport().update()
 
@@ -786,6 +1041,21 @@ class SkillLibraryWidget(QListWidget):
 
     def paintEvent(self, event):
         super().paintEvent(event)
+        
+        # Show placeholder text if empty
+        if self.count() == 0:
+            painter = QPainter(self.viewport())
+            painter.setPen(QColor(get_color("text_tertiary")))
+            # Use a reasonably sized font
+            font = painter.font()
+            font.setPointSize(12)
+            painter.setFont(font)
+            
+            rect = self.viewport().rect()
+            text = "Select a category or teambuild to view"
+            painter.drawText(rect, Qt.AlignmentFlag.AlignCenter | Qt.TextFlag.TextWordWrap, text)
+            painter.end()
+
         if self.drop_row != -1:
             from PyQt6.QtGui import QPen
             painter = QPainter(self.viewport())

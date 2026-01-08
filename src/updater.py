@@ -5,12 +5,13 @@ import subprocess
 import requests
 import tempfile
 import time
+import platform # Added for better OS detection
 from packaging import version
 from PyQt6.QtCore import QObject, pyqtSignal, QThread
 from src.constants import resource_path
 
 class UpdateCheckWorker(QThread):
-    result = pyqtSignal(object) # (version, url, notes) or None
+    result = pyqtSignal(object) 
     error = pyqtSignal(str)
 
     def __init__(self, url):
@@ -28,9 +29,10 @@ class UpdateCheckWorker(QThread):
             self.error.emit(str(e))
 
 class UpdateChecker(QObject):
-    update_available = pyqtSignal(str, str, str) # version, url, release_notes
+    update_available = pyqtSignal(str, str, str)
     no_update = pyqtSignal()
     error = pyqtSignal(str)
+    finished = pyqtSignal()
 
     def __init__(self):
         super().__init__()
@@ -51,18 +53,29 @@ class UpdateChecker(QObject):
     def check(self):
         if not self.version_url:
             self.error.emit("No version URL found.")
+            self.finished.emit()
             return
 
         self.worker = UpdateCheckWorker(self.version_url)
         self.worker.result.connect(self._on_result)
-        self.worker.error.connect(self.error)
+        self.worker.error.connect(self._on_error)
         self.worker.start()
+
+    def _on_error(self, err_msg):
+        self.error.emit(err_msg)
+        self.finished.emit()
 
     def _on_result(self, data):
         try:
             remote_version = data.get('version')
-            # Static URL as requested
-            download_url = "https://bookah.savvy-stuff.dev/Bookah_Setup.exe"
+            
+            # OS-Dependent Download Link
+            base_url = "https://bookah.savvy-stuff.dev"
+            if sys.platform == 'win32':
+                download_url = f"{base_url}/Bookah_Setup.exe"
+            else:
+                download_url = f"{base_url}/Bookah_Linux.zip"
+
             release_notes = data.get('updates', "No release notes available.")
 
             if remote_version and version.parse(remote_version) > version.parse(self.current_version):
@@ -71,10 +84,12 @@ class UpdateChecker(QObject):
                 self.no_update.emit()
         except Exception as e:
             self.error.emit(str(e))
+        finally:
+            self.finished.emit()
 
 class UpdateDownloader(QThread):
     progress = pyqtSignal(int)
-    finished = pyqtSignal(str) # path to downloaded file
+    finished = pyqtSignal(str)
     error = pyqtSignal(str)
 
     def __init__(self, url):
@@ -85,10 +100,10 @@ class UpdateDownloader(QThread):
         try:
             temp_dir = tempfile.gettempdir()
             
-            # Extract filename from URL (e.g., BookahSetup.exe)
             filename = self.url.split('/')[-1].split('?')[0]
             if not filename:
-                filename = "BookahSetup.exe"
+                # Fallback names based on platform
+                filename = "Bookah_Setup.exe" if sys.platform == 'win32' else "Bookah_Linux.zip"
             
             local_filename = os.path.join(temp_dir, filename)
             
@@ -107,26 +122,44 @@ class UpdateDownloader(QThread):
                             f.write(chunk)
                             done = int(100 * dl / total_length)
                             self.progress.emit(done)
+
+            # Grant Execute Permissions (Linux)
+            if sys.platform != 'win32':
+                try:
+                    st = os.stat(local_filename)
+                    os.chmod(local_filename, st.st_mode | 0o111)
+                except:
+                    pass 
                             
             self.finished.emit(local_filename)
         except Exception as e:
             self.error.emit(str(e))
 
 def install_and_restart(file_path):
-    """
-    Launches the external installer and exits the current application.
-    This allows the installer to overwrite files that would otherwise be 'in use'.
-    """
     try:
         if sys.platform == 'win32':
-            # os.startfile handles UAC elevation prompts correctly for installers
             os.startfile(file_path)
+            sys.exit(0)
         else:
-            # For Linux/macOS (if applicable)
-            subprocess.Popen(['open' if sys.platform == 'darwin' else 'xdg-open', file_path])
-        
-        # Exit application immediately
-        sys.exit(0)
+            current_executable = sys.executable
+            app_folder = os.path.dirname(current_executable)
+            parent_folder = os.path.dirname(app_folder)
+            
+            script_path = os.path.join(tempfile.gettempdir(), "update_bookah.sh")
+            
+            # 1. Kill the app. 2. Unzip over the top. 3. Fix permissions. 4. Restart.
+            script_content = f"""#!/bin/bash
+sleep 3
+pkill -9 -f "Bookah"
+unzip -o "{file_path}" -d "{parent_folder}"
+chmod -R +x "{app_folder}"
+"{current_executable}" &
+"""
+            with open(script_path, "w") as f:
+                f.write(script_content)
+            
+            os.chmod(script_path, 0o755)
+            subprocess.Popen(['/bin/bash', script_path], start_new_session=True)
+            sys.exit(0)
     except Exception as e:
         print(f"Error launching installer: {e}")
-        # We don't exit if launch failed, so the user can see the error

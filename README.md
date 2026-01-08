@@ -4,7 +4,7 @@ A build maker for Guild Wars 1 with PvX wiki integrated and a "Smart Mode" that 
 
 ## Technical Architecture
 
-The system is built on a tripartite analysis engine:
+The system is built on a three part analysis engine:
 
 1.  **Behavioral Engine (Word2Vec)**: Implements `SkillBrain` utilizing `Gensim` to analyze historical meta-build data (via `skill_vectors.model`). It treats build sequences as "sentences" to identify statistical correlations and frequent skill pairings.
 2.  **Semantic Engine (Sentence-Transformers)**: Uses `Sentence-BERT` to process raw skill descriptions. It maps mechanical relationships (e.g., condition providers vs. consumers) into high-dimensional vector space (`description_embeddings.pt`).
@@ -12,7 +12,7 @@ The system is built on a tripartite analysis engine:
 
 ## Core Components
 
-*   **`bookah.py`**: Entry point for the primary UI application (built with `tkinter` / `customtkinter`).
+*   **`bookah.py`**: Entry point for the primary UI application (built with `PyQt6`).
 *   **`analyzer.py`**: Standalone utility for generating interactive synergy maps using `pyvis` and `networkx`.
 *   **`src/engine.py`**: The primary logic hub for skill filtering, suggestion ranking, and team context management.
 *   **`src/skill2vec.py`**: Interface for neural embedding lookups and vector similarity calculations.

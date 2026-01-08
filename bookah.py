@@ -1,11 +1,17 @@
 import sys
 import os
-from PyQt6.QtWidgets import QApplication, QSplashScreen
+from PyQt6.QtWidgets import QApplication, QSplashScreen, QProxyStyle, QStyle
 from PyQt6.QtGui import QPixmap, QCursor, QIcon
 from PyQt6.QtCore import Qt, QTimer
 from src.ui.main_window import MainWindow
 from src.constants import resource_path, JSON_FILE, DB_FILE
 from src.engine import SynergyEngine 
+
+class TooltipProxyStyle(QProxyStyle):
+    def styleHint(self, hint, option=None, widget=None, returnData=None):
+        if hint == QStyle.StyleHint.SH_ToolTip_WakeUpDelay:
+            return 350
+        return super().styleHint(hint, option, widget, returnData)
 
 if __name__ == "__main__":
     # Fix Taskbar Icon on Windows
@@ -16,6 +22,7 @@ if __name__ == "__main__":
 
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
+    app.setStyle(TooltipProxyStyle(app.style()))
     
     # --- Crash Handler ---
     def crash_handler(exctype, value, tb):
@@ -37,12 +44,12 @@ if __name__ == "__main__":
     # ---------------------
     
     # App Icon
-    icon_path = resource_path("icons/bookah_icon.ico")
+    icon_path = resource_path(os.path.join("icons", "bookah_icon.ico"))
     if os.path.exists(icon_path):
         app.setWindowIcon(QIcon(icon_path))
     
     # Splash Screen
-    logo_path = resource_path("icons/bookah_logo.png")
+    logo_path = resource_path(os.path.join("icons", "bookah_logo.png"))
     pixmap = QPixmap(logo_path)
     
     if not pixmap.isNull():
@@ -67,22 +74,18 @@ if __name__ == "__main__":
     splash.show()
     app.processEvents()
     
-    # --- LOAD ENGINE WHILE SPLASH IS SHOWING ---
+    # Load Engine
     print("Loading Synergy Engine...")
-    # This trains the neural net if needed
     synergy_engine = SynergyEngine(JSON_FILE, DB_FILE)
     
-    # Initialize Main Window with the loaded engine
+    # Initialize Main Window
     window = MainWindow(engine=synergy_engine)
     
     def show_main():
         window.show()
         splash.finish(window)
         
-    # Enforce minimum 2 second splash (or until loaded)
-    # Since loading happens synchronously above, the timer starts AFTER load.
-    # So 100ms is fine just to yield UI loop, but user wanted "splash screen visible".
-    # We can use 2000ms to be safe/nice.
+    # Splash screen display timing
     QTimer.singleShot(2000, show_main)
     
     sys.exit(app.exec())
