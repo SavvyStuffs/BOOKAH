@@ -473,12 +473,12 @@ class BuildPreviewWidget(QFrame):
         self.is_editing = False
         
         # Dynamic height based on icon size
-        self.setFixedHeight(icon_size + 140) 
+        self.setFixedHeight(icon_size + 150) 
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         
         main_layout = QVBoxLayout(self)
-        main_layout.setContentsMargins(10, 2, 10, 5) # Further reduced margins
-        main_layout.setSpacing(2) # Tighter spacing
+        main_layout.setContentsMargins(10, 0, 10, 5) 
+        main_layout.setSpacing(0) 
 
         # 1. Top Row: Build Name (Compact)
         if hasattr(build, 'name') and build.name:
@@ -490,12 +490,24 @@ class BuildPreviewWidget(QFrame):
         else:
             # Small spacer to keep layout consistent
             main_layout.addSpacing(2)
+            
+        main_layout.addSpacing(2)
 
-        # 2. Bottom Row: Info and Icons
+        # 2. Bottom Row: Main Container
         self.content_layout = QHBoxLayout()
         self.content_layout.setSpacing(10)
-        self.content_layout.setContentsMargins(0, 5, 0, 0)
-        self.content_layout.setAlignment(Qt.AlignmentFlag.AlignTop) # ALIGN TO TOP
+        self.content_layout.setContentsMargins(0, 0, 0, 0)
+        self.content_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+        
+        # --- LEFT SIDE: Skills (Wrapped to allow independent spacing) ---
+        skills_wrapper = QVBoxLayout()
+        skills_wrapper.setContentsMargins(0, 0, 0, 0)
+        skills_wrapper.setSpacing(0)
+        skills_wrapper.addSpacing(10) # Push skills down
+        
+        skills_inner = QHBoxLayout()
+        skills_inner.setSpacing(10)
+        skills_inner.setContentsMargins(0, 0, 0, 0)
         
         p1_name = PROF_MAP.get(int(build.primary_prof) if build.primary_prof.isdigit() else 0, "No Profession")
         p2_name = PROF_MAP.get(int(build.secondary_prof) if build.secondary_prof.isdigit() else 0, "No Profession")
@@ -506,7 +518,7 @@ class BuildPreviewWidget(QFrame):
         lbl_prof.setStyleSheet(f"color: {get_color('text_tertiary')}; font-weight: bold; font-size: 14px; border: none; background: transparent;")
         lbl_prof.setFixedWidth(50)
         lbl_prof.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.content_layout.addWidget(lbl_prof)
+        skills_inner.addWidget(lbl_prof)
         
         for sid in build.skill_ids:
             skill_widget = None
@@ -518,19 +530,21 @@ class BuildPreviewWidget(QFrame):
                     skill_widget.clicked.connect(self.skill_clicked.emit)
             
             if skill_widget:
-                self.content_layout.addWidget(skill_widget)
+                skills_inner.addWidget(skill_widget)
             else:
                 placeholder = QFrame(self) # Parented
                 placeholder.setFixedSize(icon_size, icon_size)
                 placeholder.setStyleSheet(f"background: transparent; border: 1px dashed {get_color('border')};")
-                self.content_layout.addWidget(placeholder)
-            
+                skills_inner.addWidget(placeholder)
+        
+        skills_wrapper.addLayout(skills_inner)
+        self.content_layout.addLayout(skills_wrapper)
         self.content_layout.addStretch() 
         
-        # Right Side Buttons
+        # --- RIGHT SIDE: Buttons (Stays at top) ---
         btn_vbox = QVBoxLayout()
         btn_vbox.setSpacing(4)
-        btn_vbox.setAlignment(Qt.AlignmentFlag.AlignTop)
+        btn_vbox.setContentsMargins(0, 0, 0, 0)
         
         self.btn_populate = QPushButton("Populate", self) # Parented
         self.btn_populate.setFixedSize(60, 18)
@@ -588,7 +602,7 @@ class BuildPreviewWidget(QFrame):
         self.refresh_button_style()
         self.content_layout.addLayout(btn_vbox)
         
-        main_layout.addLayout(self.content_layout)
+        main_layout.addLayout(self.content_layout, 1)
         self.refresh_theme()
 
     def toggle_edit_state(self):
