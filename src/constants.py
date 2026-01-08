@@ -24,9 +24,6 @@ else:
     APP_ROOT = os.path.abspath(".")
     USER_DIR = os.path.join(APP_ROOT, "data")
 
-# Local data directory for models and user builds
-USER_DIR = os.path.join(APP_ROOT, "data")
-
 if not os.path.exists(USER_DIR):
     os.makedirs(USER_DIR)
 
