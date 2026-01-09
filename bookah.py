@@ -1,5 +1,18 @@
 import sys
 import os
+import platform
+if platform.system() == 'Linux':
+    print("[Linux] Detecting environment...")
+
+    os.environ["QT_QPA_PLATFORM"] = "xcb"
+    
+    # 2. DISABLE GPU ACCELERATION
+    os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = "--disable-gpu"
+    
+    # 3. DISABLE SANDBOX 
+    os.environ["QTWEBENGINE_DISABLE_SANDBOX"] = "1"
+    
+    print("[Linux] Applied stability patches: XCB backend forced, GPU disabled.")
 from PyQt6.QtWidgets import QApplication, QSplashScreen, QProxyStyle, QStyle
 from PyQt6.QtGui import QPixmap, QCursor, QIcon
 from PyQt6.QtCore import Qt, QTimer
