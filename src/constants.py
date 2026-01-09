@@ -39,20 +39,29 @@ if not os.path.exists(USER_BUILDS_FILE):
         json.dump([], f)
 
 # 3. AI Models
-BEHAVIOR_MODEL_PATH = resource_path('skill_vectors.model')
-SEMANTIC_MODEL_PATH = resource_path('description_embeddings.pt')
 
-if not os.path.exists(BEHAVIOR_MODEL_PATH) and os.path.exists(_BUNDLED_BEHAVIOR):
-    try:
-        shutil.copy2(_BUNDLED_BEHAVIOR, BEHAVIOR_MODEL_PATH)
-    except Exception:
-        pass 
+# A. Define Internal Read-Only Source (The file inside the AppImage/Exe)
+_BUNDLED_BEHAVIOR = resource_path('skill_vectors.model')
+_BUNDLED_SEMANTIC = resource_path('description_embeddings.pt')
 
-if not os.path.exists(SEMANTIC_MODEL_PATH) and os.path.exists(_BUNDLED_SEMANTIC):
+# B. Define External Writable Destination (The file in User/Home/Data folder)
+BEHAVIOR_MODEL_PATH = os.path.join(USER_DIR, 'skill_vectors.model')
+SEMANTIC_MODEL_PATH = os.path.join(USER_DIR, 'description_embeddings.pt')
+
+# C. Extraction Logic: Copy from Internal -> External if missing
+if not os.path.exists(BEHAVIOR_MODEL_PATH):
     try:
-        shutil.copy2(_BUNDLED_SEMANTIC, SEMANTIC_MODEL_PATH)
-    except Exception:
-        pass
+        if os.path.exists(_BUNDLED_BEHAVIOR):
+            shutil.copy2(_BUNDLED_BEHAVIOR, BEHAVIOR_MODEL_PATH)
+    except Exception as e:
+        print(f"Error copying behavior model: {e}")
+
+if not os.path.exists(SEMANTIC_MODEL_PATH):
+    try:
+        if os.path.exists(_BUNDLED_SEMANTIC):
+            shutil.copy2(_BUNDLED_SEMANTIC, SEMANTIC_MODEL_PATH)
+    except Exception as e:
+        print(f"Error copying semantic model: {e}")
 
 # --- Static Data (Bundled in EXE) ---
 DB_FILE = resource_path('master.db') 
