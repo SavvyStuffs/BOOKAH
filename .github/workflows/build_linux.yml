@@ -35,8 +35,7 @@ jobs:
           sudo apt-get install -y \
             libxcb-cursor0 libxkbcommon-x11-0 libxcb-icccm4 libxcb-image0 \
             libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 libxcb-xinerama0 \
-            libnss3 libxcomposite1 libxcursor1 libasound2 \
-            libegl1-mesa libgl1-mesa-glx
+            libgl1-mesa-dev
 
       - name: Install Python Dependencies
         run: |
