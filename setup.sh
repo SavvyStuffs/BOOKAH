@@ -9,8 +9,7 @@ RUN_SCRIPT_PATH="$SCRIPT_DIR/run.sh"
 
 # Dependencies
 QT_LIBS="libxcb-cursor0 libxkbcommon-x11-0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 libxcb-xinerama0"
-WEB_LIBS="libnss3 libxcomposite1 libxcursor1 libasound2"
-REQUIRED_PACKAGES="$QT_LIBS $WEB_LIBS"
+REQUIRED_PACKAGES="$QT_LIBS"
 
 echo "=== Bookah Setup ==="
 
