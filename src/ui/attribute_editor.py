@@ -31,9 +31,9 @@ class AttributeEditor(QFrame):
         
         title_layout.addStretch()
         
-        lbl_hr = QLabel("HR Bonus:")
-        lbl_hr.setStyleSheet(f"font-size: 10px; color: {get_color('text_primary')};")
-        title_layout.addWidget(lbl_hr)
+        self.lbl_hr = QLabel("HR Bonus:")
+        self.lbl_hr.setStyleSheet(f"font-size: 10px; color: {get_color('text_primary')};")
+        title_layout.addWidget(self.lbl_hr)
         
         self.hr_combo = QComboBox()
         self.hr_combo.addItems([str(i) for i in range(5)])
@@ -104,6 +104,21 @@ class AttributeEditor(QFrame):
                 lbl.setStyleSheet(f"color: {get_color('text_warning')}; font-size: 13px; border: none; font-weight: bold;")
             else:
                 lbl.setStyleSheet(f"color: {get_color('text_secondary')}; font-size: 13px; border: none; font-weight: bold;")
+
+        # HR Bonus
+        if hasattr(self, 'lbl_hr'):
+            self.lbl_hr.setStyleSheet(f"font-size: 10px; color: {get_color('text_primary')};")
+        if hasattr(self, 'hr_combo'):
+            self.hr_combo.setStyleSheet(f"""
+                QComboBox {{ 
+                    background-color: {get_color('btn_bg')}; 
+                    color: {get_color('btn_text')}; 
+                    border: 1px solid {get_color('slot_border')}; 
+                    padding-left: 2px;
+                    font-size: 10px;
+                }}
+                QComboBox::drop-down {{ border: none; width: 0px; }}
+            """)
 
     def set_professions(self, primary_id, secondary_id, active_skills: List[Skill] = None, extra_attrs: List[int] = None):
         self.primary_id = primary_id # Store for dynamic updates

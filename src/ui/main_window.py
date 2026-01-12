@@ -1,18 +1,13 @@
 import sys
 import os
 import json
+import webbrowser
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QComboBox, QLabel, QSplitter, 
     QTabWidget, QCheckBox, QPushButton, QFileDialog, QMessageBox, QFrame, QLineEdit, QApplication, QListWidgetItem, QListWidget, QSizePolicy, QGridLayout, QStyle, QProgressDialog, QStackedWidget
 )
 from PyQt6.QtCore import Qt, QTimer, QUrl, QThread, pyqtSignal, QSize, QSettings
 from PyQt6.QtGui import QIcon, QPixmap
-
-try:
-    from PyQt6.QtWebEngineWidgets import QWebEngineView
-    HAS_WEBENGINE = True
-except ImportError:
-    HAS_WEBENGINE = False
 
 from src.constants import DB_FILE, JSON_FILE, PROF_MAP, PROF_SHORT_MAP, resource_path, ICON_DIR, ICON_SIZE, PIXMAP_CACHE, PROF_PRIMARY_ATTR, ATTR_MAP, PROF_ATTRS
 from src.database import SkillRepository
@@ -146,7 +141,7 @@ class FilterWorker(QThread):
 class SynergyWorker(QThread):
     results_ready = pyqtSignal(list)
 
-    def __init__(self, engine, active_skill_ids, prof_id=0, mode="legacy", debug=False, is_pre=False, allowed_campaigns=None, is_pvp=False, attr_dist=None, total_energy=30):
+    def __init__(self, engine, active_skill_ids, prof_id=0, mode="legacy", debug=False, is_pre=False, allowed_campaigns=None, is_pvp=False, attr_dist=None, total_energy=30, ignore_limits=False):
         super().__init__()
         self.engine = engine
         self.active_skill_ids = active_skill_ids
@@ -158,6 +153,7 @@ class SynergyWorker(QThread):
         self.is_pvp = is_pvp
         self.attr_dist = attr_dist or {}
         self.total_energy = total_energy
+        self.ignore_limits = ignore_limits
         self._is_interrupted = False
 
     def run(self):
@@ -172,7 +168,8 @@ class SynergyWorker(QThread):
                 is_pvp=self.is_pvp,
                 primary_prof_id=self.prof_id,
                 attr_dist=self.attr_dist,
-                max_energy=self.total_energy
+                max_energy=self.total_energy,
+                ignore_limits=self.ignore_limits
             )
             
             if not self.isInterruptionRequested():
@@ -207,6 +204,17 @@ class MainWindow(QMainWindow):
             self.engine = SynergyEngine(JSON_FILE, DB_FILE)
             
         # self.smart_engine removed - functionality merged into SynergyEngine
+        
+        # Load Skill Names for Search
+        self.skill_name_map = {}
+        try:
+            import sqlite3
+            with sqlite3.connect(DB_FILE) as conn:
+                cursor = conn.execute("SELECT skill_id, name FROM skills UNION SELECT skill_id, name FROM skills_pvp")
+                for sid, name in cursor.fetchall():
+                    self.skill_name_map[sid] = name.lower()
+        except Exception as e:
+            print(f"Failed to load skill map: {e}")
         
         # State
         self.bar_skills = [None] * 8 
@@ -356,16 +364,30 @@ class MainWindow(QMainWindow):
 
     def init_map_ui(self, parent_widget):
         layout = QVBoxLayout(parent_widget)
-        if HAS_WEBENGINE:
-            try:
-                view = QWebEngineView()
-                file_path = resource_path("synergy_map.html")
-                view.load(QUrl.fromLocalFile(file_path))
-                layout.addWidget(view)
-            except Exception as e:
-                layout.addWidget(QLabel(f"Error loading map: {e}"))
-        else:
-            layout.addWidget(QLabel("PyQt6-WebEngine is not installed."))
+        layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        
+        self.lbl_map_info = QLabel("The Synergy Map visualizes skill relationships and communities.\nIt is best viewed in your full web browser.")
+        self.lbl_map_info.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.lbl_map_info.setStyleSheet(f"color: {get_color('text_primary')}; font-size: 14px; margin-bottom: 20px;")
+        layout.addWidget(self.lbl_map_info)
+        
+        self.btn_map_open = QPushButton("Open Interactive Synergy Map")
+        self.btn_map_open.setFixedSize(250, 50)
+        self.btn_map_open.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_map_open.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {get_color('btn_bg')}; 
+                color: {get_color('btn_text')}; 
+                font-size: 14px; 
+                font-weight: bold; 
+                border-radius: 8px;
+            }}
+            QPushButton:hover {{
+                background-color: {get_color('btn_bg_hover')};
+            }}
+        """)
+        self.btn_map_open.clicked.connect(lambda: webbrowser.open(QUrl.fromLocalFile(resource_path("synergy_map.html")).toString()))
+        layout.addWidget(self.btn_map_open)
 
     def apply_theme(self, mode):
         # Update Global Theme State & Palette
@@ -435,10 +457,33 @@ class MainWindow(QMainWindow):
             self.btn_reset.setStyleSheet(f"background-color: {get_color('bg_hover')}; color: {get_color('text_warning')}; border-radius: 4px;")
 
         if hasattr(self, 'btn_prof_select'):
-            self.btn_prof_select.setStyleSheet(f"color: {get_color('text_tertiary')}; font-weight: bold; background: transparent; border: 1px solid {get_color('border')}; border-radius: 4px; padding: 2px 5px;")
+            self.btn_prof_select.setStyleSheet(f"color: {get_color('text_primary')}; font-weight: bold; background: transparent; border: 1px solid {get_color('border')}; border-radius: 4px; padding: 2px 5px;")
+
+        if hasattr(self, 'btn_load_file'):
+            self.btn_load_file.setStyleSheet(f"color: {get_color('text_primary')}; font-weight: bold; background: transparent; border: 1px solid {get_color('border')}; border-radius: 4px; padding: 2px 5px;")
+
+        if hasattr(self, 'check_search_desc'):
+            self.check_search_desc.setStyleSheet(f"font-size: 10px; color: {get_color('text_primary')};")
 
         if hasattr(self, 'check_smart_mode'):
             self.check_smart_mode.setStyleSheet(f"color: {get_color('text_link')}; font-weight: bold;")
+
+        # Synergy Map (Browser mode)
+        if hasattr(self, 'lbl_map_info'):
+            self.lbl_map_info.setStyleSheet(f"color: {get_color('text_primary')}; font-size: 14px; margin-bottom: 20px;")
+        if hasattr(self, 'btn_map_open'):
+            self.btn_map_open.setStyleSheet(f"""
+                QPushButton {{
+                    background-color: {get_color('btn_bg')}; 
+                    color: {get_color('btn_text')}; 
+                    font-size: 14px; 
+                    font-weight: bold; 
+                    border-radius: 8px;
+                }}
+                QPushButton:hover {{
+                    background-color: {get_color('btn_bg_hover')};
+                }}
+            """)
 
     def update_team_dropdown(self):
         selected_cat = self.combo_cat.currentText()
@@ -475,7 +520,8 @@ class MainWindow(QMainWindow):
         self.apply_filters()
         
         # Visibility Update for Build Search
-        show_search = (selected_cat != "All")
+        final_team = self.combo_team.currentText()
+        show_search = (selected_cat != "All") or (final_team != "All")
         self.edit_build_search.setVisible(show_search)
 
     def on_team_changed(self, text):
@@ -645,6 +691,7 @@ class MainWindow(QMainWindow):
         
         self.check_pve_only = QCheckBox("PvE Only")
         self.check_pve_only.toggled.connect(self.apply_filters)
+        self.check_pve_only.toggled.connect(self.update_suggestions)
 
         self.check_pre = QCheckBox("Pre")
         self.check_pre.toggled.connect(self.apply_filters)
@@ -956,7 +1003,7 @@ class MainWindow(QMainWindow):
         # --- Control Layout (Right Side) ---
         control_layout = QVBoxLayout()
         
-        self.check_show_others = QCheckBox("Show Other\nProfessions")
+        self.check_show_others = QCheckBox("Show Other Professions")
         self.check_show_others.toggled.connect(self.update_suggestions)
         control_layout.addWidget(self.check_show_others)
 
@@ -964,6 +1011,10 @@ class MainWindow(QMainWindow):
         self.check_lock_suggestions.toggled.connect(self.update_suggestions)
         control_layout.addWidget(self.check_lock_suggestions)
         
+        self.check_apply_filters = QCheckBox("Apply Checkbox Filters")
+        self.check_apply_filters.toggled.connect(self.update_suggestions)
+        control_layout.addWidget(self.check_apply_filters)
+
         self.check_smart_mode = QCheckBox("Smart Mode")
         self.check_smart_mode.setStyleSheet("color: #FFD700; font-weight: bold;")
         self.check_smart_mode.toggled.connect(self.on_smart_mode_toggled)
@@ -1377,6 +1428,8 @@ class MainWindow(QMainWindow):
             self.check_no_elites.setChecked(False)
             self.check_no_elites.blockSignals(False)
         self.apply_filters()
+        if hasattr(self, 'check_apply_filters') and self.check_apply_filters.isChecked():
+            self.update_suggestions()
 
     def toggle_no_elites(self, checked):
         if checked:
@@ -1384,6 +1437,8 @@ class MainWindow(QMainWindow):
             self.check_elites_only.setChecked(False)
             self.check_elites_only.blockSignals(False)
         self.apply_filters()
+        if hasattr(self, 'check_apply_filters') and self.check_apply_filters.isChecked():
+            self.update_suggestions()
 
     def handle_skill_clicked(self, skill: Skill):
         self.current_selected_skill_id = skill.id
@@ -1529,7 +1584,26 @@ class MainWindow(QMainWindow):
     def _apply_name_filter(self, builds):
         text = self.edit_build_search.text().lower().strip()
         if not text: return builds
-        return [b for b in builds if text in b.name.lower()]
+        
+        filtered = []
+        for b in builds:
+            # Match Build Name
+            if text in b.name.lower():
+                filtered.append(b)
+                continue
+                
+            # Match Skill Names
+            found_skill = False
+            for sid in b.skill_ids:
+                s_name = self.skill_name_map.get(sid, "")
+                if text in s_name:
+                    found_skill = True
+                    break
+            
+            if found_skill:
+                filtered.append(b)
+                
+        return filtered
 
     def show_team_builds(self, team_name):
         # We target the Team View (Center) via _populate_build_list
@@ -2027,6 +2101,17 @@ class MainWindow(QMainWindow):
             skill = self.repo.get_skill(sid, is_pvp=is_pvp)
             if not skill: continue
             
+            # --- Checkbox Filters ---
+            if hasattr(self, 'check_apply_filters') and self.check_apply_filters.isChecked():
+                if hasattr(self, 'check_pve_only') and self.check_pve_only.isChecked():
+                    if not skill.is_pve_only: continue
+                if hasattr(self, 'check_pre') and self.check_pre.isChecked():
+                    if not skill.in_pre: continue
+                if hasattr(self, 'check_elites_only') and self.check_elites_only.isChecked():
+                    if not skill.is_elite: continue
+                if hasattr(self, 'check_no_elites') and self.check_no_elites.isChecked():
+                    if skill.is_elite: continue
+            
             # Duplicate prevention by name (Secondary check)
             clean_name = skill.name.lower().replace(" (pvp)", "").strip()
             if clean_name in equipped_names:
@@ -2109,9 +2194,15 @@ class MainWindow(QMainWindow):
 
         dist = self.attr_editor.get_distribution()
         current_max_energy = self.character_panel.get_total_energy()
+        
+        # Check if we should ignore elite/heal limits
+        ignore_limits = False
+        if hasattr(self, 'check_apply_filters') and self.check_apply_filters.isChecked():
+            if hasattr(self, 'check_elites_only') and self.check_elites_only.isChecked():
+                ignore_limits = True
 
         # ALWAYS use self.engine (Neural/Hybrid)
-        self.worker = SynergyWorker(self.engine, active_ids, pid, mode, debug=is_debug, is_pre=is_pre, allowed_campaigns=allowed_campaigns, is_pvp=is_pvp, attr_dist=dist, total_energy=current_max_energy)
+        self.worker = SynergyWorker(self.engine, active_ids, pid, mode, debug=is_debug, is_pre=is_pre, allowed_campaigns=allowed_campaigns, is_pvp=is_pvp, attr_dist=dist, total_energy=current_max_energy, ignore_limits=ignore_limits)
         self.worker.results_ready.connect(self.on_synergies_loaded)
         self.worker.start()
 
@@ -2207,7 +2298,8 @@ class MainWindow(QMainWindow):
             self.attr_editor.set_professions(p1, p2, active_skill_objs)
             
             # 2. Update Attributes
-            attr_dist = {a[0]: a[1] for a in build.attributes}
+            raw_attrs = build.attributes or []
+            attr_dist = {a[0]: a[1] for a in raw_attrs}
             self.attr_editor.set_distribution(attr_dist)
             
             # 3. Sync Main Window State variables so Code Box updates correctly

@@ -9,7 +9,8 @@ def resource_path(relative_path):
         # PyInstaller creates a temp folder and stores path in _MEIPASS
         base_path = sys._MEIPASS
     except Exception:
-        base_path = os.path.abspath(".")
+        # Use the directory where this file is located (src/) and go up one level
+        base_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     return os.path.join(base_path, relative_path)
 
 # --- Application Directories ---
@@ -18,7 +19,8 @@ if getattr(sys, 'frozen', False):
     APP_ROOT = os.path.dirname(sys.executable)
 else:
     # Running as a script
-    APP_ROOT = os.path.abspath(".")
+    # Use the directory where this file is located (src/) and go up one level
+    APP_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # Local data directory for models and user builds
 USER_DIR = os.path.join(APP_ROOT, "data")

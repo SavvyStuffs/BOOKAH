@@ -1,41 +1,40 @@
 # -*- mode: python ; coding: utf-8 -*-
 from PyInstaller.utils.hooks import collect_all
 
-# 1. Collect all the heavy libraries
+# 1. Collect PyQt6
 tmp_binaries, tmp_datas, tmp_hiddenimports = collect_all('PyQt6')
-web_bin, web_dat, web_hidden = collect_all('PyQt6.QtWebEngineCore')
-wid_bin, wid_dat, wid_hidden = collect_all('PyQt6.QtWebEngineWidgets')
 
 a = Analysis(
     ['bookah.py'],
     pathex=[],
-    binaries=tmp_binaries + web_bin,
+    binaries=tmp_binaries,
     datas=[
-        ('all_skills.json', '.'), 
-        ('master.db', '.'), 
-        ('skills_aq.db', '.'), 
-        ('skill_vectors.model', '.'), 
-        ('description_embeddings.pt', '.'), 
-        ('synergy_map.html', '.'), 
-        ('icons', 'icons'), 
-        ('version.json', '.'), 
-        ('user_manual.txt', '.'), 
-        ('LICENSE', '.'), 
+        ('all_skills.json', '.'),
+        ('master.db', '.'),
+        ('skills_aq.db', '.'),
+        ('skill_vectors.model', '.'),
+        ('description_embeddings.pt', '.'),
+        ('synergy_map.html', '.'),
+        ('icons', 'icons'),
+        ('version.json', '.'),
+        ('user_manual.txt', '.'),
+        ('LICENSE', '.'),
         ('third_party_notices.txt', '.')
-    ] + tmp_datas + web_dat,
+    ] + tmp_datas,
     hiddenimports=[
-        'PyQt6.QtWebEngineWidgets', 
-        'PyQt6.QtWebEngineCore', 
         'sklearn.utils._typedefs',
         'scipy.special.cython_special'
-    ] + tmp_hiddenimports + web_hidden,
+    ] + tmp_hiddenimports,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    
+
     excludes=[
-        'tkinter', 'matplotlib', 'notebook', 'jedi', 
-        'nvidia', 'PIL', 'pytest', 'pip'
+        'tkinter', 'matplotlib', 'notebook', 'jedi',
+        'nvidia', 'PIL', 'pytest', 'pip',
+        'PyQt6.QtWebEngineWidgets',
+        'PyQt6.QtWebEngineCore',
+        'PyQt6.QtWebEngineQuick'
     ],
     # ---------------------------
     noarchive=False,
@@ -53,7 +52,7 @@ exe = EXE(
     bootloader_ignore_signals=False,
     strip=False,
     upx=True,
-    console=True, 
+    console=True,
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,
