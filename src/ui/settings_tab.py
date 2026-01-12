@@ -4,7 +4,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt, pyqtSignal, QSettings, QUrl
 from PyQt6.QtGui import QPalette, QColor, QDesktopServices, QIcon
-from src.ui.dialogs import FeedbackDialog, WebBrowserDialog
+from src.ui.dialogs import FeedbackDialog
 
 class SettingsTab(QWidget):
     theme_changed = pyqtSignal(str) # Emits "Dark", "Light", or "Auto"
@@ -125,11 +125,12 @@ class SettingsTab(QWidget):
         footer_layout.addStretch()
         
         # Version Label
+        from src.constants import resource_path
         import json
         import os
         version = "Unknown"
         try:
-            with open("version.json", "r") as f:
+            with open(resource_path("version.json"), "r") as f:
                 v_data = json.load(f)
                 version = v_data.get("version", "Unknown")
         except:

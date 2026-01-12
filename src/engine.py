@@ -68,6 +68,7 @@ class BuildState:
     def __init__(self, primary_prof_id=0, attr_dist=None, max_energy=None):
         # Casters: Monk(3), Necro(4), Mesmer(5), Ele(6), Rit(8)
         self.is_caster = primary_prof_id in [3, 4, 5, 6, 8]
+        self.is_assassin_primary = (primary_prof_id == 7)
         
         self.elite_count = 0
         self.attr_dist = attr_dist or {}
@@ -96,9 +97,12 @@ class BuildState:
         self.hexes_applied = False
         
         self.combo_stages = set()
+        self.lead_count = 0
+        self.offhand_count = 0
+        self.dual_count = 0
         self.conditions_applied = set()
         self.active_attributes = set() # Track used attributes
-        
+
         # --- Weapon Tracking ---
         self.primary_weapon = None
         self.WEAPON_MAP = {
@@ -122,7 +126,7 @@ class BuildState:
     def ingest_skill(self, skill, tags=None):
         """
         Reads a skill row from the DB and updates the System Context.
-        DB Index: 0:id, 1:name, 2:desc, 3:nrg, 4:act, 5:rech, 6:adr, 7:hp, 8:aft, 9:combo, 10:elite, 11:attr
+        DB Index: 0:id, 1:name, 2:desc, 3:nrg, 4:act, 5:rech, 6:adr, 7:hp, 8:aft, 9:combo, 10:elite, 11:attr, 12:target_type, 13:profession, 14:skill_type
         """
         if tags is None: tags = set()
         name = skill[1].lower()
@@ -130,13 +134,18 @@ class BuildState:
         nrg = skill[3] or 0
         rech = skill[5] or 0.0
         attr = skill[11] or -1
+        stype = skill[14].lower() if len(skill) > 14 and skill[14] else ""
         
         if attr != -1:
             self.active_attributes.add(attr)
         
         # 1. Physics: Energy Entropy
-        if rech > 0:
-            self.energy_drain_per_sec += (nrg / rech)
+        effective_rech = rech
+        if "attack" in stype:
+            effective_rech = max(rech, 4.0)
+
+        if effective_rech > 0:
+            self.energy_drain_per_sec += (nrg / effective_rech)
             
         # 2. Law of Occupancy & Mechanics
         if skill[10]: self.elite_count += 1
@@ -148,6 +157,11 @@ class BuildState:
         if "enchantment" in desc: self.active_enchantments += 1
         if "knock down" in desc or "knocks down" in desc: self.knockdowns = True
         
+        # Assassin Attack Chains
+        if stype == "lead attack": self.lead_count += 1
+        elif stype == "off-hand attack": self.offhand_count += 1
+        elif stype == "dual attack": self.dual_count += 1
+
         # 3. Causal Detection (With Negative Lookbehind)
         conditions = ['burning', 'bleeding', 'dazed', 'deep wound', 'weakness', 'poison']
         for c in conditions:
@@ -250,10 +264,24 @@ class MechanicsEngine:
     def check_energy_drain(self, candidate_row, context):
         nrg = candidate_row[3] or 0
         rech = candidate_row[5] or 0.0
-        if rech > 0:
-            candidate_eps = nrg / rech
+        
+        # Dynamic index for skill_type: 12 (Validation Query) vs 14 (Synergy Query)
+        idx_stype = 14 if len(candidate_row) >= 15 else 12
+        
+        stype = ""
+        if len(candidate_row) > idx_stype and candidate_row[idx_stype]:
+            val = candidate_row[idx_stype]
+            if isinstance(val, str):
+                stype = val.lower()
+
+        effective_rech = rech
+        if "attack" in stype:
+            effective_rech = max(rech, 4.0)
+            
+        if effective_rech > 0:
+            candidate_eps = nrg / effective_rech
             total_drain = context.energy_drain_per_sec + candidate_eps
-            limit = 4.0 if context.is_caster else 2.5
+            limit = 4.0 if (context.is_caster or context.is_assassin_primary) else 2.5
             if total_drain > limit: return True, "⚠️ High Energy Usage"
         return True, "OK"
 
@@ -442,7 +470,7 @@ class MechanicsEngine:
             conn = sqlite3.connect(self.db_path)
             table = self._get_table()
             
-            query = f"SELECT skill_id, name, description, energy_cost, activation, recharge, adrenaline, health_cost, aftercast, combo_req, is_elite, attribute FROM {table} WHERE skill_id = ?"
+            query = f"SELECT skill_id, name, description, energy_cost, activation, recharge, adrenaline, health_cost, aftercast, combo_req, is_elite, attribute, skill_type FROM {table} WHERE skill_id = ?"
             cursor = conn.execute(query, (skill_id,))
             skill_data = cursor.fetchone()
             conn.close()
@@ -474,7 +502,7 @@ class MechanicsEngine:
             conn = sqlite3.connect(self.db_path)
             table = self._get_table()
             
-            cols = "skill_id, name, description, energy_cost, activation, recharge, adrenaline, health_cost, aftercast, combo_req, is_elite, attribute, target_type, profession"
+            cols = "skill_id, name, description, energy_cost, activation, recharge, adrenaline, health_cost, aftercast, combo_req, is_elite, attribute, target_type, profession, skill_type"
             placeholders = ','.join(['?'] * len(active_skill_ids))
             
             q_active = f"SELECT {cols} FROM {table} WHERE skill_id IN ({placeholders})"
@@ -662,13 +690,38 @@ class MechanicsEngine:
                     self._process_matches(conn, q_boost, list(existing_ids), root, context, synergies, debug_mode, "Boosts Healing", stop_check, has_mantra=has_mantra)
 
                 # --- 12. LAW OF CHAINS (Combos) ---
-                root_combo = root[9] or 0
-                if "lead attack" in root_desc: # Root provides Lead
-                    q = f"SELECT {cols} FROM {table} WHERE combo_req = 1 AND skill_id NOT IN ({','.join(['?']*len(existing_ids))})"
-                    self._process_matches(conn, q, list(existing_ids), root, context, synergies, debug_mode, "Combo: Off-Hand", stop_check, has_mantra=has_mantra)
-                elif root_combo == 1: # Root is Off-Hand (provides Off-Hand state)
-                    q = f"SELECT {cols} FROM {table} WHERE combo_req = 2 AND skill_id NOT IN ({','.join(['?']*len(existing_ids))})"
-                    self._process_matches(conn, q, list(existing_ids), root, context, synergies, debug_mode, "Combo: Dual", stop_check, has_mantra=has_mantra)
+                root_stype = root[14].lower() if len(root) > 14 and root[14] else ""
+                
+                # Check for "counts as lead attack" overrides
+                if "counts as a lead attack" in root_desc:
+                    root_stype = "lead attack"
+                
+                if root_stype == "lead attack":
+                    # Suggest Off-Hand if missing
+                    if context.offhand_count == 0:
+                        q = f"SELECT {cols} FROM {table} WHERE skill_type = 'off-hand attack' AND skill_id NOT IN ({','.join(['?']*len(existing_ids))})"
+                        self._process_matches(conn, q, list(existing_ids), root, context, synergies, debug_mode, "Combo: Off-Hand", stop_check, has_mantra=has_mantra)
+
+                elif root_stype == "off-hand attack":
+                    # Suggest Lead if missing (Backwards)
+                    if context.lead_count == 0:
+                        q = f"SELECT {cols} FROM {table} WHERE (skill_type = 'lead attack' OR description LIKE '%counts as a lead attack%') AND skill_id NOT IN ({','.join(['?']*len(existing_ids))})"
+                        self._process_matches(conn, q, list(existing_ids), root, context, synergies, debug_mode, "Combo: Lead", stop_check, has_mantra=has_mantra)
+                    
+                    # Suggest Dual if missing (Forward)
+                    if context.dual_count == 0:
+                        q = f"SELECT {cols} FROM {table} WHERE skill_type = 'dual attack' AND skill_id NOT IN ({','.join(['?']*len(existing_ids))})"
+                        self._process_matches(conn, q, list(existing_ids), root, context, synergies, debug_mode, "Combo: Dual", stop_check, has_mantra=has_mantra)
+
+                elif root_stype == "dual attack":
+                    # Suggest Off-Hand if missing (Backwards)
+                    if context.offhand_count == 0:
+                        q = f"SELECT {cols} FROM {table} WHERE skill_type = 'off-hand attack' AND skill_id NOT IN ({','.join(['?']*len(existing_ids))})"
+                        self._process_matches(conn, q, list(existing_ids), root, context, synergies, debug_mode, "Combo: Off-Hand", stop_check, has_mantra=has_mantra)
+                        
+                    # Suggest Dual-Follow-ups (e.g. Moebius Strike)
+                    q = f"SELECT {cols} FROM {table} WHERE description LIKE '%must follow a dual attack%' AND skill_id NOT IN ({','.join(['?']*len(existing_ids))})"
+                    self._process_matches(conn, q, list(existing_ids), root, context, synergies, debug_mode, "Combo: Finisher", stop_check, has_mantra=has_mantra)
 
                 # 14. LAW OF DEGENERATION (Entropy)
                 if is_degen_prov:
@@ -979,7 +1032,7 @@ class SynergyEngine:
             print(f"[Engine] Summary Error: {e}")
             return []
 
-    def get_suggestions(self, active_skill_ids: List[int], limit=100, category=None, team=None, min_overlap=None, mode="legacy", is_pre=False, allowed_campaigns=None, is_pvp=False, primary_prof_id=0, attr_dist=None, max_energy=30) -> List[tuple]:
+    def get_suggestions(self, active_skill_ids: List[int], limit=100, category=None, team=None, min_overlap=None, mode="legacy", is_pre=False, allowed_campaigns=None, is_pvp=False, primary_prof_id=0, attr_dist=None, max_energy=30, ignore_limits=False) -> List[tuple]:
         # ...
         # 1. Cold Start Check
         if not active_skill_ids:
@@ -1192,7 +1245,7 @@ class SynergyEngine:
             is_elite = bool(row[0]) if row else False
 
             if is_elite:
-                if elite_count >= limit_elite: continue
+                if not ignore_limits and elite_count >= limit_elite: continue
                 elite_count += 1
 
             if reason == "Missing Self Heal":

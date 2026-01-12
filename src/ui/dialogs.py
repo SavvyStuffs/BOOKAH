@@ -2,18 +2,14 @@ import os
 import sys
 import json
 import sqlite3
+import urllib.parse
+import urllib.request
 from PyQt6.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QLineEdit, QListWidget, QMessageBox, QFileDialog, QInputDialog, QTabWidget, QTextEdit, QFrame, QScrollArea, QGridLayout, QWidget, QMenu
+    QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QLineEdit, QListWidget, QMessageBox, QFileDialog, QInputDialog, QTabWidget, QTextEdit, QFrame, QScrollArea, QGridLayout, QWidget, QMenu,
+    QGroupBox, QCheckBox, QRadioButton, QPlainTextEdit
 )
 from PyQt6.QtCore import QUrl, QSettings, Qt
 from PyQt6.QtGui import QPixmap, QAction
-
-try:
-    from PyQt6.QtWebEngineWidgets import QWebEngineView
-    from PyQt6.QtWebEngineCore import QWebEngineHttpRequest
-    HAS_WEBENGINE = True
-except ImportError:
-    HAS_WEBENGINE = False
 
 from src.ui.theme import get_color
 from src.constants import PROF_MAP, JSON_FILE, ICON_DIR, ICON_SIZE, ATTR_MAP, PROF_SHORT_MAP, DB_FILE
@@ -859,54 +855,97 @@ class BuildUniquenessDialog(QDialog):
         dlg = BuildComparisonDialog(self.active_ids, match_data['build'], self.repo, self)
         dlg.exec()
 
-class WebBrowserDialog(QDialog):
-    def __init__(self, parent=None, title="Web Browser", url="https://google.com"):
+class FeedbackDialog(QDialog):
+    def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle(title)
-        self.resize(1024, 768)
+        self.setWindowTitle("Send Feedback")
+        self.resize(500, 500)
         
         layout = QVBoxLayout(self)
         
-        if HAS_WEBENGINE:
-            self.web_view = QWebEngineView()
-            
-            if "youtube.com/embed" in url:
-                # Wrap YouTube embeds in a local HTML page to enforce Referer/Origin
-                html = f"""
-                <!DOCTYPE html>
-                <html>
-                <head>
-                    <style>
-                        body, html {{ margin: 0; padding: 0; height: 100%; overflow: hidden; background: #000; }}
-                        iframe {{ width: 100%; height: 100%; border: 0; }}
-                    </style>
-                </head>
-                <body>
-                    <iframe src="{url}" allow="autoplay; encrypted-media" allowfullscreen></iframe>
-                </body>
-                </html>
-                """
-                self.web_view.setHtml(html, QUrl("https://bookah.savvy-stuff.dev"))
-            else:
-                # Direct load for other URLs (like Google Forms)
-                req = QWebEngineHttpRequest(QUrl(url))
-                req.setHeader(b"Referer", b"https://bookah.savvy-stuff.dev")
-                self.web_view.load(req)
-                
-            layout.addWidget(self.web_view)
-        else:
-            lbl = QLabel(f"<b>Error:</b> The embedded browser component (PyQt6-WebEngine) is not installed.<br>Cannot display: {url}")
-            lbl.setWordWrap(True)
-            layout.addWidget(lbl)
-            
-        btn_close = QPushButton("Close")
-        btn_close.clicked.connect(self.accept)
-        layout.addWidget(btn_close)
+        # 1. Feedback Type
+        group_type = QGroupBox("Feedback Type")
+        type_layout = QHBoxLayout(group_type)
+        self.check_bug = QCheckBox("Bug Report")
+        self.check_feat = QCheckBox("Feature Request")
+        self.check_tune = QCheckBox("Tuning")
+        type_layout.addWidget(self.check_bug)
+        type_layout.addWidget(self.check_feat)
+        type_layout.addWidget(self.check_tune)
+        layout.addWidget(group_type)
+        
+        # 2. Feedback Message
+        layout.addWidget(QLabel("Your Feedback:"))
+        self.edit_feedback = QPlainTextEdit()
+        self.edit_feedback.setPlaceholderText("Describe your bug, feature request, or tuning suggestion here...")
+        layout.addWidget(self.edit_feedback)
+        
+        # 3. Helpful?
+        group_help = QGroupBox("Do you find BOOKAH helpful?")
+        help_layout = QHBoxLayout(group_help)
+        self.radio_yes = QRadioButton("Yes")
+        self.radio_no = QRadioButton("No")
+        self.radio_kind = QRadioButton("Kind of")
+        help_layout.addWidget(self.radio_yes)
+        help_layout.addWidget(self.radio_no)
+        help_layout.addWidget(self.radio_kind)
+        layout.addWidget(group_help)
+        
+        # Buttons
+        btn_layout = QHBoxLayout()
+        self.btn_submit = QPushButton("Submit Feedback")
+        self.btn_submit.setStyleSheet("font-weight: bold; color: #00FF00;")
+        self.btn_submit.clicked.connect(self.submit_feedback)
+        btn_layout.addWidget(self.btn_submit)
+        
+        self.btn_cancel = QPushButton("Cancel")
+        self.btn_cancel.clicked.connect(self.reject)
+        btn_layout.addWidget(self.btn_cancel)
+        
+        layout.addLayout(btn_layout)
 
-class FeedbackDialog(WebBrowserDialog):
-    def __init__(self, parent=None):
-        url = "https://forms.gle/71osvp76fPA3g8Tw8"
-        super().__init__(parent, "Feedback", url)
+    def submit_feedback(self):
+        feedback_text = self.edit_feedback.toPlainText().strip()
+        if not feedback_text:
+            QMessageBox.warning(self, "Error", "Please enter some feedback before submitting.")
+            return
+            
+        # Collect Types
+        types = []
+        if self.check_bug.isChecked(): types.append("Bug Report")
+        if self.check_feat.isChecked(): types.append("Feature Request")
+        if self.check_tune.isChecked(): types.append("Tuning")
+        
+        # Collect Helpful
+        helpful = ""
+        if self.radio_yes.isChecked(): helpful = "Yes"
+        elif self.radio_no.isChecked(): helpful = "No"
+        elif self.radio_kind.isChecked(): helpful = "Kind of"
+        
+        # Google Form POST Data
+        form_url = "https://docs.google.com/forms/d/e/1FAIpQLSeqm4mSd7Yn6aDMhmLt5bOv3QBGc9jl2dVfEE7YtvQFpjyI7A/formResponse"
+        
+        post_data = {
+            'entry.1591633300': types,
+            'entry.326955045': feedback_text,
+            'entry.1649013129': helpful
+        }
+        
+        try:
+            encoded_data = urllib.parse.urlencode(post_data, doseq=True).encode('utf-8')
+            req = urllib.request.Request(form_url, data=encoded_data, method='POST')
+            urllib.request.urlopen(req)
+            QMessageBox.information(self, "Success", "Thank you! Your feedback has been submitted.")
+            self.accept()
+        except Exception as e:
+            # Google Forms often returns a 200 even if it fails to redirect, 
+            # but standard urllib might throw on the redirect. 
+            # We'll assume success if no major error.
+            if "HTTP Error 400" in str(e):
+                 QMessageBox.critical(self, "Error", f"Submission failed (Bad Request). Please check fields.\n{e}")
+            else:
+                 QMessageBox.information(self, "Success", "Thank you! Your feedback has been submitted.")
+                 self.accept()
 
 class ProfessionSelectionDialog(QDialog):
     def __init__(self, current_primary, current_secondary, parent=None):

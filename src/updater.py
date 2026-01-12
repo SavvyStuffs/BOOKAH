@@ -77,6 +77,10 @@ class UpdateChecker(QObject):
                 download_url = f"{base_url}/Bookah_Linux.zip"
 
             release_notes = data.get('updates', "No release notes available.")
+            bug_fixes = data.get('bug_fixes', "")
+            
+            if bug_fixes:
+                release_notes += "\n\nBug Fixes:\n" + bug_fixes
 
             if remote_version and version.parse(remote_version) > version.parse(self.current_version):
                 self.update_available.emit(remote_version, download_url, release_notes)
