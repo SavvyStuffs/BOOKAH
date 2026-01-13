@@ -291,11 +291,19 @@ class MainWindow(QMainWindow):
             self.pending_update = None
             QTimer.singleShot(500, lambda: self._show_update_dialog(new_version, download_url, release_notes))
 
+    def is_flatpak(self):
+        return os.path.exists('/.flatpak-info')
+
     def _show_update_dialog(self, new_version, download_url, release_notes=""):
         msg = f"A new version ({new_version}) is available.\n\n"
         if release_notes:
             msg += f"Updates:\n{release_notes}\n\n"
-        msg += "Do you want to download and update now?"
+        
+        in_flatpak = self.is_flatpak()
+        if in_flatpak:
+            msg += "Since you are using the Flatpak version, you must download the update manually from our website.\n\nDo you want to visit the website now?"
+        else:
+            msg += "Do you want to download and update now?"
         
         reply = QMessageBox.question(
             self, 
@@ -305,7 +313,10 @@ class MainWindow(QMainWindow):
         )
         
         if reply == QMessageBox.StandardButton.Yes:
-            self.start_update(download_url)
+            if in_flatpak:
+                webbrowser.open(download_url)
+            else:
+                self.start_update(download_url)
         else:
             # If they chose No, continue to tutorial
             self.tutorial_manager.show_if_needed()
@@ -386,7 +397,38 @@ class MainWindow(QMainWindow):
                 background-color: {get_color('btn_bg_hover')};
             }}
         """)
-        self.btn_map_open.clicked.connect(lambda: webbrowser.open(QUrl.fromLocalFile(resource_path("synergy_map.html")).toString()))
+        
+        def open_map():
+            import shutil
+            src_html = resource_path("synergy_map.html")
+            
+            # On Linux/Flatpak, use the Cache folder so browsers can see the files
+            if sys.platform != 'win32':
+                try:
+                    # ~/.cache/bookah is standard for Linux temp data
+                    cache_dir = os.path.expanduser("~/.cache/bookah")
+                    html_dst = os.path.join(cache_dir, "synergy_map.html")
+                    icon_dst = os.path.join(cache_dir, "icons/skill_icons")
+                    
+                    os.makedirs(os.path.dirname(icon_dst), exist_ok=True)
+                    
+                    # 1. Sync icons once (first click only)
+                    if not os.path.exists(icon_dst):
+                        print(f"One-time icon sync to {cache_dir}...")
+                        shutil.copytree(resource_path("icons/skill_icons"), icon_dst)
+                    
+                    # 2. Always copy latest HTML
+                    shutil.copy2(src_html, html_dst)
+                    
+                    webbrowser.open(QUrl.fromLocalFile(html_dst).toString())
+                    return
+                except Exception as e:
+                    print(f"Linux map workaround failed: {e}")
+            
+            # Standard open for Windows
+            webbrowser.open(QUrl.fromLocalFile(src_html).toString())
+
+        self.btn_map_open.clicked.connect(open_map)
         layout.addWidget(self.btn_map_open)
 
     def apply_theme(self, mode):
@@ -1684,6 +1726,7 @@ class MainWindow(QMainWindow):
                 widget.load_clicked.connect(self.handle_build_load)
                 widget.skill_clicked.connect(self.handle_skill_clicked)
                 widget.rename_clicked.connect(self.handle_build_rename)
+                widget.remove_clicked.connect(self.handle_build_remove)
                 widget.populate_clicked.connect(self.handle_build_populate)
                 widget.edit_clicked.connect(self.handle_build_edit_start)
                 widget.import_clicked.connect(self.handle_build_import)
@@ -1814,6 +1857,22 @@ class MainWindow(QMainWindow):
         
         if build == self.build_on_bar:
             QMessageBox.information(self, "Success", f"Build slot '{build.name}' updated.")
+
+    def handle_build_remove(self, build):
+        # Directly remove from engine builds list
+        if build in self.engine.builds:
+            self.engine.builds.remove(build)
+            
+            # Save the updated library
+            self.engine.save_user_builds()
+            
+            # Refresh current view
+            team_name = self.combo_team.currentText()
+            cat_name = self.combo_cat.currentText()
+            if team_name != "All":
+                self.show_team_builds(team_name)
+            else:
+                self.show_category_builds(cat_name)
 
     def handle_build_rename(self, build):
         from PyQt6.QtWidgets import QInputDialog
@@ -2403,6 +2462,9 @@ class MainWindow(QMainWindow):
 
     def load_build_from_file(self):
         last_dir = self.settings.value("last_load_dir", "")
+        if not last_dir:
+            last_dir = os.path.expanduser("~/Documents")
+            
         file_path, _ = QFileDialog.getOpenFileName(self, "Load Build Template", last_dir, "Build Templates (*.txt);;All Files (*)")
         if file_path:
             # Save the directory for next time

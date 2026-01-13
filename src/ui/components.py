@@ -458,17 +458,20 @@ class SkillInfoPanel(QFrame):
         self.details.setText("<br/>".join(analysis))
 
 class BuildPreviewWidget(QFrame):
-    load_clicked = pyqtSignal(Build) 
-    skill_clicked = pyqtSignal(Skill) 
-    rename_clicked = pyqtSignal(Build) 
-    populate_clicked = pyqtSignal(Build)
-    edit_clicked = pyqtSignal(Build)
+    load_clicked = pyqtSignal(Build)
+    rename_clicked = pyqtSignal(Build)
     import_clicked = pyqtSignal(Build)
-
+    populate_clicked = pyqtSignal(Build)
+    remove_clicked = pyqtSignal(Build)
+    skill_clicked = pyqtSignal(object)
+    edit_requested = pyqtSignal(Build) 
+    edit_clicked = pyqtSignal(Build)   
+    
     def __init__(self, build: Build, repo, is_pvp=False, parent=None, icon_size=64):
         super().__init__(parent)
         self.build = build
         self.repo = repo
+        self.is_pvp = is_pvp
         self.icon_size = icon_size
         self.is_editing = False
         
@@ -546,16 +549,6 @@ class BuildPreviewWidget(QFrame):
         btn_vbox.setSpacing(4)
         btn_vbox.setContentsMargins(0, 0, 0, 0)
         
-        self.btn_populate = QPushButton("Populate", self) # Parented
-        self.btn_populate.setFixedSize(60, 18)
-        self.btn_populate.setStyleSheet("font-size: 9px;")
-        self.btn_populate.setToolTip("Overwrite this slot with the current bar skills and attributes")
-        self.btn_populate.clicked.connect(lambda: self.populate_clicked.emit(self.build))
-        # Only show for user builds
-        is_user = getattr(build, 'is_user_build', False)
-        is_user_cat = build.category in ["User Created", "User Imported"]
-        self.btn_populate.setVisible(is_user or is_user_cat)
-
         self.btn_edit = QPushButton("Edit", self) # Parented
         self.btn_edit.setFixedSize(60, 18)
         self.btn_edit.setStyleSheet("font-size: 9px;")
@@ -584,6 +577,14 @@ class BuildPreviewWidget(QFrame):
         self.btn_rename.setFixedSize(60, 18)
         self.btn_rename.setStyleSheet("font-size: 9px;")
         self.btn_rename.clicked.connect(lambda: self.rename_clicked.emit(self.build))
+
+        self.btn_remove = QPushButton("Remove", self)
+        self.btn_remove.setFixedSize(60, 18)
+        self.btn_remove.setStyleSheet("font-size: 9px; background-color: #552222; color: white;")
+        self.btn_remove.setToolTip("Remove this build from the current team")
+        self.btn_remove.clicked.connect(lambda: self.remove_clicked.emit(self.build))
+        # Only show for user builds
+        self.btn_remove.setVisible(is_user or is_user_cat)
         
         self.btn_wiki = QPushButton("Wiki Page", self) # Parented
         self.btn_wiki.setFixedSize(60, 18)
@@ -592,11 +593,11 @@ class BuildPreviewWidget(QFrame):
         # Only show if URL exists
         self.btn_wiki.setVisible(bool(getattr(self.build, 'url', '')))
         
-        btn_vbox.addWidget(self.btn_populate)
         btn_vbox.addWidget(self.btn_edit)
         btn_vbox.addWidget(self.btn_import)
         btn_vbox.addWidget(self.btn_load)
         btn_vbox.addWidget(self.btn_rename)
+        btn_vbox.addWidget(self.btn_remove)
         btn_vbox.addWidget(self.btn_wiki)
         
         self.refresh_button_style()

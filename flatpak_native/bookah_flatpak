@@ -1,0 +1,6 @@
+#!/bin/bash
+# Launcher for BOOKAH within Flatpak (Native Bundle)
+# Allow Qt to auto-detect platform (Wayland/X11)
+unset QT_QPA_PLATFORM
+cd /app/share/bookah
+./Bookah_Linux "$@"

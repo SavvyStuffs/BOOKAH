@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=BOOKAH
+Comment=Build Optimization & Organization for Knowledge-Agnostic Hominids
+Exec=bookah_flatpak
+Icon=dev.savvy_stuff.Bookah
+Type=Application
+Terminal=false
+Categories=Game;Utility;
+Keywords=Guild Wars;GW;Build;Optimizer;

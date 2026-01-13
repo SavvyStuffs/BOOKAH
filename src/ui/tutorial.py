@@ -457,7 +457,7 @@ class TutorialManager:
             {
                 "widget": None, # Set in action
                 "title": "Edit Build",
-                "desc": "Click Edit to load the build to the main bar. Switch to the skill library, make your changes, then switch back to the Teams view and click Save to update the slot. Use populate to add your equipped skills to an empty build, Import to add an existing build from your Templates, and Load to apply it to your bar.",
+                "desc": "Click Edit to load the build to the main bar. Switch to the skill library, make your changes, then switch back to the Teams view and click Save to update the slot. Use Import to add an existing build from your Templates, and Load to apply it to your bar.",
                 "action": lambda: self._highlight_edit_button()
             },
             {

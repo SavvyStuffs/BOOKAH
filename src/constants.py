@@ -23,10 +23,18 @@ else:
     APP_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # Local data directory for models and user builds
-USER_DIR = os.path.join(APP_ROOT, "data")
+if sys.platform == 'win32':
+    USER_DIR = os.path.join(APP_ROOT, "data")
+else:
+    # Linux / Flatpak / Mac
+    USER_DIR = os.path.expanduser("~/.bookah_data")
 
 if not os.path.exists(USER_DIR):
-    os.makedirs(USER_DIR)
+    try:
+        os.makedirs(USER_DIR, exist_ok=True)
+    except Exception as e:
+        import tempfile
+        USER_DIR = tempfile.gettempdir()
 
 # 1. System Database (Read-Only bundled version)
 JSON_FILE = resource_path('all_skills.json')

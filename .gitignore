@@ -16,6 +16,7 @@ tmp/
 /dist
 *.spec
 Bookah_Installer.iss
+venv/
 
 # Misc
 /tests
