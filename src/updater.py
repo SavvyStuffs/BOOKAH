@@ -74,7 +74,7 @@ class UpdateChecker(QObject):
             if sys.platform == 'win32':
                 download_url = f"{base_url}/Bookah_Setup.exe"
             else:
-                download_url = f"{base_url}/Bookah_Linux.zip"
+                download_url = f"{base_url}/Bookah.flatpak"
 
             release_notes = data.get('updates', "No release notes available.")
             bug_fixes = data.get('bug_fixes', "")
