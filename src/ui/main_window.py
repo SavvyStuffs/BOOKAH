@@ -504,6 +504,9 @@ class MainWindow(QMainWindow):
         if hasattr(self, 'btn_load_file'):
             self.btn_load_file.setStyleSheet(f"color: {get_color('text_primary')}; font-weight: bold; background: transparent; border: 1px solid {get_color('border')}; border-radius: 4px; padding: 2px 5px;")
 
+        if hasattr(self, 'btn_export_build'):
+            self.btn_export_build.setStyleSheet(f"color: {get_color('text_primary')}; font-weight: bold; background: transparent; border: 1px solid {get_color('border')}; border-radius: 4px; padding: 2px 5px;")
+
         if hasattr(self, 'check_search_desc'):
             self.check_search_desc.setStyleSheet(f"font-size: 10px; color: {get_color('text_primary')};")
 
@@ -1067,18 +1070,28 @@ class MainWindow(QMainWindow):
 
         # --- Build Code Box (Rightmost) ---
         self.code_box = QFrame()
-        self.code_box.setFixedWidth(250)
+        self.code_box.setFixedWidth(312)
         code_layout = QVBoxLayout(self.code_box)
         
         header_layout = QHBoxLayout()
-        self.btn_load_file = QPushButton("Builds")
+        self.btn_load_file = QPushButton("Import")
+        self.btn_load_file.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.btn_load_file.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_load_file.setToolTip("Click to load a build template file")
         self.btn_load_file.clicked.connect(self.load_build_from_file)
         self.btn_load_file.setStyleSheet(f"color: {get_color('text_primary')}; font-weight: bold; background: transparent; border: 1px solid {get_color('border')}; border-radius: 4px; padding: 2px 5px;")
         header_layout.addWidget(self.btn_load_file)
+
+        self.btn_export_build = QPushButton("Export")
+        self.btn_export_build.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.btn_export_build.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_export_build.setToolTip("Export current build to file")
+        self.btn_export_build.clicked.connect(self.export_current_build)
+        self.btn_export_build.setStyleSheet(f"color: {get_color('text_primary')}; font-weight: bold; background: transparent; border: 1px solid {get_color('border')}; border-radius: 4px; padding: 2px 5px;")
+        header_layout.addWidget(self.btn_export_build)
         
         self.btn_prof_select = QPushButton("Prof: X/X")
+        self.btn_prof_select.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.btn_prof_select.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_prof_select.setToolTip("Click to select professions manually")
         self.btn_prof_select.clicked.connect(self.open_prof_selection)
@@ -1086,12 +1099,11 @@ class MainWindow(QMainWindow):
         header_layout.addWidget(self.btn_prof_select)
         
         self.btn_swap_prof = QPushButton("Swap")
-        self.btn_swap_prof.setFixedSize(40, 20)
+        self.btn_swap_prof.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.btn_swap_prof.setStyleSheet("font-size: 10px; padding: 0px;")
         self.btn_swap_prof.clicked.connect(self.swap_professions)
         header_layout.addWidget(self.btn_swap_prof)
         
-        header_layout.addStretch()
         code_layout.addLayout(header_layout)
         
         self.edit_code = QLineEdit()
@@ -1385,6 +1397,37 @@ class MainWindow(QMainWindow):
             """)
 
 
+    def export_current_build(self):
+        code = self.edit_code.text().strip()
+        if not code:
+            QMessageBox.warning(self, "Export Error", "No build code to export.")
+            return
+
+        last_dir = self.settings.value("last_export_dir", "")
+        
+        # Suggest a filename based on current profession
+        p1 = PROF_SHORT_MAP.get(PROF_MAP.get(self.current_primary_prof, "X"), "X")
+        p2 = PROF_SHORT_MAP.get(PROF_MAP.get(self.current_secondary_prof, "X"), "X")
+        default_name = f"Build_{p1}-{p2}.txt"
+        
+        file_path, _ = QFileDialog.getSaveFileName(self, "Export Build", os.path.join(last_dir, default_name), "Build Templates (*.txt);;All Files (*)")
+        
+        if not file_path:
+            return
+
+        try:
+            # Save dir
+            directory = os.path.dirname(file_path)
+            self.settings.setValue("last_export_dir", directory)
+            
+            with open(file_path, 'w', encoding='utf-8') as f:
+                f.write(code)
+                
+            QMessageBox.information(self, "Success", f"Build exported to:\n{file_path}")
+            
+        except Exception as e:
+            QMessageBox.critical(self, "Export Error", f"Failed to save file: {e}")
+
     def copy_code(self):
         clipboard = QApplication.clipboard()
         clipboard.setText(self.edit_code.text())
@@ -1652,6 +1695,12 @@ class MainWindow(QMainWindow):
         # Left Panel (Skills) remains untouched here (handled by FilterWorker)
         
         matching_builds = [b for b in self.engine.builds if b.team == team_name]
+        
+        # Apply Category Filter if active
+        cat_name = self.combo_cat.currentText()
+        if cat_name != "All":
+            matching_builds = [b for b in matching_builds if b.category == cat_name]
+
         matching_builds = self._apply_profession_filter(matching_builds)
         matching_builds = self._apply_name_filter(matching_builds)
         

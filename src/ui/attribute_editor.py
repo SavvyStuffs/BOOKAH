@@ -69,6 +69,9 @@ class AttributeEditor(QFrame):
         self.current_distribution = {} # {attr_id: rank}
         self.primary_id = 0
         self.hr_bonus = 0
+        self.current_external_bonuses = {}
+        self.current_global_bonus = 0
+        self.native_attributes = set()
         
         self.refresh_theme()
 
@@ -170,6 +173,8 @@ class AttributeEditor(QFrame):
                 if aid >= 0:
                     editable_attrs.add(aid)
 
+        self.native_attributes = editable_attrs # Store for bonus logic
+
         # Sort: Standard attributes first (by name), then PvE attributes
         std_attrs = [a for a in relevant_attrs if a >= 0]
         pve_attrs = [a for a in relevant_attrs if a < 0]
@@ -270,11 +275,18 @@ class AttributeEditor(QFrame):
         bonuses: {attr_id: bonus_val}
         global_bonus: int (e.g. +1 from Grail)
         """
+        self.current_external_bonuses = bonuses
+        self.current_global_bonus = global_bonus
+
         for aid, (lbl, spin) in self.attr_widgets.items():
             base_val = int(spin.currentText())
             
             # Calculate total
-            bonus = bonuses.get(aid, 0) + global_bonus + self.hr_bonus
+            # Global/HR bonuses only apply if we have the attribute (native)
+            if aid in self.native_attributes:
+                bonus = bonuses.get(aid, 0) + global_bonus + self.hr_bonus
+            else:
+                bonus = bonuses.get(aid, 0) # Only specific bonuses (like Weapon) apply
             
             # PvE attributes usually don't get standard bonuses, but let's assume they might get global
             if aid < 0:
@@ -291,6 +303,12 @@ class AttributeEditor(QFrame):
                 lbl.setText(attr_name)
             
             self._update_label_style(aid, bonus)
+
+            # Update Tooltip if it's the primary attribute
+            if self.primary_id in PROF_PRIMARY_ATTR and aid == PROF_PRIMARY_ATTR[self.primary_id]:
+                bonus_text = get_primary_bonus_description(aid, total)
+                if bonus_text:
+                    lbl.setToolTip(f"<b>Primary Bonus:</b><br>{bonus_text}")
 
     def _on_attr_changed(self, attr_id):
         # Calculate what the total would be with the new value
@@ -327,7 +345,16 @@ class AttributeEditor(QFrame):
         # Update Tooltip if it's the primary attribute
         if self.primary_id in PROF_PRIMARY_ATTR:
             if attr_id == PROF_PRIMARY_ATTR[self.primary_id]:
-                bonus_text = get_primary_bonus_description(attr_id, new_val)
+                # Calculate effective rank for tooltip
+                if attr_id in self.native_attributes:
+                    bonus = self.current_external_bonuses.get(attr_id, 0) + self.current_global_bonus + self.hr_bonus
+                else:
+                    bonus = self.current_external_bonuses.get(attr_id, 0)
+                    
+                total = new_val + bonus
+                if total > 20: total = 20
+                
+                bonus_text = get_primary_bonus_description(attr_id, total)
                 if bonus_text:
                     self.attr_widgets[attr_id][0].setToolTip(f"<b>Primary Bonus:</b><br>{bonus_text}")
 

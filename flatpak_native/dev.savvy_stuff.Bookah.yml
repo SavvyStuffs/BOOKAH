@@ -22,6 +22,9 @@ modules:
       # Copy the pre-built PyInstaller contents (which are in the current dir)
       - cp -r . /app/share/bookah/
       
+      # Fix line endings for launcher (Windows compatibility)
+      - sed -i 's/\r$//' bookah_flatpak
+      
       # Install launcher
       - install -D bookah_flatpak /app/bin/bookah_flatpak
       - chmod +x /app/bin/bookah_flatpak

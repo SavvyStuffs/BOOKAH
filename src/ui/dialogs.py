@@ -4,9 +4,11 @@ import json
 import sqlite3
 import urllib.parse
 import urllib.request
+import time
+import hashlib
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QLineEdit, QListWidget, QMessageBox, QFileDialog, QInputDialog, QTabWidget, QTextEdit, QFrame, QScrollArea, QGridLayout, QWidget, QMenu,
-    QGroupBox, QCheckBox, QRadioButton, QPlainTextEdit
+    QGroupBox, QCheckBox, QRadioButton, QPlainTextEdit, QComboBox, QApplication
 )
 from PyQt6.QtCore import QUrl, QSettings, Qt
 from PyQt6.QtGui import QPixmap, QAction
@@ -16,6 +18,7 @@ from src.constants import PROF_MAP, JSON_FILE, ICON_DIR, ICON_SIZE, ATTR_MAP, PR
 from src.utils import GuildWarsTemplateDecoder, GuildWarsTemplateEncoder
 from src.models import Build
 from src.engine import CONDITION_DEFINITIONS
+from src.sharing import ShareCodeManager, ShareWorker
 
 class TeamSummaryDialog(QDialog):
     def __init__(self, team_name, builds, repo, parent=None):
@@ -208,6 +211,321 @@ class NewTeamDialog(QDialog):
     def get_data(self):
         return self.edit_name.text().strip(), self.folder_path
 
+class SharingDialog(QDialog):
+    def __init__(self, parent=None, engine=None, team_name=None):
+        super().__init__(parent)
+        self.setWindowTitle("Share Team")
+        self.resize(400, 300)
+        self.engine = engine
+        self.manager = ShareCodeManager()
+        self.worker = None
+        self.last_cycle_time = 0
+        
+        layout = QVBoxLayout(self)
+        
+        # --- TEAM SELECTION ---
+        layout.addWidget(QLabel("<b>Select Team to Share:</b>"))
+        self.combo_teams = QComboBox()
+        layout.addWidget(self.combo_teams)
+        
+        # --- UPLOAD SECTION ---
+        self.group_upload = QGroupBox("Generate Share Code:")
+        self.group_upload.setStyleSheet(f"QGroupBox {{ font-weight: bold; color: {get_color('text_accent')}; border: 1px solid {get_color('border')}; margin-top: 10px; }} QGroupBox::title {{ subcontrol-origin: margin; left: 10px; padding: 0 5px; }}")
+        upload_layout = QVBoxLayout(self.group_upload)
+        
+        gen_layout = QHBoxLayout()
+        self.edit_generated_code = QLineEdit()
+        self.edit_generated_code.setPlaceholderText("Click cycle to find a code...")
+        gen_layout.addWidget(self.edit_generated_code)
+        
+        self.btn_cycle = QPushButton("↻")
+        self.btn_cycle.setFixedSize(24, 24)
+        self.btn_cycle.setToolTip("Find a new unique code")
+        self.btn_cycle.clicked.connect(self.start_generation)
+        gen_layout.addWidget(self.btn_cycle)
+        upload_layout.addLayout(gen_layout)
+        
+        self.btn_share = QPushButton("Share")
+        self.btn_share.setStyleSheet("background-color: #224466; color: white; font-weight: bold;")
+        self.btn_share.clicked.connect(self.upload_team)
+        upload_layout.addWidget(self.btn_share)
+        
+        layout.addWidget(self.group_upload)
+        
+        layout.addSpacing(10)
+        
+        # Populate Teams (User Only)
+        user_teams = set()
+        for b in self.engine.builds:
+            if b.category in ["User Created", "User Imported"]:
+                user_teams.add(b.team)
+        
+        sorted_teams = sorted(list(user_teams))
+        self.combo_teams.addItems(sorted_teams)
+        
+        # Select current if applicable
+        if team_name and team_name in sorted_teams:
+            self.combo_teams.setCurrentText(team_name)
+
+        # Connect after population
+        self.combo_teams.currentIndexChanged.connect(self.on_team_changed)
+        
+        # --- DOWNLOAD SECTION ---
+        group_download = QGroupBox("Download Team")
+        group_download.setStyleSheet(f"QGroupBox {{ font-weight: bold; color: {get_color('text_accent')}; border: 1px solid {get_color('border')}; margin-top: 10px; }} QGroupBox::title {{ subcontrol-origin: margin; left: 10px; padding: 0 5px; }}")
+        download_layout = QVBoxLayout(group_download)
+        
+        self.edit_input_code = QLineEdit()
+        self.edit_input_code.setPlaceholderText("Enter share code here...")
+        download_layout.addWidget(self.edit_input_code)
+        
+        self.btn_load_share = QPushButton("Import")
+        self.btn_load_share.clicked.connect(self.download_team)
+        download_layout.addWidget(self.btn_load_share)
+        
+        layout.addWidget(group_download)
+        
+        self.lbl_status = QLabel("")
+        self.lbl_status.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self.lbl_status)
+        
+        # Init state
+        self.on_team_changed()
+
+    def calculate_team_hash(self, team_name):
+        """Generates a deterministic hash of the team's current state."""
+        builds = [b for b in self.engine.builds if b.team == team_name]
+        # Sort by name to ensure consistent order (though list order in engine usually matters)
+        # Using list order is safer for "Team position" consistency.
+        
+        data_str = f"{team_name}"
+        for b in builds:
+            # Include critical identifying info
+            data_str += f"|{b.name}|{b.code}|{b.primary_prof}|{b.secondary_prof}"
+            
+        return hashlib.md5(data_str.encode('utf-8')).hexdigest()
+
+    def on_team_changed(self):
+        current = self.combo_teams.currentText()
+        if current:
+            self.group_upload.setTitle("Generate Share Code:")
+            self.btn_share.setEnabled(True)
+            self.team_name = current # Update current team context
+            
+            # Calculate current state hash
+            current_hash = self.calculate_team_hash(current)
+            
+            # Check for existing code AND matching hash
+            existing_code = None
+            matches_hash = False
+            
+            for b in self.engine.builds:
+                if b.team == current and b.share_code:
+                    existing_code = b.share_code
+                    if b.share_hash == current_hash:
+                        matches_hash = True
+                    break
+            
+            # Logic: We only treat it as "Shared" if the Hash matches.
+            # If the code exists but hash differs, it means user modified the team locally.
+            # So we allow re-sharing (generating/uploading to a NEW code).
+            
+            if existing_code and matches_hash:
+                self.edit_generated_code.setText(existing_code)
+                self.set_status("Existing code found!")
+                self.btn_cycle.setEnabled(False) # Disable cycle for existing codes
+                
+                # Switch button to Copy mode
+                self.btn_share.setText("Copy Share Code")
+                self.btn_share.setStyleSheet("background-color: #0078D7; color: white; font-weight: bold;")
+                try: self.btn_share.clicked.disconnect()
+                except: pass
+                self.btn_share.clicked.connect(self.copy_existing_code)
+                
+                # Stop any running generation
+                if self.worker and self.worker.isRunning():
+                    self.worker.terminate()
+            else:
+                self.btn_cycle.setEnabled(True)
+                # Switch button to Share mode
+                self.btn_share.setText("Share")
+                self.btn_share.setStyleSheet("background-color: #224466; color: white; font-weight: bold;")
+                try: self.btn_share.clicked.disconnect()
+                except: pass
+                self.btn_share.clicked.connect(self.upload_team)
+                
+                self.start_generation()
+        else:
+            self.group_upload.setTitle("Generate Share Code:")
+            self.btn_share.setEnabled(False)
+
+    def set_status(self, msg, error=False):
+        color = "#FF5555" if error else "#55FF55"
+        self.lbl_status.setText(msg)
+        self.lbl_status.setStyleSheet(f"color: {color}; font-weight: bold;")
+
+    def start_generation(self):
+        now = time.time()
+        if now - self.last_cycle_time < 1.0:
+            return
+        self.last_cycle_time = now
+
+        self.btn_cycle.setEnabled(False)
+        self.edit_generated_code.setText("Searching...")
+        self.set_status("Finding unique code...")
+        
+        self.worker = ShareWorker(self.manager, "generate")
+        self.worker.code_generated.connect(self.on_code_found)
+        self.worker.error.connect(self.on_error)
+        self.worker.finished.connect(lambda: self.btn_cycle.setEnabled(True))
+        self.worker.start()
+
+    def on_code_found(self, code):
+        self.edit_generated_code.setText(code)
+        self.set_status("Code available!", error=False)
+
+    def copy_existing_code(self):
+        code = self.edit_generated_code.text().strip()
+        if code:
+            QApplication.clipboard().setText(code)
+            self.set_status("Copied to clipboard!")
+
+    def on_error(self, msg):
+        self.set_status(msg, error=True)
+        self.edit_generated_code.clear()
+
+    def upload_team(self):
+        code = self.edit_generated_code.text().strip()
+        team_name = self.combo_teams.currentText()
+        
+        if not code or code == "Searching...":
+            QMessageBox.warning(self, "Error", "Please wait for a valid code generation.")
+            return
+            
+        if not team_name:
+            QMessageBox.warning(self, "Error", "No team selected.")
+            return
+            
+        # Serialize Team
+        builds = [b for b in self.engine.builds if b.team == team_name]
+        if not builds:
+            QMessageBox.warning(self, "Error", "Empty team.")
+            return
+            
+        # Structure matches user_builds.json format roughly, but wrapper for cloud
+        # Cloud format: { "name": "Team Name", "builds": [ { ...build_obj... } ] }
+        
+        team_data = {
+            "name": team_name,
+            "builds": []
+        }
+        
+        for b in builds:
+            # We save everything needed to reconstruct
+            b_entry = {
+                "build_code": b.code,
+                "primary_profession": b.primary_prof,
+                "secondary_profession": b.secondary_prof,
+                "skill_ids": b.skill_ids,
+                "category": "User Imported", # Force category on import side usually
+                "team": team_name,
+                "name": b.name,
+                "attributes": b.attributes # Important for memory
+            }
+            team_data["builds"].append(b_entry)
+            
+        self.set_status("Uploading...")
+        self.btn_share.setEnabled(False)
+        self.combo_teams.setEnabled(False)
+        
+        self.worker = ShareWorker(self.manager, "upload", code=code, data=team_data)
+        self.worker.upload_success.connect(self.on_upload_success)
+        self.worker.error.connect(self.on_error)
+        self.worker.finished.connect(lambda: [self.btn_share.setEnabled(True), self.combo_teams.setEnabled(True)])
+        self.worker.start()
+
+    def on_upload_success(self, code):
+        team_name = self.combo_teams.currentText()
+        new_hash = self.calculate_team_hash(team_name)
+        
+        # Save code to builds
+        for b in self.engine.builds:
+            if b.team == team_name:
+                b.share_code = code
+                b.share_hash = new_hash
+                b.is_user_build = True
+        self.engine.save_user_builds()
+        
+        # Refresh state so button switches to "Copy" immediately
+        self.on_team_changed()
+        
+        self.set_status(f"Success! Code: {code}")
+        QMessageBox.information(self, "Share Complete", f"Team '{team_name}' shared successfully!\n\nShare Code: {code}\n\n(Copied to clipboard)")
+        QApplication.clipboard().setText(code)
+        # self.accept() # Removed accept so user can see result, since we refresh state
+
+    def download_team(self):
+        code = self.edit_input_code.text().strip()
+        if not code:
+            return
+            
+        self.set_status("Downloading...")
+        self.btn_load_share.setEnabled(False)
+        
+        self.worker = ShareWorker(self.manager, "download", code=code)
+        self.worker.download_success.connect(self.on_download_success)
+        self.worker.error.connect(self.on_error)
+        self.worker.finished.connect(lambda: self.btn_load_share.setEnabled(True))
+        self.worker.start()
+
+    def on_download_success(self, data):
+        team_name = data.get("name", "Imported Team")
+        builds_data = data.get("builds", [])
+        
+        # Check if team exists
+        if team_name in self.engine.teams:
+            # Rename to avoid conflict
+            base_name = team_name
+            counter = 1
+            while team_name in self.engine.teams:
+                team_name = f"{base_name} ({counter})"
+                counter += 1
+        
+        self.engine.teams.add(team_name)
+        
+        for b_data in builds_data:
+            # Reconstruct Build object from JSON data
+            code = b_data.get("build_code") or b_data.get("code", "")
+            decoder = GuildWarsTemplateDecoder(code)
+            decoded = decoder.decode()
+            
+            if decoded:
+                new_build = Build(
+                    code=code,
+                    primary_prof=str(decoded['profession']['primary']),
+                    secondary_prof=str(decoded['profession']['secondary']),
+                    skill_ids=decoded['skills'],
+                    category="User Imported",
+                    team=team_name,
+                    name=b_data.get("name", "Imported Build"),
+                    attributes=decoded['attributes'],
+                    share_code=self.edit_input_code.text().strip(),
+                    share_hash=self.calculate_team_hash(team_name) # Calculate hash for imported team to prevent immediate re-share prompt
+                )
+                new_build.is_user_build = True
+                self.engine.builds.append(new_build)
+        
+        self.engine.save_user_builds()
+        
+        self.set_status("Import Successful!")
+        QMessageBox.information(self, "Success", f"Imported team as '{team_name}'.")
+        
+        # Trigger refresh in parent
+        if self.parent() and hasattr(self.parent(), 'refresh_list'):
+             self.parent().refresh_list()
+             
+        self.accept()
+
 class TeamManagerWidget(QWidget):
     def __init__(self, parent=None, engine=None, dialog_parent=None):
         super().__init__(parent)
@@ -224,6 +542,21 @@ class TeamManagerWidget(QWidget):
         header = QHBoxLayout()
         header.addWidget(QLabel("<b>Teams:</b>"))
         header.addStretch()
+
+        self.btn_sharing = QPushButton("Sharing")
+        self.btn_sharing.setFixedSize(70, 24)
+        self.btn_sharing.setToolTip("Generate share codes and download teambuilds")
+        self.btn_sharing.setStyleSheet("""
+            QPushButton { 
+                background-color: #0078D7; 
+                color: white; 
+                font-weight: bold;
+                border-radius: 4px;
+            }
+            QPushButton:hover { background-color: #005A9E; }
+        """)
+        self.btn_sharing.clicked.connect(self.open_sharing_dialog)
+        header.addWidget(self.btn_sharing)
 
         self.btn_export = QPushButton("Export")
         self.btn_export.setFixedSize(60, 24)
@@ -369,6 +702,15 @@ class TeamManagerWidget(QWidget):
                 self.list_widget.setCurrentItem(items[0])
                 self.load_team()
         
+    def open_sharing_dialog(self):
+        item = self.list_widget.currentItem()
+        team_name = item.text() if item else None
+        
+        dlg = SharingDialog(self, self.engine, team_name)
+        dlg.exec()
+        # Refresh list in case a team was imported
+        self.refresh_list()
+
     def export_team(self):
         item = self.list_widget.currentItem()
         if not item:

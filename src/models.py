@@ -215,6 +215,8 @@ class Build:
     attributes: List[List[int]] = None 
     name: str = ""
     url: str = ""
+    share_code: str = ""
+    share_hash: str = ""
 
     def __hash__(self):
         return id(self)

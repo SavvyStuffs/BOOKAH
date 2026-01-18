@@ -819,6 +819,8 @@ class CharacterPanel(QWidget):
         main_layout.addWidget(self.cons_group, stretch=5)
         main_layout.addWidget(self.stats_group, stretch=3)
         main_layout.addWidget(self.runes_group, stretch=10)
+        
+        self.update_stats()
 
     def on_con_toggled(self, key, checked):
         if checked:
