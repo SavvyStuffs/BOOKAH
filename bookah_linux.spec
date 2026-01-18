@@ -10,6 +10,7 @@ a = Analysis(
     binaries=tmp_binaries,
     datas=[
         ('all_skills.json', '.'),
+        ('sharecodes.json', '.'),
         ('master.db', '.'),
         ('skills_aq.db', '.'),
         ('skill_vectors.model', '.'),

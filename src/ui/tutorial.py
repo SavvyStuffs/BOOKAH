@@ -309,9 +309,9 @@ class TutorialManager:
                 "desc": "Use these dropdowns to filter skills by profession and attribute."
             },
             {
-                "widget": self.mw.btn_load_file,
-                "title": "Build Library",
-                "desc": "Click here to load existing build templates from your computer."
+                "widget": [self.mw.btn_load_file, self.mw.btn_export_build],
+                "title": "Import & Export",
+                "desc": "Use these buttons to load existing build templates from your computer or export your current build directly to a text file."
             },
             {
                 "widget": self.mw.btn_prof_select,
@@ -426,21 +426,21 @@ class TutorialManager:
             },
             {
                 "widget": None, # Set in action
-                "title": "Export Teams",
-                "desc": "Export the selected teambuild directly to your templates folder.",
+                "title": "Export & New",
+                "desc": "Export selected build directly to your Guild Wars template folder, or create a new Teambuild from scratch.",
                 "action": lambda: self._open_manager_step()
+            },
+            {
+                "widget": None, # Set in action
+                "title": "Share Team",
+                "desc": "Use the share button to generate a share code or download a build using someone else's",
+                "action": lambda: self._highlight_share_button()
             },
             {
                 "widget": None, # Set in action
                 "title": "Manage List",
                 "desc": "Add new builds to existing teams, edit team/build names, or delete teams.",
                 "action": lambda: self._highlight_manager_buttons()
-            },
-            {
-                "widget": None, # Set in action
-                "title": "Create New Teams",
-                "desc": "Create new teambuilds (4, 6, 8, 12 man, or import from your templates folder).",
-                "action": lambda: self._highlight_new_team_button()
             },
             {
                 "widget": None, # Set in action
@@ -486,7 +486,10 @@ class TutorialManager:
     def _open_manager_step(self):
         # Switch to the Team Manager Pane
         self.mw.toggle_team_manager_view(True)
-        self.overlay.target_widgets = [self.mw.team_manager_widget.btn_export]
+        self.overlay.target_widgets = [self.mw.team_manager_widget.btn_export, self.mw.team_manager_widget.btn_new_team]
+
+    def _highlight_share_button(self):
+        self.overlay.target_widgets = [self.mw.team_manager_widget.btn_sharing]
 
     def _highlight_manager_buttons(self):
         tm = self.mw.team_manager_widget

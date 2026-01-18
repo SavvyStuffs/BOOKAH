@@ -888,8 +888,8 @@ class SynergyEngine:
                         category = entry.get('category', 'Uncategorized')
                         name = entry.get('name', '')
 
-                        # Auto-assign teambuild category
-                        if "Mosquito" in team or "Mosquito" in name:
+                        # Auto-assign teambuild category (Only for system builds)
+                        if not is_user_data and ("Mosquito" in team or "Mosquito" in name):
                             category = "Mosquito's Teambuild"
 
                         b = Build(
@@ -901,7 +901,9 @@ class SynergyEngine:
                             team=team,
                             attributes=attrs,
                             name=name,
-                            url=entry.get('url', '')
+                            url=entry.get('url', ''),
+                            share_code=entry.get('share_code', ''),
+                            share_hash=entry.get('share_hash', '')
                         )
                         b.is_user_build = is_user_data
                         
@@ -932,7 +934,9 @@ class SynergyEngine:
                     "category": b.category,
                     "team": b.team,
                     "name": b.name,
-                    "url": getattr(b, 'url', '')
+                    "url": getattr(b, 'url', ''),
+                    "share_code": getattr(b, 'share_code', ''),
+                    "share_hash": getattr(b, 'share_hash', '')
                 })
         
         try:

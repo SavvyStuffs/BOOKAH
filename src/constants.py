@@ -24,7 +24,7 @@ else:
 
 # Local data directory for models and user builds
 if sys.platform == 'win32':
-    USER_DIR = os.path.join(APP_ROOT, "data")
+    USER_DIR = os.path.join(os.environ.get('LOCALAPPDATA', os.path.expanduser('~\\AppData\\Local')), "Bookah")
 else:
     # Linux / Flatpak / Mac
     USER_DIR = os.path.expanduser("~/.bookah_data")
@@ -35,6 +35,18 @@ if not os.path.exists(USER_DIR):
     except Exception as e:
         import tempfile
         USER_DIR = tempfile.gettempdir()
+
+# Copy bundled models to USER_DIR if missing (Avoids re-training)
+try:
+    BUNDLED_DATA = os.path.join(APP_ROOT, "data")
+    if os.path.exists(BUNDLED_DATA):
+        for filename in ['skill_vectors.model', 'description_embeddings.pt']:
+            src = os.path.join(BUNDLED_DATA, filename)
+            dst = os.path.join(USER_DIR, filename)
+            if os.path.exists(src) and not os.path.exists(dst):
+                shutil.copy2(src, dst)
+except Exception:
+    pass # Fail silently, Engine will retrain
 
 # 1. System Database (Read-Only bundled version)
 JSON_FILE = resource_path('all_skills.json')
