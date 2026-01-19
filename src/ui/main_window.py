@@ -6,7 +6,7 @@ from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QComboBox, QLabel, QSplitter, 
     QTabWidget, QCheckBox, QPushButton, QFileDialog, QMessageBox, QFrame, QLineEdit, QApplication, QListWidgetItem, QListWidget, QSizePolicy, QGridLayout, QStyle, QProgressDialog, QStackedWidget
 )
-from PyQt6.QtCore import Qt, QTimer, QUrl, QThread, pyqtSignal, QSize, QSettings
+from PyQt6.QtCore import Qt, QTimer, QUrl, QThread, pyqtSignal, QSize, QSettings, QPoint
 from PyQt6.QtGui import QIcon, QPixmap
 
 from src.constants import DB_FILE, JSON_FILE, PROF_MAP, PROF_SHORT_MAP, resource_path, ICON_DIR, ICON_SIZE, PIXMAP_CACHE, PROF_PRIMARY_ATTR, ATTR_MAP, PROF_ATTRS
@@ -15,7 +15,7 @@ from src.engine import MechanicsEngine, SynergyEngine
 from src.models import Build, Skill
 from src.utils import GuildWarsTemplateDecoder, GuildWarsTemplateEncoder
 from src.core.mechanics import get_primary_bonus_value
-from src.ui.components import SkillSlot, SkillInfoPanel, SkillLibraryWidget, BuildPreviewWidget
+from src.ui.components import SkillSlot, SkillInfoPanel, SkillLibraryWidget, BuildPreviewWidget, EliteSuggestionOverlay
 from src.ui.attribute_editor import AttributeEditor
 from src.ui.character_panel import CharacterPanel, WeaponsPanel, WEAPONS
 from src.ui.tutorial import TutorialOverlay, TutorialManager
@@ -989,11 +989,13 @@ class MainWindow(QMainWindow):
         
         self.slots = []
         for i in range(8):
-            slot = SkillSlot(i)
+            slot = SkillSlot(i, repo=self.repo)
             slot.skill_equipped.connect(self.handle_skill_equipped)
             slot.skill_removed.connect(self.handle_skill_removed)
             slot.skill_swapped.connect(self.handle_skill_swapped)
             slot.clicked.connect(self.handle_skill_id_clicked)
+            if i == 0:
+                slot.show_elite_suggestions.connect(self.open_elite_overlay)
             bar_layout.addWidget(slot)
             self.slots.append(slot)
             
@@ -2025,15 +2027,30 @@ class MainWindow(QMainWindow):
         if isinstance(data, dict): return
 
         skill_id = data
-        # Find first empty slot
+        is_pvp = self.check_pvp.isChecked()
+        skill = self.repo.get_skill(skill_id, is_pvp=is_pvp)
+        if not skill: return
+
+        # 1. Elite Logic (Must go to Slot 0)
+        if skill.is_elite:
+            self.handle_skill_equipped(0, skill_id)
+            return
+
+        # 2. Non-Elite Logic (Must go to Slots 1-7)
+        # Find first empty slot starting from index 1
         empty_index = -1
-        for i, s_id in enumerate(self.bar_skills):
-            if s_id is None:
+        for i in range(1, 8):
+            if self.bar_skills[i] is None:
                 empty_index = i
                 break
         
         if empty_index != -1:
-            self.handle_skill_equipped(empty_index, skill_id)           
+            self.handle_skill_equipped(empty_index, skill_id)
+        else:
+            # Optional: If full, do nothing or replace index 1?
+            # Standard behavior is usually "do nothing" or "replace first non-elite".
+            # For safety, we do nothing.
+            pass           
 
     def get_current_bonuses(self):
         # Returns { "Attribute Name": calculated_bonus_value } for all primary attributes
@@ -2151,6 +2168,68 @@ class MainWindow(QMainWindow):
             self.display_suggestions()
         else:
             print("Cycle: No suggestions to cycle.")
+
+    def open_elite_overlay(self):
+        if not self.current_suggestions: return
+        
+        # Gather Allowed Attributes for Filter
+        allowed_attributes = set()
+        
+        # 1. Attributes on Bar (Slots 2-8 / Indices 1-7)
+        # We check slots 1-7 because slot 0 is the elite itself (which might be empty or changing)
+        is_pvp = self.check_pvp.isChecked()
+        for i in range(1, 8):
+            sid = self.bar_skills[i]
+            if sid is not None:
+                skill = self.repo.get_skill(sid, is_pvp=is_pvp)
+                if skill:
+                    allowed_attributes.add(skill.attribute)
+        
+        # 2. Primary Attribute
+        if self.current_primary_prof in PROF_PRIMARY_ATTR:
+            allowed_attributes.add(PROF_PRIMARY_ATTR[self.current_primary_prof])
+            
+        # 3. Always allow No Attribute (-1) as fallback?
+        # User said "Limit... to same attributes...". 
+        # If no No Attribute skills are on bar, maybe hide No Attribute elites?
+        # But "Signet of Capture" is -1. "Ursan Blessing" is -9 (Norn).
+        # Let's include -1 by default as it's "neutral".
+        allowed_attributes.add(-1)
+
+        # Instantiate Overlay
+        # We pass 'self' as parent to ensure it stays on top of app, but use Popup flag
+        self.elite_overlay = EliteSuggestionOverlay(self)
+        self.elite_overlay.populate(self.current_suggestions, self.repo, allowed_attributes)
+        
+        if self.elite_overlay.list_widget.count() == 0:
+            # If empty after filter, show message or just don't show?
+            # Better to show empty state or handle gracefully.
+            # Populating empty list widget is fine, user sees nothing available.
+            pass
+
+        if self.elite_overlay.list_widget.count() == 0:
+             # Optional: Add a "No matching elites" item?
+             from PyQt6.QtWidgets import QListWidgetItem
+             item = QListWidgetItem("No matching elites")
+             item.setFlags(Qt.ItemFlag.NoItemFlags) # Disabled
+             self.elite_overlay.list_widget.addItem(item)
+
+        # Connect Selection
+        def on_select(sid):
+            self.handle_skill_equipped(0, sid)
+            
+        self.elite_overlay.skill_selected.connect(on_select)
+        
+        # Calculate Position
+        slot = self.slots[0]
+        # Map to global screen coordinates
+        global_pos = slot.mapToGlobal(QPoint(0, 0))
+        
+        x = global_pos.x()
+        y = global_pos.y() - self.elite_overlay.height()
+        
+        self.elite_overlay.move(x, y)
+        self.elite_overlay.show()
 
     def on_synergies_loaded(self, suggestions):
         self.lbl_bar_loading.setVisible(False)
@@ -2316,54 +2395,71 @@ class MainWindow(QMainWindow):
 
     def display_suggestions(self):
         empty_indices = [i for i, s in enumerate(self.bar_skills) if s is None]
+        if not empty_indices: return # Nothing to do
         
-        display_list = []
         is_pvp = self.check_pvp.isChecked()
-
-        if self.current_suggestions:
-            total_suggestions = len(self.current_suggestions)
-            needed = len(empty_indices)
-            
-            # LOGIC FIX: Do not wrap around. Stop if we run out of unique items.
-            # We take a slice of the list starting at the offset.
-            # If the offset + needed exceeds the list, we just take what's left.
-            
-            for i in range(needed):
-                idx = self.suggestion_offset + i
-                if idx < total_suggestions:
-                    display_list.append(self.current_suggestions[idx])
-                else:
-                    # We ran out of suggestions to show. Stop filling.
-                    break
-        
-        s_idx = 0
         eff_dist = self.get_effective_distribution()
         all_bonuses = self.get_current_bonuses()
         glob_act = self.current_global_effects.get('activation', 0.0)
         glob_rech = self.current_global_effects.get('recharge', 0.0)
         
-        for slot_idx in empty_indices:
-            slot = self.slots[slot_idx]
+        # Track which empty slots have been filled this pass
+        filled_slots = set()
+        
+        # We iterate through suggestions starting from offset
+        # We stop when we have filled all empty slots OR checked all suggestions
+        total_suggestions = len(self.current_suggestions)
+        
+        for i in range(total_suggestions):
+            # Cyclic wrapping? No, user requested linear cycling usually.
+            # But the previous logic was: offset + i.
+            # If we run out, we stop.
             
-            if s_idx < len(display_list):
-                # Fill slot with suggestion
-                item = display_list[s_idx]
-                if len(item) == 3:
-                    s_id, conf, reason = item
-                    display_val = reason if reason else conf
-                else:
-                    s_id, conf = item
-                    display_val = conf
-
-                skill_obj = self.repo.get_skill(s_id, is_pvp=is_pvp)
-                rank = eff_dist.get(skill_obj.attribute, 0) if skill_obj else 0
+            idx = self.suggestion_offset + i
+            if idx >= total_suggestions: break
+            
+            item = self.current_suggestions[idx]
+            if len(item) == 3:
+                s_id, conf, reason = item
+                display_val = reason if reason else conf
+            else:
+                s_id, conf = item
+                display_val = conf
+                
+            skill_obj = self.repo.get_skill(s_id, is_pvp=is_pvp)
+            if not skill_obj: continue
+            
+            target_slot = -1
+            
+            if skill_obj.is_elite:
+                # Elite Logic: Only Slot 0
+                if 0 in empty_indices and 0 not in filled_slots:
+                    target_slot = 0
+            else:
+                # Normal Logic: Slots 1-7
+                # Find first empty slot > 0 that isn't filled
+                for slot_idx in empty_indices:
+                    if slot_idx > 0 and slot_idx not in filled_slots:
+                        target_slot = slot_idx
+                        break
+            
+            if target_slot != -1:
+                # Fill the slot
+                slot = self.slots[target_slot]
+                rank = eff_dist.get(skill_obj.attribute, 0)
                 slot.set_skill(s_id, skill_obj, ghost=True, confidence=display_val, rank=rank,
                              bonuses=all_bonuses,
                              global_act=glob_act, global_rech=glob_rech)
-                s_idx += 1
-            else:
-                # Ran out of suggestions? Clear the slot.
-                slot.clear_slot(silent=True)
+                filled_slots.add(target_slot)
+                
+            # Optimization: Stop if all empty slots filled
+            if len(filled_slots) == len(empty_indices):
+                break
+        
+        # Clear any empty slots that weren't filled (e.g. no elite suggestions for slot 0)
+        for slot_idx in empty_indices:
+            if slot_idx not in filled_slots:
+                self.slots[slot_idx].clear_slot(silent=True)
                 
         self.update_build_code()
 
@@ -2382,9 +2478,9 @@ class MainWindow(QMainWindow):
             self.attr_editor.set_read_only(False) # Default to editable
             return
         
-        self.active_edit_build = build # BINDING
+        self.active_edit_build = build 
         
-        # --- READ ONLY LOGIC ---
+        # Set Read Only if not user build
         is_user = getattr(build, 'is_user_build', False)
         self.attr_editor.set_read_only(not is_user)
         
@@ -2413,7 +2509,6 @@ class MainWindow(QMainWindow):
             # 3. Sync Main Window State variables so Code Box updates correctly
             self.current_primary_prof = p1
             self.current_secondary_prof = p2
-            # Note: We do NOT update bar_skills here to preserve the bar state as requested
             
         finally:
             self.loading_from_selection = False
@@ -2433,10 +2528,10 @@ class MainWindow(QMainWindow):
             es_rank = eff_dist.get(12, 0)
             self.character_panel.set_attr_energy_bonus(es_rank * 3)
 
-        # Phase 3: Refresh skill tooltips/displays
+        # Refresh skill tooltips/displays
         self.refresh_skill_displays()
         
-        # Phase 4: Handle "Save" button state if in Team View
+        # Handle "Save" button state if in Team View
         if not self.loading_from_selection and self.active_edit_build:
             # Update attributes in memory IMMEDIATELY for the active build
             new_attrs = [[k, v] for k, v in distribution.items() if v > 0]
@@ -2644,21 +2739,6 @@ class MainWindow(QMainWindow):
             self.edit_code.setText(live_code)
         except:
             pass
-            
-        # Optimization: Only refresh suggestions if professions ACTUALLY changed
-        # current_state = (p1, p2, state_attrs, weapon_attr)
-        # _last_attr_state was updated above if things changed.
-        # We can check if p1/p2 in _last_attr_state differ from previous known state, but _last_attr_state IS the previous state until updated.
-        
-        # Actually, update_build_code is called by handle_skill_equipped too.
-        # We DO want suggestions to update when skills change (for context), but NOT when attributes change.
-        # BUT update_suggestions() is already called in handle_skill_equipped explicitly.
-        
-        # So we should REMOVE the call from here completely, and only call it from:
-        # 1. handle_skill_equipped/removed/swapped (Already done)
-        # 2. open_prof_selection (Needs explicit call)
-        # 3. swap_professions (Needs explicit call)
-        # 4. load_code (Already calls it)
 
     def dragEnterEvent(self, event):
         if event.mimeData().hasUrls():

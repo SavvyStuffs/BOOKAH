@@ -64,15 +64,110 @@ class DraggableSkillIcon(QLabel):
                 self.setText(self.skill.name[:2])
                 self.refresh_theme()
 
+class EliteSuggestionOverlay(QFrame):
+    skill_selected = pyqtSignal(int)
+
+    def __init__(self, parent=None):
+        super().__init__(parent, Qt.WindowType.Popup)
+        self.setFixedWidth(250)
+        self.setStyleSheet(f"""
+            QFrame {{
+                background-color: {get_color('bg_secondary')};
+                border: 1px solid {get_color('border_accent')};
+                border-radius: 4px;
+            }}
+        """)
+        
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(5, 5, 5, 5)
+        layout.setSpacing(5)
+        
+        lbl_header = QLabel("Elite Suggestions")
+        lbl_header.setStyleSheet(f"font-weight: bold; color: {get_color('text_warning')}; border: none;")
+        lbl_header.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(lbl_header)
+        
+        self.list_widget = QListWidget()
+        self.list_widget.setStyleSheet(f"""
+            QListWidget {{
+                background-color: {get_color('bg_primary')};
+                border: none;
+            }}
+            QListWidget::item:hover {{
+                background-color: {get_color('bg_hover')};
+            }}
+        """)
+        self.list_widget.itemClicked.connect(self._on_item_clicked)
+        layout.addWidget(self.list_widget)
+
+    def populate(self, suggestions, repo, allowed_attributes=None):
+        self.list_widget.clear()
+        
+        count = 0
+        for item in suggestions:
+            if len(item) == 3:
+                sid, conf, reason = item
+            else:
+                sid, conf = item
+                reason = "Neural Synergy"
+                
+            skill = repo.get_skill(sid)
+            if skill and skill.is_elite:
+                # Attribute Filter
+                if allowed_attributes is not None:
+                    # Allow "No Attribute" skills always? Or strictly follow bar?
+                    # User said: "Limit ... to the same attributes that are already on the bar"
+                    # Usually No Attribute is neutral. I'll include it if it's in the allowed set OR if it is -1 and -1 is in allowed set.
+                    if skill.attribute not in allowed_attributes:
+                        continue
+
+                list_item = QListWidgetItem(skill.name)
+                list_item.setData(Qt.ItemDataRole.UserRole, sid)
+                
+                # Detailed Tooltip
+                attr_name = skill.get_attribute_str()
+                type_str = f"<i>{skill.skill_type.title()}</i><br/>" if skill.skill_type else ""
+                attr_str = f"<i>{attr_name}</i><br/>" if skill.attribute != -1 else ""
+                
+                tt = (
+                    f"<b>{skill.name}</b><br/>"
+                    f"{attr_str}"
+                    f"{type_str}"
+                    f"<hr/>"
+                    f"{skill.description}"
+                )
+                list_item.setToolTip(tt)
+                
+                # Icon
+                icon_path = os.path.join(ICON_DIR, skill.icon_filename)
+                if os.path.exists(icon_path):
+                    pix = QPixmap(icon_path).scaled(32, 32, Qt.AspectRatioMode.KeepAspectRatio)
+                    list_item.setIcon(QIcon(pix))
+                    
+                self.list_widget.addItem(list_item)
+                count += 1
+        
+        # Resize height based on content (max 300)
+        row_height = 36 # approx
+        total_height = min(300, max(100, count * row_height + 40))
+        self.setFixedSize(250, total_height)
+
+    def _on_item_clicked(self, item):
+        sid = item.data(Qt.ItemDataRole.UserRole)
+        self.skill_selected.emit(sid)
+        self.close()
+
 class SkillSlot(QFrame):
     skill_equipped = pyqtSignal(int, int) 
     skill_removed = pyqtSignal(int)       
     skill_swapped = pyqtSignal(int, int)
-    clicked = pyqtSignal(int)             
+    clicked = pyqtSignal(int)
+    show_elite_suggestions = pyqtSignal() # New signal
 
-    def __init__(self, index, parent=None):
+    def __init__(self, index, repo=None, parent=None):
         super().__init__(parent)
         self.index = index
+        self.repo = repo
         self.current_skill_id = None
         self.is_ghost = False
         self.drag_start_pos = None
@@ -84,16 +179,74 @@ class SkillSlot(QFrame):
         self.icon_label = QLabel(self)
         self.icon_label.setGeometry(2, 2, ICON_SIZE, ICON_SIZE)
         self.icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.icon_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents) 
+        self.icon_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        
+        # Elite Triangle Button
+        if self.index == 0:
+            self.btn_triangle = QPushButton(self)
+            self.btn_triangle.setGeometry(0, 0, 16, 16)
+            self.btn_triangle.setCursor(Qt.CursorShape.PointingHandCursor)
+            
+            # Using '▲' for "Up" (overlay opens above)
+            self.btn_triangle.setText("▲") 
+            self.btn_triangle.setStyleSheet(f"""
+                QPushButton {{
+                    background-color: rgba(0, 0, 0, 150);
+                    color: #FFD700;
+                    border: none;
+                    border-bottom-right-radius: 4px;
+                    font-size: 10px;
+                    padding-bottom: 2px;
+                }}
+                QPushButton:hover {{
+                    background-color: rgba(50, 50, 50, 200);
+                    color: #FFFFFF;
+                }}
+            """)
+            self.btn_triangle.clicked.connect(self.show_elite_suggestions.emit)
+            self.btn_triangle.raise_() 
 
     def refresh_theme(self):
         self.update_style()
 
     def dragEnterEvent(self, event):
-        if event.mimeData().hasText():
+        if not event.mimeData().hasText():
+            event.ignore()
+            return
+
+        text = event.mimeData().text()
+        
+        # 1. Internal Slot Swap Logic
+        if text.startswith("slot:"):
+            # We can't validate swap easily without checking the source slot's content
+            # But swapping handles validation in dropEvent usually.
+            # For dragEnter, we just accept.
             event.accept()
             self.setStyleSheet(f"border: 2px solid {get_color('border_accent')}; background-color: {get_color('slot_bg_drag')};")
-        else:
+            return
+            
+        if text.startswith("reorder_build:"):
+            event.ignore()
+            return
+
+        # 2. Library Drop Logic
+        try:
+            skill_id = int(text)
+            if self.repo:
+                skill = self.repo.get_skill(skill_id)
+                if skill:
+                    # Constraint: Slot 0 = Elite Only
+                    if self.index == 0 and not skill.is_elite:
+                        event.ignore()
+                        return
+                    # Constraint: Slot > 0 = No Elites
+                    if self.index > 0 and skill.is_elite:
+                        event.ignore()
+                        return
+            
+            event.accept()
+            self.setStyleSheet(f"border: 2px solid {get_color('border_accent')}; background-color: {get_color('slot_bg_drag')};")
+        except ValueError:
             event.ignore()
 
     def dragLeaveEvent(self, event):
@@ -105,6 +258,11 @@ class SkillSlot(QFrame):
             if mime_text.startswith("slot:"):
                 source_index = int(mime_text.split(":")[1])
                 if source_index != self.index:
+                    # We rely on Main Window logic to validate the SWAP
+                    # But we can try to validate here if possible.
+                    # Swapping involves two skills.
+                    # Since we don't have access to the source skill object easily here, we emit signal.
+                    # BUT MainWindow's handle_skill_swapped should now enforce this constraint.
                     self.skill_swapped.emit(source_index, self.index)
                 event.accept()
             # Explicitly reject build reordering drops
@@ -112,6 +270,18 @@ class SkillSlot(QFrame):
                 event.ignore()
             else:
                 skill_id = int(mime_text)
+                
+                # Validation (Same as dragEnter)
+                if self.repo:
+                    skill = self.repo.get_skill(skill_id)
+                    if skill:
+                        if self.index == 0 and not skill.is_elite:
+                            event.ignore()
+                            return
+                        if self.index > 0 and skill.is_elite:
+                            event.ignore()
+                            return
+
                 self.skill_equipped.emit(self.index, skill_id)
                 event.accept()
         except ValueError:
@@ -255,10 +425,24 @@ class SkillSlot(QFrame):
         self.update_style()
 
     def update_style(self):
+        style = ""
+        
+        # Base Style
+        bg_color = get_color('slot_bg')
         if self.current_skill_id and not self.is_ghost:
-            self.setStyleSheet(f"border: 2px solid {get_color('border_light')}; background-color: {get_color('slot_bg_equipped')};")
+            bg_color = get_color('slot_bg_equipped')
+            
+        # Border Logic
+        if self.index == 0:
+            # Gold border for Elite Slot
+            border = "2px solid #FFD700"
         else:
-            self.setStyleSheet(f"border: 2px dashed {get_color('slot_border')}; background-color: {get_color('slot_bg')};")
+            if self.current_skill_id and not self.is_ghost:
+                border = f"2px solid {get_color('border_light')}"
+            else:
+                border = f"2px dashed {get_color('slot_border')}"
+                
+        self.setStyleSheet(f"border: {border}; background-color: {bg_color};")
 
 class SkillInfoPanel(QFrame):
     def __init__(self, parent=None):
