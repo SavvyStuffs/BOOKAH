@@ -1375,3 +1375,68 @@ class ProfessionSelectionDialog(QDialog):
 
     def get_professions(self):
         return self.selected_primary, self.selected_secondary
+
+class HistoryViewerDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Version History")
+        self.resize(600, 700)
+        
+        layout = QVBoxLayout(self)
+        
+        from src.constants import resource_path
+        from PyQt6.QtWidgets import QTextBrowser
+        from PyQt6.QtGui import QFont
+        
+        history_path = resource_path("history_note.md")
+        
+        self.text_browser = QTextBrowser()
+        self.text_browser.setOpenExternalLinks(True)
+        
+        # Use theme colors
+        bg = get_color('bg_primary')
+        text = get_color('text_primary')
+        border = get_color('border')
+        
+        # 1. Set Font directly
+        font = QFont("Segoe UI", 11)
+        font.setStyleHint(QFont.StyleHint.SansSerif)
+        self.text_browser.setFont(font)
+
+        # 2. Stylesheet
+        self.text_browser.setStyleSheet(f"""
+            QTextBrowser {{
+                background-color: {bg};
+                color: {text};
+                border: 1px solid {border};
+                padding: 15px;
+            }}
+        """)
+        
+        content = "No history found."
+        if os.path.exists(history_path):
+            try:
+                with open(history_path, 'r', encoding='utf-8') as f:
+                    raw_lines = f.readlines()
+                    # 3. Clean indentation to avoid Code Block rendering in Markdown
+                    cleaned_lines = []
+                    for line in raw_lines:
+                        # Strip 4-space indentation if it exists, otherwise just strip text
+                        # But we want to keep structure.
+                        # The issue is specifically the '    Updates:' pattern in the MD file.
+                        # We'll just strip leading whitespace for non-header lines if it looks like unintentional indent
+                        if line.strip().startswith("#"):
+                            cleaned_lines.append(line)
+                        else:
+                            cleaned_lines.append(line.lstrip())
+                            
+                    content = "".join(cleaned_lines)
+            except Exception as e:
+                content = f"Error reading history: {e}"
+        
+        self.text_browser.setMarkdown(content)
+        layout.addWidget(self.text_browser)
+        
+        btn_close = QPushButton("Close")
+        btn_close.clicked.connect(self.accept)
+        layout.addWidget(btn_close)

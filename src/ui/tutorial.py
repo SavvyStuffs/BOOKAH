@@ -89,13 +89,17 @@ class TutorialOverlay(QWidget):
         self.steps = steps
         self.current_step = -1
         self.resize(self.parent().size())
-        self.show()
+        # Delay showing until step is prepared to avoid flash
         self.raise_()
         self.move(0, 0)
         
         # Tiny delay to let MainWindow finish tab switching/layout
         from PyQt6.QtCore import QTimer
-        QTimer.singleShot(100, self.next_step)
+        def start_delayed():
+            self.next_step()
+            self.show()
+            
+        QTimer.singleShot(100, start_delayed)
 
     def prev_step(self):
         if self.current_step > 0:
@@ -294,7 +298,7 @@ class TutorialManager:
             elif msg.clickedButton() == btn_skip:
                 self.mw.settings.setValue("tutorial_complete", True)
 
-    def start(self):
+    def start(self, section="Full"):
         # Ensure we are on the Builder tab
         self.mw.tabs.setCurrentIndex(0)
         self.mw.center_stack.setCurrentIndex(0)
@@ -302,7 +306,7 @@ class TutorialManager:
         
         self.dlg = None # Keep reference to dialog
         
-        steps = [
+        all_steps = [
             {
                 "widget": [self.mw.combo_prof, self.mw.combo_attr],
                 "title": "Skill Filtering",
@@ -334,6 +338,12 @@ class TutorialManager:
                 "title": "PvE Attributes",
                 "desc": "PvE Title tracks like Norn Rank don't cost points but affect the power of their associated skills.",
                 "action": lambda: self._prep_norn_step()
+            },
+            {
+                "widget": self.mw.bar_area,
+                "title": "Skill Bar & Suggestions",
+                "desc": "Add skills to your bar here. The ghost icons are pairing suggestions based on PvX Wiki data, helping you find common synergies.",
+                "action": lambda: [self.mw.reset_build(), self.mw.handle_skill_equipped(0, 1759)]
             },
             {
                 "widget": self.mw.btn_char_view,
@@ -387,12 +397,6 @@ class TutorialManager:
                 "title": "Applied Effects",
                 "desc": "On the builder page, we can see the +5 Soul Reaping applied from the scythe. The primary attribute inherent effect is also applied (for example, a non-mesmer with the fast cast staff would see updated skill cast and recharge times).",
                 "action": lambda: self.mw.btn_char_view.setChecked(False)
-            },
-            {
-                "widget": self.mw.bar_area,
-                "title": "Skill Bar & Suggestions",
-                "desc": "Add skills to your bar here. The ghost icons are pairing suggestions based on PvX Wiki data, helping you find common synergies.",
-                "action": lambda: [self.mw.reset_build(), self.mw.handle_skill_equipped(0, 1759)]
             },
             {
                 "widget": [self.mw.check_smart_mode, self.mw.bar_area],
@@ -473,11 +477,37 @@ class TutorialManager:
                 "action": lambda: self._cleanup_step()
             }
         ]
+
+        steps = []
+        if section == "Full":
+            steps = all_steps
+        elif section == "Builds":
+            # Steps 1-7 (0-6)
+            steps.extend(all_steps[0:7])
+            # Steps 17-18 (16-17)
+            steps.extend(all_steps[16:18])
+            # Add final step
+            steps.append(all_steps[-1])
+            
+        elif section == "Character":
+            # Steps 8-15 (7-15)
+            # Ends with Applied Effects (Index 15)
+            steps.extend(all_steps[7:16])
+            steps.append(all_steps[-1])
+            
+        elif section == "Teams":
+            # Steps 19-End (18 onwards)
+            # This automatically includes the final "Tutorial Complete" step
+            steps.extend(all_steps[18:])
         
         def on_tutorial_finished():
             self.mw.settings.setValue("tutorial_complete", True)
             self.mw.reset_build()
             
+        try:
+            self.overlay.finished.disconnect()
+        except TypeError:
+            pass # No connections
         self.overlay.finished.connect(on_tutorial_finished)
         
         # Start full tutorial
