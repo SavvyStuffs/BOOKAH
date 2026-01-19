@@ -2,7 +2,7 @@
 
 ## 1.4.2  
     Updates:
-    - Added a Teambuild sharing feature on the Manage Teams page (share codes!)
+    - Added a Teambuild sharing feature (Manage Teams -> Share)
     - Updated UI to look better on Linux
     - Synergy Map is no longer in-app, it now opens in browser window (this makes the program much smaller and more stable across OS)
     - Tied Elite skill to slot 1, and removed duplicate Elite suggestions

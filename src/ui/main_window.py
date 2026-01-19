@@ -200,6 +200,18 @@ class BuildGeneratorWorker(QThread):
         # Create local repo for thread safety
         repo = SkillRepository(self.db_path)
         
+        WEAPON_MAP = {
+            18: "Axe", 19: "Hammer", 20: "Sword", 25: "Bow",
+            29: "Dagger", 37: "Spear", 41: "Scythe"
+        }
+        
+        def get_active_weapon(build_ids):
+            for s in build_ids:
+                sk = repo.get_skill(s, self.is_pvp)
+                if sk and sk.attribute in WEAPON_MAP:
+                    return WEAPON_MAP[sk.attribute]
+            return None
+        
         try:
             # 1. Select Random Elite
             allowed_profs = {0, self.p1, self.p2}
@@ -272,6 +284,8 @@ class BuildGeneratorWorker(QThread):
                 else:
                     # Fallback
                     fallback_candidates = []
+                    active_weapon = get_active_weapon(current_build)
+                    
                     for sid in all_ids:
                         if sid in current_build: continue
                         skill = repo.get_skill(sid, is_pvp=self.is_pvp)
@@ -284,6 +298,12 @@ class BuildGeneratorWorker(QThread):
                         if skill.is_pve_only:
                             pve_count = sum(1 for s in current_build if repo.get_skill(s, self.is_pvp).is_pve_only)
                             if pve_count >= 3: continue
+                            
+                        # Weapon Check
+                        skill_weapon = WEAPON_MAP.get(skill.attribute)
+                        if skill_weapon and active_weapon and skill_weapon != active_weapon:
+                            continue
+                            
                         fallback_candidates.append(sid)
                     
                     if fallback_candidates:
@@ -2398,6 +2418,89 @@ class MainWindow(QMainWindow):
         self.gen_worker.finished.connect(self.on_build_generated)
         self.gen_worker.start()
 
+    def apply_auto_attributes(self, skill_ids):
+        # 1. Count Attributes
+        raw_counts = {}
+        is_pvp = self.check_pvp.isChecked()
+        for sid in skill_ids:
+            skill = self.repo.get_skill(sid, is_pvp)
+            if skill and skill.attribute != -1:
+                raw_counts[skill.attribute] = raw_counts.get(skill.attribute, 0) + 1
+        
+        if not raw_counts: return
+
+        distribution = {k: 0 for k in raw_counts.keys()}
+        points_left = 200 
+        
+        # Split into PvE (Free) vs Standard (Allocatable)
+        allocatable_counts = {}
+        
+        for aid, count in raw_counts.items():
+            if aid < 0:
+                # PvE Title Track: Free Rank 5 (No point cost)
+                distribution[aid] = 5
+            else:
+                allocatable_counts[aid] = count
+
+        # 2. Setup Costs
+        def get_cost(r):
+            return (r * (r + 1)) // 2 
+            
+        WEAPON_IDS = {18, 19, 20, 25, 29, 37, 41}
+        
+        # 3. Phase 1: Enforce Weapon Mastery (Rank 9)
+        weapon_attrs = [aid for aid in allocatable_counts.keys() if aid in WEAPON_IDS]
+        # Sort by skill count to prioritize main weapon
+        weapon_attrs.sort(key=lambda aid: allocatable_counts[aid], reverse=True)
+        
+        for aid in weapon_attrs:
+            needed = get_cost(9) # 45 points
+            if points_left >= needed:
+                distribution[aid] = 9
+                points_left -= needed
+            else:
+                # Max out remaining if we can't afford 9
+                for r in range(8, 0, -1):
+                    c = get_cost(r)
+                    if points_left >= c:
+                        distribution[aid] = r
+                        points_left -= c
+                        break
+
+        # 4. Phase 2: Allocate to Top Skills
+        sorted_attrs = sorted(allocatable_counts.items(), key=lambda x: x[1], reverse=True)
+        
+        def upgrade_to(aid, target_rank):
+            nonlocal points_left
+            current = distribution[aid]
+            if current >= target_rank: return
+            
+            needed = get_cost(target_rank) - get_cost(current)
+            if points_left >= needed:
+                distribution[aid] = target_rank
+                points_left -= needed
+
+        # Top 1 -> 12
+        if len(sorted_attrs) > 0: upgrade_to(sorted_attrs[0][0], 12)
+            
+        # Top 2 -> 12
+        if len(sorted_attrs) > 1: upgrade_to(sorted_attrs[1][0], 12)
+                
+        # Top 3 -> Max Possible (up to 12)
+        if len(sorted_attrs) > 2:
+            attr3 = sorted_attrs[2][0]
+            current = distribution[attr3]
+            # Try ranks 12 down to current+1
+            for r in range(12, current, -1):
+                needed = get_cost(r) - get_cost(current)
+                if points_left >= needed:
+                    distribution[attr3] = r
+                    points_left -= needed
+                    break
+                
+        self.attr_editor.set_distribution(distribution)
+        self.update_build_code()
+
     def on_build_generated(self, skill_ids):
         self.lbl_bar_loading.setVisible(False)
         self.btn_make_build.setEnabled(True)
@@ -2407,11 +2510,41 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Error", "Could not generate a build (No elites found?).")
             return
             
+        # Optimize Professions based on Skill Counts
+        # We check if the generated build leans heavily towards the Secondary profession
+        p1 = self.current_primary_prof
+        p2 = self.current_secondary_prof
+        count_p1 = 0
+        count_p2 = 0
+        is_pvp = self.check_pvp.isChecked()
+        
+        for sid in skill_ids:
+            skill = self.repo.get_skill(sid, is_pvp=is_pvp)
+            if not skill: continue
+            if skill.profession == p1: count_p1 += 1
+            elif skill.profession == p2: count_p2 += 1
+            
+        # Logic: 5+ skills overrides everything. Otherwise, majority wins.
+        should_swap = False
+        if count_p2 >= 5:
+            should_swap = True
+        elif count_p2 > count_p1:
+            should_swap = True
+            
+        if should_swap:
+            self.current_primary_prof, self.current_secondary_prof = p2, p1
+            # Update tracking for random generator state so it doesn't think user manually swapped
+            self.last_generated_profs = (self.current_primary_prof, self.current_secondary_prof)
+            self.update_build_code()
+            
         # Fill Bar
         self.bar_skills = [None] * 8
         for i, sid in enumerate(skill_ids):
             if i < 8:
                 self.handle_skill_equipped(i, sid)
+        
+        # Apply Attributes
+        self.apply_auto_attributes(skill_ids)
                 
         self.update_suggestions() # Refresh context
 
