@@ -1084,6 +1084,7 @@ class SynergyEngine:
         same_prof_results = []
         other_results = []
         seen_ids = set()
+        seen_names = set()
         
         # Cols needed for stability check: id, name, desc, nrg, act, rech, adr, hp, aft, combo, elite, attr
         cols_full = "skill_id, name, description, energy_cost, activation, recharge, adrenaline, health_cost, aftercast, combo_req, is_elite, attribute, profession, in_pre, campaign"
@@ -1101,6 +1102,8 @@ class SynergyEngine:
                 # Duplicate prevention by name
                 clean_name = name.lower().replace(" (pvp)", "").strip()
                 if clean_name in active_names:
+                    continue
+                if clean_name in seen_names:
                     continue
 
                 # PvP Check: If in PvE mode, skip skills with "(PvP)" in name
@@ -1121,6 +1124,7 @@ class SynergyEngine:
                 if sid in seen_ids: continue
                 if sid in active_skill_ids: continue
                 seen_ids.add(sid)
+                seen_names.add(clean_name)
 
                 # Campaign Filter
                 if allowed_campaigns is not None:
@@ -1145,8 +1149,14 @@ class SynergyEngine:
                     print(f"[Engine] Dropped ID {sid} (Not found in DB)")
                     continue
                 
+                name_pvp = row_pvp[1]
+                clean_name_pvp = name_pvp.lower().replace(" (pvp)", "").strip()
+                if clean_name_pvp in active_names: continue
+                if clean_name_pvp in seen_names: continue
+                
                 if sid in seen_ids: continue
                 seen_ids.add(sid)
+                seen_names.add(clean_name_pvp)
                 prof = row_pvp[3]
                 # Construct a fake row with 0s for stats so checks don't crash, but we can't really validate stability
                 row = (sid, row_pvp[1], "", 0, 0, 0, 0, 0, 0, 0, row_pvp[2], 0, row_pvp[3], 0, 0)
