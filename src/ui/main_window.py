@@ -365,7 +365,7 @@ class MainWindow(QMainWindow):
         self.settings_tab = SettingsTab()
         self.settings_tab.theme_changed.connect(self.apply_theme)
         self.settings_tab.campaigns_changed.connect(self.on_campaigns_changed)
-        self.settings_tab.tutorial_requested.connect(self.tutorial_manager.start)
+        self.settings_tab.tutorial_requested.connect(lambda s: self.tutorial_manager.start(s))
         self.tabs.addTab(self.settings_tab, "Settings")
 
     def on_campaigns_changed(self, campaigns):

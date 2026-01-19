@@ -4,12 +4,12 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt, pyqtSignal, QSettings, QUrl
 from PyQt6.QtGui import QPalette, QColor, QDesktopServices, QIcon
-from src.ui.dialogs import FeedbackDialog
+from src.ui.dialogs import FeedbackDialog, HistoryViewerDialog
 
 class SettingsTab(QWidget):
     theme_changed = pyqtSignal(str) # Emits "Dark", "Light", or "Auto"
     campaigns_changed = pyqtSignal(dict) # Emits { 'Prophecies': bool, ... }
-    tutorial_requested = pyqtSignal()
+    tutorial_requested = pyqtSignal(str) # Emits section name
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -73,9 +73,11 @@ class SettingsTab(QWidget):
         group_feedback = QGroupBox("Feedback and Help")
         group_feedback.setStyleSheet("QGroupBox { font-weight: bold; border: 1px solid #444; margin-top: 10px; padding-top: 10px; } QGroupBox::title { subcontrol-origin: margin; subcontrol-position: top left; padding: 0 3px; }")
         
-        feedback_layout = QHBoxLayout(group_feedback)
-        feedback_layout.setAlignment(Qt.AlignmentFlag.AlignLeft)
+        feedback_layout = QVBoxLayout(group_feedback)
         
+        # Feedback Button Row
+        row_fb = QHBoxLayout()
+        row_fb.setAlignment(Qt.AlignmentFlag.AlignLeft)
         self.btn_feedback = QPushButton("Send Feedback")
         self.btn_feedback.setFixedWidth(150)
         self.btn_feedback.setStyleSheet("""
@@ -89,24 +91,46 @@ class SettingsTab(QWidget):
             QPushButton:hover { background-color: #005A9E; }
         """)
         self.btn_feedback.clicked.connect(self.open_feedback)
-        feedback_layout.addWidget(self.btn_feedback)
+        row_fb.addWidget(self.btn_feedback)
+        feedback_layout.addLayout(row_fb)
 
-        self.btn_tutorial = QPushButton(" Tutorial")
-        self.btn_tutorial.setFixedWidth(150)
-        self.btn_tutorial.setStyleSheet("""
+        # Tutorial Buttons Row
+        feedback_layout.addWidget(QLabel("Tutorials:"))
+        row_tut = QHBoxLayout()
+        row_tut.setAlignment(Qt.AlignmentFlag.AlignLeft)
+        row_tut.setSpacing(10)
+
+        style_tut = """
             QPushButton { 
                 background-color: #CC0000; 
                 color: white; 
-                padding: 8px; 
+                padding: 6px; 
                 border-radius: 4px;
                 font-weight: bold;
             }
             QPushButton:hover { background-color: #AA0000; }
-        """)
-        self.btn_tutorial.clicked.connect(self.open_tutorial)
-        feedback_layout.addWidget(self.btn_tutorial)
+        """
+
+        self.btn_tut_builds = QPushButton("Builds")
+        self.btn_tut_builds.setFixedWidth(100)
+        self.btn_tut_builds.setStyleSheet(style_tut)
+        self.btn_tut_builds.clicked.connect(lambda: self.open_tutorial("Builds"))
+        row_tut.addWidget(self.btn_tut_builds)
+
+        self.btn_tut_char = QPushButton("Character")
+        self.btn_tut_char.setFixedWidth(100)
+        self.btn_tut_char.setStyleSheet(style_tut)
+        self.btn_tut_char.clicked.connect(lambda: self.open_tutorial("Character"))
+        row_tut.addWidget(self.btn_tut_char)
+
+        self.btn_tut_teams = QPushButton("Teams")
+        self.btn_tut_teams.setFixedWidth(100)
+        self.btn_tut_teams.setStyleSheet(style_tut)
+        self.btn_tut_teams.clicked.connect(lambda: self.open_tutorial("Teams"))
+        row_tut.addWidget(self.btn_tut_teams)
         
-        feedback_layout.addStretch()
+        feedback_layout.addLayout(row_tut)
+        
         layout.addWidget(group_feedback)
 
         # Spacer to push attribution to the bottom
@@ -136,9 +160,11 @@ class SettingsTab(QWidget):
         except:
             pass
             
-        self.lbl_version = QLabel(f"v{version}")
-        self.lbl_version.setStyleSheet("QLabel { opacity: 0.5; color: gray; font-size: 10px; }")
-        footer_layout.addWidget(self.lbl_version)
+        self.btn_version = QPushButton(f"v{version}")
+        self.btn_version.setFlat(True)
+        self.btn_version.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_version.clicked.connect(self.open_history)
+        footer_layout.addWidget(self.btn_version)
         
         layout.addLayout(footer_layout)
         
@@ -171,13 +197,17 @@ class SettingsTab(QWidget):
         dlg.exec()
         self.settings.setValue("last_feedback_time", time.time())
 
-    def open_tutorial(self):
-        self.tutorial_requested.emit()
+    def open_tutorial(self, section="Builds"):
+        self.tutorial_requested.emit(section)
+
+    def open_history(self):
+        dlg = HistoryViewerDialog(self)
+        dlg.exec()
 
     def refresh_theme(self):
         from src.ui.theme import get_color
         text_color = get_color('text_primary')
-        self.lbl_version.setStyleSheet(f"QLabel {{ opacity: 0.5; color: {text_color}; font-size: 10px; }}")
+        self.btn_version.setStyleSheet(f"QPushButton {{ border: none; background: transparent; opacity: 0.5; color: {text_color}; font-size: 10px; }} QPushButton:hover {{ color: #00AAFF; }}")
         self.lbl_attrib.setStyleSheet(f"QLabel {{ opacity: 0.75; color: {text_color}; letter-spacing: 1px; }}")
 
     def on_theme_changed(self, button):
