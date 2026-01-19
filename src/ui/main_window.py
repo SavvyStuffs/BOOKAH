@@ -182,6 +182,125 @@ class SynergyWorker(QThread):
         self.quit()
         self.wait(500)
 
+class BuildGeneratorWorker(QThread):
+    finished = pyqtSignal(list)
+    
+    def __init__(self, engine, db_path, p1, p2, is_pvp=False):
+        super().__init__()
+        self.engine = engine
+        self.db_path = db_path
+        self.p1 = p1
+        self.p2 = p2
+        self.is_pvp = is_pvp
+        
+    def run(self):
+        import random
+        from src.database import SkillRepository
+        
+        # Create local repo for thread safety
+        repo = SkillRepository(self.db_path)
+        
+        try:
+            # 1. Select Random Elite
+            allowed_profs = {0, self.p1, self.p2}
+            candidates = []
+            
+            all_ids = repo.get_all_skill_ids(is_pvp=self.is_pvp)
+            
+            for sid in all_ids:
+                skill = repo.get_skill(sid, is_pvp=self.is_pvp)
+                if not skill: continue
+                
+                if skill.is_elite and skill.profession in allowed_profs:
+                    if self.is_pvp and skill.is_pve_only: continue
+                    if not self.is_pvp and "(PvP)" in skill.name: continue
+                    
+                    candidates.append(sid)
+                    
+            if not candidates:
+                self.finished.emit([])
+                return
+                
+            elite_id = random.choice(candidates)
+            current_build = [elite_id]
+            
+            # Track names to prevent Kurzick/Luxon/PvP duplicates
+            def get_clean_name(s):
+                return s.name.lower().replace(" (pvp)", "").strip()
+            
+            elite_obj = repo.get_skill(elite_id, is_pvp=self.is_pvp)
+            equipped_names = {get_clean_name(elite_obj)}
+            
+            # 2. Iteratively fill 7 slots
+            for _ in range(7):
+                if self.isInterruptionRequested(): return
+                
+                suggestions = self.engine.get_suggestions(
+                    current_build, 
+                    limit=50, 
+                    primary_prof_id=self.p1, 
+                    is_pvp=self.is_pvp
+                )
+                
+                best_pick = None
+                
+                for item in suggestions:
+                    sid = item[0]
+                    if sid in current_build: continue
+                    
+                    skill = repo.get_skill(sid, is_pvp=self.is_pvp)
+                    if not skill: continue
+                    
+                    # Name check (Dup prevention)
+                    clean_name = get_clean_name(skill)
+                    if clean_name in equipped_names:
+                        continue
+
+                    if skill.is_elite: continue
+                    if skill.profession not in allowed_profs: continue
+                    
+                    if skill.is_pve_only:
+                        pve_count = sum(1 for s in current_build if repo.get_skill(s, self.is_pvp).is_pve_only)
+                        if pve_count >= 3: continue
+                        
+                    best_pick = sid
+                    equipped_names.add(clean_name)
+                    break
+                
+                if best_pick:
+                    current_build.append(best_pick)
+                else:
+                    # Fallback
+                    fallback_candidates = []
+                    for sid in all_ids:
+                        if sid in current_build: continue
+                        skill = repo.get_skill(sid, is_pvp=self.is_pvp)
+                        if not skill or skill.is_elite: continue
+                        if skill.profession not in allowed_profs: continue
+                        
+                        clean_name = get_clean_name(skill)
+                        if clean_name in equipped_names: continue
+
+                        if skill.is_pve_only:
+                            pve_count = sum(1 for s in current_build if repo.get_skill(s, self.is_pvp).is_pve_only)
+                            if pve_count >= 3: continue
+                        fallback_candidates.append(sid)
+                    
+                    if fallback_candidates:
+                        chosen_id = random.choice(fallback_candidates)
+                        current_build.append(chosen_id)
+                        equipped_names.add(get_clean_name(repo.get_skill(chosen_id, self.is_pvp)))
+                    else:
+                        break
+                        
+            self.finished.emit(current_build)
+            
+        except Exception as e:
+            print(f"BuildGen Error: {e}")
+            self.finished.emit([])
+        finally:
+            repo.conn.close()
+
 class MainWindow(QMainWindow):
     def __init__(self, engine=None):
         super().__init__()
@@ -1030,6 +1149,15 @@ class MainWindow(QMainWindow):
         """)
         self.btn_cycle.clicked.connect(self.cycle_suggestions)
         btn_hbox.addWidget(self.btn_cycle)
+
+        self.btn_make_build = QPushButton("Make me a build")
+        self.btn_make_build.setFixedSize(120, 24)
+        self.btn_make_build.setStyleSheet("""
+            QPushButton { background-color: #007700; color: white; border-radius: 4px; font-size: 10px; font-weight: bold; }
+            QPushButton:hover { background-color: #009900; }
+        """)
+        self.btn_make_build.clicked.connect(self.generate_random_build)
+        btn_hbox.addWidget(self.btn_make_build)
 
         self.btn_check_unique = QPushButton("Is this unique?")
         self.btn_check_unique.setFixedSize(150, 24)
@@ -2155,28 +2283,40 @@ class MainWindow(QMainWindow):
         self.update_suggestions()
 
     def cycle_suggestions(self):
-        empty_slots = sum(1 for s in self.bar_skills if s is None)
-        if empty_slots == 0: 
+        # 1. Determine Needs
+        empty_elites = 1 if self.bar_skills[0] is None else 0
+        empty_normals = sum(1 for s in self.bar_skills[1:] if s is None)
+        
+        if empty_elites == 0 and empty_normals == 0:
             print("Cycle: No empty slots.")
             return
 
-        if self.current_suggestions:
-            old_offset = self.suggestion_offset
-            # Shift offset by number of visible slots
-            self.suggestion_offset = (self.suggestion_offset + empty_slots) % len(self.current_suggestions)
-            print(f"Cycling: Offset {old_offset} -> {self.suggestion_offset} (Total: {len(self.current_suggestions)})")
-            self.display_suggestions()
+        # 2. Cycle Elite Offset
+        if getattr(self, 'suggested_elites', None):
+            total_elites = len(self.suggested_elites)
+            if total_elites > 0:
+                self.elite_offset = (self.elite_offset + empty_elites) % total_elites
         else:
-            print("Cycle: No suggestions to cycle.")
+            self.elite_offset = 0
+            
+        # 3. Cycle Normal Offset
+        if getattr(self, 'suggested_normals', None):
+            total_normals = len(self.suggested_normals)
+            if total_normals > 0:
+                self.normal_offset = (self.normal_offset + empty_normals) % total_normals
+        else:
+            self.normal_offset = 0
+            
+        self.display_suggestions()
 
     def open_elite_overlay(self):
-        if not self.current_suggestions: return
+        elites = getattr(self, 'suggested_elites', [])
+        if not elites: return
         
         # Gather Allowed Attributes for Filter
         allowed_attributes = set()
         
         # 1. Attributes on Bar (Slots 2-8 / Indices 1-7)
-        # We check slots 1-7 because slot 0 is the elite itself (which might be empty or changing)
         is_pvp = self.check_pvp.isChecked()
         for i in range(1, 8):
             sid = self.bar_skills[i]
@@ -2189,29 +2329,17 @@ class MainWindow(QMainWindow):
         if self.current_primary_prof in PROF_PRIMARY_ATTR:
             allowed_attributes.add(PROF_PRIMARY_ATTR[self.current_primary_prof])
             
-        # 3. Always allow No Attribute (-1) as fallback?
-        # User said "Limit... to same attributes...". 
-        # If no No Attribute skills are on bar, maybe hide No Attribute elites?
-        # But "Signet of Capture" is -1. "Ursan Blessing" is -9 (Norn).
-        # Let's include -1 by default as it's "neutral".
+        # 3. Always allow No Attribute (-1)
         allowed_attributes.add(-1)
 
         # Instantiate Overlay
-        # We pass 'self' as parent to ensure it stays on top of app, but use Popup flag
         self.elite_overlay = EliteSuggestionOverlay(self)
-        self.elite_overlay.populate(self.current_suggestions, self.repo, allowed_attributes)
+        self.elite_overlay.populate(elites, self.repo, allowed_attributes)
         
         if self.elite_overlay.list_widget.count() == 0:
-            # If empty after filter, show message or just don't show?
-            # Better to show empty state or handle gracefully.
-            # Populating empty list widget is fine, user sees nothing available.
-            pass
-
-        if self.elite_overlay.list_widget.count() == 0:
-             # Optional: Add a "No matching elites" item?
              from PyQt6.QtWidgets import QListWidgetItem
              item = QListWidgetItem("No matching elites")
-             item.setFlags(Qt.ItemFlag.NoItemFlags) # Disabled
+             item.setFlags(Qt.ItemFlag.NoItemFlags) 
              self.elite_overlay.list_widget.addItem(item)
 
         # Connect Selection
@@ -2222,7 +2350,6 @@ class MainWindow(QMainWindow):
         
         # Calculate Position
         slot = self.slots[0]
-        # Map to global screen coordinates
         global_pos = slot.mapToGlobal(QPoint(0, 0))
         
         x = global_pos.x()
@@ -2231,9 +2358,70 @@ class MainWindow(QMainWindow):
         self.elite_overlay.move(x, y)
         self.elite_overlay.show()
 
+    def generate_random_build(self):
+        import random
+        
+        # 1. Profession Logic
+        p1 = self.current_primary_prof
+        p2 = self.current_secondary_prof
+        
+        # Check if current state matches the last auto-generated state
+        # If so, we treat it as "unlocked" and re-randomize
+        last_gen = getattr(self, 'last_generated_profs', None)
+        is_auto_state = (last_gen is not None and (p1, p2) == last_gen)
+        
+        # Determine P1
+        if p1 == 0 or is_auto_state:
+            p1 = random.randint(1, 10)
+            # If we randomized P1, we must randomize P2
+            available = [p for p in range(1, 11) if p != p1]
+            p2 = random.choice(available)
+        elif p2 == 0 or p2 == p1:
+            # P1 was manually set, but P2 is missing/invalid
+            available = [p for p in range(1, 11) if p != p1]
+            p2 = random.choice(available)
+        
+        # Store for next time
+        self.last_generated_profs = (p1, p2)
+            
+        # Update UI & State
+        self.current_primary_prof = p1
+        self.current_secondary_prof = p2
+        self.update_build_code() # Updates visual state
+        
+        # 2. Start Generation
+        self.lbl_bar_loading.setVisible(True)
+        self.btn_make_build.setEnabled(False)
+        self.btn_make_build.setText("Generating...")
+        
+        self.gen_worker = BuildGeneratorWorker(self.engine, DB_FILE, p1, p2, is_pvp=self.check_pvp.isChecked())
+        self.gen_worker.finished.connect(self.on_build_generated)
+        self.gen_worker.start()
+
+    def on_build_generated(self, skill_ids):
+        self.lbl_bar_loading.setVisible(False)
+        self.btn_make_build.setEnabled(True)
+        self.btn_make_build.setText("Make me a build")
+        
+        if not skill_ids:
+            QMessageBox.warning(self, "Error", "Could not generate a build (No elites found?).")
+            return
+            
+        # Fill Bar
+        self.bar_skills = [None] * 8
+        for i, sid in enumerate(skill_ids):
+            if i < 8:
+                self.handle_skill_equipped(i, sid)
+                
+        self.update_suggestions() # Refresh context
+
     def on_synergies_loaded(self, suggestions):
         self.lbl_bar_loading.setVisible(False)
-        self.current_suggestions = []
+        self.suggested_elites = []
+        self.suggested_normals = []
+        # Keep current_suggestions for legacy compatibility/overlay if needed, but populate it too
+        self.current_suggestions = [] 
+        
         is_pvp = self.check_pvp.isChecked()
         show_others = self.check_show_others.isChecked()
         
@@ -2314,21 +2502,25 @@ class MainWindow(QMainWindow):
             # Spirit Redundancy
             if hasattr(self, 'check_smart_mode') and self.check_smart_mode.isChecked():
                 if sid in self.team_synergy_skills:
-                    # Check if it's a spirit
-                    # We can use the tag map logic or just check the description
-                    # Since we standardized tags, let's query the DB for this skill's tags if not already cached
-                    # Or simpler: check if "Type_Spirit" is in its stats (if we had tags in Skill class)
-                    # We'll do a quick check against the skill_tags table
                     cursor = self.repo.conn.cursor()
                     cursor.execute("SELECT 1 FROM skill_tags WHERE skill_id=? AND tag='Type_Spirit'", (sid,))
                     if cursor.fetchone():
                         continue # Skip duplicate spirit
 
-            self.current_suggestions.append((sid, conf, reason))
+            # Add to appropriate list
+            if skill.is_elite:
+                self.suggested_elites.append((sid, conf, reason))
+            else:
+                self.suggested_normals.append((sid, conf, reason))
+                
+            self.current_suggestions.append((sid, conf, reason)) # Backup/Full list
         
-        print(f"[UI] Suggestions kept after filter: {len(self.current_suggestions)} (Filtered: {filtered_count})")
+        print(f"[UI] Suggestions kept: Elites={len(self.suggested_elites)}, Normals={len(self.suggested_normals)}")
 
-        self.suggestion_offset = 0
+        self.elite_offset = 0
+        self.normal_offset = 0
+        self.suggestion_offset = 0 # Legacy
+        
         self.display_suggestions()
 
     def update_suggestions(self):
@@ -2394,31 +2586,14 @@ class MainWindow(QMainWindow):
         self.worker.start()
 
     def display_suggestions(self):
-        empty_indices = [i for i, s in enumerate(self.bar_skills) if s is None]
-        if not empty_indices: return # Nothing to do
-        
         is_pvp = self.check_pvp.isChecked()
         eff_dist = self.get_effective_distribution()
         all_bonuses = self.get_current_bonuses()
         glob_act = self.current_global_effects.get('activation', 0.0)
         glob_rech = self.current_global_effects.get('recharge', 0.0)
         
-        # Track which empty slots have been filled this pass
-        filled_slots = set()
-        
-        # We iterate through suggestions starting from offset
-        # We stop when we have filled all empty slots OR checked all suggestions
-        total_suggestions = len(self.current_suggestions)
-        
-        for i in range(total_suggestions):
-            # Cyclic wrapping? No, user requested linear cycling usually.
-            # But the previous logic was: offset + i.
-            # If we run out, we stop.
-            
-            idx = self.suggestion_offset + i
-            if idx >= total_suggestions: break
-            
-            item = self.current_suggestions[idx]
+        # Helper to unpack and set
+        def set_ghost(slot, item):
             if len(item) == 3:
                 s_id, conf, reason = item
                 display_val = reason if reason else conf
@@ -2427,38 +2602,38 @@ class MainWindow(QMainWindow):
                 display_val = conf
                 
             skill_obj = self.repo.get_skill(s_id, is_pvp=is_pvp)
-            if not skill_obj: continue
+            rank = eff_dist.get(skill_obj.attribute, 0) if skill_obj else 0
+            slot.set_skill(s_id, skill_obj, ghost=True, confidence=display_val, rank=rank,
+                         bonuses=all_bonuses,
+                         global_act=glob_act, global_rech=glob_rech)
+
+        # 1. Fill Elite Slot (0)
+        if self.bar_skills[0] is None:
+            elites = getattr(self, 'suggested_elites', [])
+            e_idx = getattr(self, 'elite_offset', 0)
             
-            target_slot = -1
-            
-            if skill_obj.is_elite:
-                # Elite Logic: Only Slot 0
-                if 0 in empty_indices and 0 not in filled_slots:
-                    target_slot = 0
+            if elites and e_idx < len(elites):
+                set_ghost(self.slots[0], elites[e_idx])
             else:
-                # Normal Logic: Slots 1-7
-                # Find first empty slot > 0 that isn't filled
-                for slot_idx in empty_indices:
-                    if slot_idx > 0 and slot_idx not in filled_slots:
-                        target_slot = slot_idx
-                        break
-            
-            if target_slot != -1:
-                # Fill the slot
-                slot = self.slots[target_slot]
-                rank = eff_dist.get(skill_obj.attribute, 0)
-                slot.set_skill(s_id, skill_obj, ghost=True, confidence=display_val, rank=rank,
-                             bonuses=all_bonuses,
-                             global_act=glob_act, global_rech=glob_rech)
-                filled_slots.add(target_slot)
+                self.slots[0].clear_slot(silent=True)
                 
-            # Optimization: Stop if all empty slots filled
-            if len(filled_slots) == len(empty_indices):
-                break
+        # 2. Fill Normal Slots (1-7)
+        empty_normals = [i for i in range(1, 8) if self.bar_skills[i] is None]
+        normals = getattr(self, 'suggested_normals', [])
+        n_start = getattr(self, 'normal_offset', 0)
         
-        # Clear any empty slots that weren't filled (e.g. no elite suggestions for slot 0)
-        for slot_idx in empty_indices:
-            if slot_idx not in filled_slots:
+        for k, slot_idx in enumerate(empty_normals):
+            n_idx = n_start + k
+            # Wrap around logic? No, just linear. Cycle handles shift.
+            # But if cycling goes past end?
+            # cycle_suggestions does: offset = (offset + needed) % total
+            # So offset is always valid start.
+            # But offset + k might go past end.
+            # If so, we can wrap or stop. Wrapping is better UX for filling bars.
+            if normals:
+                actual_idx = n_idx % len(normals)
+                set_ghost(self.slots[slot_idx], normals[actual_idx])
+            else:
                 self.slots[slot_idx].clear_slot(silent=True)
                 
         self.update_build_code()
