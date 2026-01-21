@@ -1,6 +1,6 @@
 ### Release Notes and Bug Fix History ###
 
-## 1.4.2  
+## 1.4.3  
     Updates:
     - Added a Teambuild sharing feature (Manage Teams -> Share)
     - Updated UI to look better on Linux

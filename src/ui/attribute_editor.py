@@ -1,4 +1,4 @@
-from PyQt6.QtWidgets import QFrame, QVBoxLayout, QLabel, QScrollArea, QWidget, QGridLayout, QComboBox, QHBoxLayout
+from PyQt6.QtWidgets import QFrame, QVBoxLayout, QLabel, QScrollArea, QWidget, QGridLayout, QComboBox, QHBoxLayout, QGraphicsDropShadowEffect
 from PyQt6.QtCore import pyqtSignal, Qt
 from src.constants import ATTR_MAP, PROF_PRIMARY_ATTR, PROF_ATTRS
 from src.models import Skill
@@ -104,9 +104,9 @@ class AttributeEditor(QFrame):
         for aid, (lbl, spin) in self.attr_widgets.items():
             spin.setStyleSheet(combo_style)
             if aid < 0:
-                lbl.setStyleSheet(f"color: {get_color('text_warning')}; font-size: 13px; border: none; font-weight: bold;")
+                lbl.name_lbl.setStyleSheet(f"color: {get_color('text_warning')}; font-size: 13px; border: none; font-weight: bold;")
             else:
-                lbl.setStyleSheet(f"color: {get_color('text_secondary')}; font-size: 13px; border: none; font-weight: bold;")
+                lbl.name_lbl.setStyleSheet(f"color: {get_color('text_secondary')}; font-size: 13px; border: none; font-weight: bold;")
 
         # HR Bonus
         if hasattr(self, 'lbl_hr'):
@@ -125,13 +125,11 @@ class AttributeEditor(QFrame):
 
     def set_professions(self, primary_id, secondary_id, active_skills: List[Skill] = None, extra_attrs: List[int] = None):
         self.primary_id = primary_id # Store for dynamic updates
-        # Snapshot current values before clearing to ensure preservation
-        for aid, (lbl, spin) in self.attr_widgets.items():
-            try:
-                val = int(spin.currentText())
-                self.current_distribution[aid] = val
-            except:
-                pass
+        
+        # Snapshot current values before clearing, but ONLY for attributes that might persist
+        # We'll rebuild current_distribution based on validity later
+        old_distribution = self.current_distribution.copy()
+        self.current_distribution = {}
 
         # Clear existing widgets
         for i in reversed(range(self.grid.count())): 
@@ -201,10 +199,36 @@ class AttributeEditor(QFrame):
         """
 
         for i, aid in enumerate(final_attrs):
-            name = ATTR_MAP.get(aid, f"Attr {aid}")
-            lbl = QLabel(name)
-            lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            lbl.setWordWrap(True)
+            attr_name = ATTR_MAP.get(aid, f"Attr {aid}")
+            
+            # Create a container to hold Name and Bonus separately
+            container = QWidget()
+            container.setStyleSheet("background: transparent; border: none;")
+            layout = QHBoxLayout(container)
+            layout.setContentsMargins(0, 0, 0, 0)
+            layout.setSpacing(4)
+            layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            
+            name_lbl = QLabel(attr_name)
+            name_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            
+            bonus_lbl = QLabel("")
+            bonus_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            # Apply permanent shadow only to the bonus label
+            shadow = QGraphicsDropShadowEffect()
+            shadow.setBlurRadius(2)
+            shadow.setColor(Qt.GlobalColor.black)
+            shadow.setOffset(1, 1)
+            bonus_lbl.setGraphicsEffect(shadow)
+            bonus_lbl.setStyleSheet("color: #00FF00; font-weight: bold; font-size: 13px; border: none;")
+            bonus_lbl.hide()
+            
+            layout.addWidget(name_lbl)
+            layout.addWidget(bonus_lbl)
+            
+            # Store sub-labels on the container for easy access
+            container.name_lbl = name_lbl
+            container.bonus_lbl = bonus_lbl
             
             spin = QComboBox()
             # Default limits: 12 for standard, 10 for PvE
@@ -224,10 +248,11 @@ class AttributeEditor(QFrame):
             if not is_editable:
                 spin.setCurrentIndex(0)
                 spin.setEnabled(False)
-                lbl.setToolTip("This attribute is class specific and doesnt match your primary profession.")
+                container.setToolTip("This attribute is class specific and doesnt match your primary profession.")
             else:
-                # Set previous value if it existed and was valid
-                prev_val = self.current_distribution.get(aid, 0)
+                # Restore previous value if available
+                prev_val = old_distribution.get(aid, 0)
+                self.current_distribution[aid] = prev_val # Restore state
                 spin.setCurrentIndex(min(prev_val, limit))
                 spin.setEnabled(True) # Ensure enabled if it is editable
             
@@ -237,12 +262,12 @@ class AttributeEditor(QFrame):
             if primary_id in PROF_PRIMARY_ATTR and aid == PROF_PRIMARY_ATTR[primary_id]:
                 bonus_text = get_primary_bonus_description(aid, spin.currentIndex())
                 if bonus_text:
-                    lbl.setToolTip(f"<b>Primary Bonus:</b><br>{bonus_text}")
+                    container.setToolTip(f"<b>Primary Bonus:</b><br>{bonus_text}")
 
             # Label on top row, Spinbox on row below it
-            self.grid.addWidget(lbl, i * 2, 0, Qt.AlignmentFlag.AlignCenter)
+            self.grid.addWidget(container, i * 2, 0, Qt.AlignmentFlag.AlignCenter)
             self.grid.addWidget(spin, i * 2 + 1, 0, Qt.AlignmentFlag.AlignCenter)
-            self.attr_widgets[aid] = (lbl, spin)
+            self.attr_widgets[aid] = (container, spin)
             
             # Initial styling
             self._update_label_style(aid)
@@ -255,11 +280,9 @@ class AttributeEditor(QFrame):
         
         style_parts = ["font-size: 13px;", "border: none;", "font-weight: bold;"]
         
-        # 1. Color
+        # 1. Base Color (Applied only to name_lbl)
         if aid < 0:
             style_parts.append(f"color: {get_color('text_warning')};")
-        elif bonus > 0:
-            style_parts.append("color: #00FF00;")
         else:
             style_parts.append(f"color: {get_color('text_secondary')};")
             
@@ -267,7 +290,7 @@ class AttributeEditor(QFrame):
         if self.primary_id in PROF_PRIMARY_ATTR and aid == PROF_PRIMARY_ATTR[self.primary_id]:
             style_parts.append("text-decoration: underline;")
             
-        lbl.setStyleSheet(" ".join(style_parts))
+        lbl.name_lbl.setStyleSheet(" ".join(style_parts))
 
     def set_external_bonuses(self, bonuses: dict, global_bonus: int = 0):
         """
@@ -288,19 +311,18 @@ class AttributeEditor(QFrame):
             else:
                 bonus = bonuses.get(aid, 0) # Only specific bonuses (like Weapon) apply
             
-            # PvE attributes usually don't get standard bonuses, but let's assume they might get global
+            # PvE attributes usually don't get standard bonuses
             if aid < 0:
-                bonus = 0 # Usually PvE ranks are standalone or capped differently. Let's keep them clean for now unless specified.
+                bonus = 0 
             
             total = base_val + bonus
             if total > 20: total = 20 # Hard Cap
             
-            attr_name = ATTR_MAP.get(aid, f"Attr {aid}")
-            
             if bonus > 0:
-                lbl.setText(f"{attr_name} ({total})")
+                lbl.bonus_lbl.setText(f"({total})")
+                lbl.bonus_lbl.show()
             else:
-                lbl.setText(attr_name)
+                lbl.bonus_lbl.hide()
             
             self._update_label_style(aid, bonus)
 
@@ -311,6 +333,11 @@ class AttributeEditor(QFrame):
                     lbl.setToolTip(f"<b>Primary Bonus:</b><br>{bonus_text}")
 
     def _on_attr_changed(self, attr_id):
+        # Safety check: Ignore signals from widgets that have been removed
+        # This prevents KeyError if a "zombie" widget fires after set_professions clears the dict
+        if attr_id not in self.attr_widgets:
+            return
+
         # Calculate what the total would be with the new value
         new_val = int(self.attr_widgets[attr_id][1].currentText())
         old_val = self.current_distribution.get(attr_id, 0)

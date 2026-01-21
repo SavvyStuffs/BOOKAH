@@ -37,6 +37,20 @@ class ShareCodeManager:
         # Fallback if empty
         return f"Build{random.randint(1000,9999)}"
 
+    def is_valid_code(self, code):
+        """Checks if the code is composed of a valid prefix and suffix."""
+        if not code or not self.prefixes or not self.suffixes:
+            return False
+            
+        # Check against all prefixes
+        for p in self.prefixes:
+            if code.startswith(p):
+                # If prefix matches, check if the remainder is a valid suffix
+                remainder = code[len(p):]
+                if remainder in self.suffixes:
+                    return True
+        return False
+
 class ShareWorker(QThread):
     # Signals
     code_generated = pyqtSignal(str) # Emits a unique code found

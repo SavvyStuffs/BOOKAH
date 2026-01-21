@@ -4,13 +4,15 @@ import json
 import sqlite3
 import urllib.parse
 import urllib.request
+import ssl
+import certifi
 import time
 import hashlib
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QLineEdit, QListWidget, QMessageBox, QFileDialog, QInputDialog, QTabWidget, QTextEdit, QFrame, QScrollArea, QGridLayout, QWidget, QMenu,
     QGroupBox, QCheckBox, QRadioButton, QPlainTextEdit, QComboBox, QApplication
 )
-from PyQt6.QtCore import QUrl, QSettings, Qt
+from PyQt6.QtCore import QUrl, QSettings, Qt, QThread, pyqtSignal
 from PyQt6.QtGui import QPixmap, QAction
 
 from src.ui.theme import get_color
@@ -236,6 +238,7 @@ class SharingDialog(QDialog):
         gen_layout = QHBoxLayout()
         self.edit_generated_code = QLineEdit()
         self.edit_generated_code.setPlaceholderText("Click cycle to find a code...")
+        self.edit_generated_code.setReadOnly(True)
         gen_layout.addWidget(self.edit_generated_code)
         
         self.btn_cycle = QPushButton("↻")
@@ -402,6 +405,11 @@ class SharingDialog(QDialog):
             QMessageBox.warning(self, "Error", "Please wait for a valid code generation.")
             return
             
+        # Validate strict prefix/suffix format
+        if not self.manager.is_valid_code(code):
+             QMessageBox.warning(self, "Error", "Invalid share code format.\nMust be a valid Prefix + Suffix combination.")
+             return
+
         if not team_name:
             QMessageBox.warning(self, "Error", "No team selected.")
             return
@@ -1197,6 +1205,38 @@ class BuildUniquenessDialog(QDialog):
         dlg = BuildComparisonDialog(self.active_ids, match_data['build'], self.repo, self)
         dlg.exec()
 
+class FeedbackWorker(QThread):
+    finished = pyqtSignal(bool, str)
+
+    def __init__(self, post_data):
+        super().__init__()
+        self.post_data = post_data
+        self.form_url = "https://docs.google.com/forms/d/e/1FAIpQLSeqm4mSd7Yn6aDMhmLt5bOv3QBGc9jl2dVfEE7YtvQFpjyI7A/formResponse"
+
+    def run(self):
+        try:
+            encoded_data = urllib.parse.urlencode(self.post_data, doseq=True).encode('utf-8')
+            req = urllib.request.Request(self.form_url, data=encoded_data, method='POST')
+            
+            # Use certifi for SSL context to fix Linux/Flatpak verification issues
+            context = ssl.create_default_context(cafile=certifi.where())
+            
+            with urllib.request.urlopen(req, context=context) as response:
+                if response.status == 200:
+                    self.finished.emit(True, "Thank you! Your feedback has been submitted.")
+                else:
+                    self.finished.emit(False, f"HTTP Error: {response.status}")
+        except Exception as e:
+            error_str = str(e)
+            # Google Forms quirks: sometimes it throws on the final redirect
+            if "HTTP Error 400" in error_str:
+                self.finished.emit(False, f"Submission failed (Bad Request).\n{error_str}")
+            elif "CERTIFICATE_VERIFY_FAILED" in error_str:
+                self.finished.emit(False, f"SSL Error: {error_str}\n(Certificate verification failed)")
+            else:
+                # Catch-all: Report the actual error so we don't fail silently
+                self.finished.emit(False, f"Submission Error: {error_str}")
+
 class FeedbackDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -1264,30 +1304,28 @@ class FeedbackDialog(QDialog):
         elif self.radio_no.isChecked(): helpful = "No"
         elif self.radio_kind.isChecked(): helpful = "Kind of"
         
-        # Google Form POST Data
-        form_url = "https://docs.google.com/forms/d/e/1FAIpQLSeqm4mSd7Yn6aDMhmLt5bOv3QBGc9jl2dVfEE7YtvQFpjyI7A/formResponse"
-        
         post_data = {
             'entry.1591633300': types,
             'entry.326955045': feedback_text,
             'entry.1649013129': helpful
         }
         
-        try:
-            encoded_data = urllib.parse.urlencode(post_data, doseq=True).encode('utf-8')
-            req = urllib.request.Request(form_url, data=encoded_data, method='POST')
-            urllib.request.urlopen(req)
-            QMessageBox.information(self, "Success", "Thank you! Your feedback has been submitted.")
+        self.btn_submit.setEnabled(False)
+        self.btn_submit.setText("Sending...")
+        
+        self.worker = FeedbackWorker(post_data)
+        self.worker.finished.connect(self.on_submission_finished)
+        self.worker.start()
+
+    def on_submission_finished(self, success, message):
+        self.btn_submit.setEnabled(True)
+        self.btn_submit.setText("Submit Feedback")
+        
+        if success:
+            QMessageBox.information(self, "Success", message)
             self.accept()
-        except Exception as e:
-            # Google Forms often returns a 200 even if it fails to redirect, 
-            # but standard urllib might throw on the redirect. 
-            # We'll assume success if no major error.
-            if "HTTP Error 400" in str(e):
-                 QMessageBox.critical(self, "Error", f"Submission failed (Bad Request). Please check fields.\n{e}")
-            else:
-                 QMessageBox.information(self, "Success", "Thank you! Your feedback has been submitted.")
-                 self.accept()
+        else:
+            QMessageBox.critical(self, "Error", message)
 
 class ProfessionSelectionDialog(QDialog):
     def __init__(self, current_primary, current_secondary, parent=None):

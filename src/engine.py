@@ -1,6 +1,7 @@
 import sqlite3
 import json
 import os
+import random
 import collections
 from typing import List, Set, Tuple
 from collections import Counter
@@ -8,6 +9,7 @@ from src.skill2vec import SkillBrain
 from src.utils import GuildWarsTemplateDecoder
 from src.models import Build
 from src.constants import BEHAVIOR_MODEL_PATH, SEMANTIC_MODEL_PATH, USER_BUILDS_FILE
+from src.database import SkillRepository
 
 # =============================================================================
 # MECHANICS ENGINE
@@ -281,8 +283,8 @@ class MechanicsEngine:
         if effective_rech > 0:
             candidate_eps = nrg / effective_rech
             total_drain = context.energy_drain_per_sec + candidate_eps
-            limit = 4.0 if (context.is_caster or context.is_assassin_primary) else 2.5
-            if total_drain > limit: return True, "⚠️ High Energy Usage"
+            # limit check removed per user request
+            
         return True, "OK"
 
     def check_resource_stability(self, skill_a_data, skill_b_data, context):
@@ -295,7 +297,7 @@ class MechanicsEngine:
         cap = context.max_energy_capacity
         
         if burst_cost > cap: return False, "⚠️ High Energy Usage"
-        if burst_cost > (cap * 0.8): return True, "⚠️ High Energy Usage"
+        # Soft cap warning removed per user request
 
         total_hp = hp_a + hp_b
         if total_hp > 50 and (rech_a < 8 or rech_b < 8): return False, "⚠️ High Health Cost"
@@ -1287,3 +1289,284 @@ class SynergyEngine:
             
             valid_ids.update(b.skill_ids)
         return valid_ids
+
+    def generate_random_build_sequence(self, p1, p2, is_pvp=False, team_skills=None):
+        # Create local repo for thread safety
+        repo = SkillRepository(self.mechanics.db_path)
+        
+        WEAPON_MAP = {
+            18: "Axe", 19: "Hammer", 20: "Sword", 25: "Bow",
+            29: "Dagger", 37: "Spear", 41: "Scythe"
+        }
+        
+        def get_active_weapon(build_ids):
+            for s in build_ids:
+                sk = repo.get_skill(s, is_pvp)
+                if sk and sk.attribute in WEAPON_MAP:
+                    return WEAPON_MAP[sk.attribute]
+            return None
+            
+        def get_clean_name(s):
+            return s.name.lower().replace(" (pvp)", "").strip()
+
+        try:
+            # 1. Select Random Elite with 75% Primary Bias
+            allowed_profs = {0, p1, p2}
+            primary_candidates = []
+            secondary_candidates = []
+            
+            all_ids = repo.get_all_skill_ids(is_pvp=is_pvp)
+            
+            for sid in all_ids:
+                skill = repo.get_skill(sid, is_pvp=is_pvp)
+                if not skill: continue
+                
+                if skill.is_elite and skill.profession in allowed_profs:
+                    if is_pvp and skill.is_pve_only: continue
+                    if not is_pvp and "(PvP)" in skill.name: continue
+                    
+                    if skill.profession == p1:
+                        primary_candidates.append(sid)
+                    else:
+                        secondary_candidates.append(sid)
+            
+            elite_id = None
+            
+            # Weighted Choice: 75% Primary, 25% Secondary
+            if primary_candidates and secondary_candidates:
+                if random.random() < 0.75:
+                    elite_id = random.choice(primary_candidates)
+                else:
+                    elite_id = random.choice(secondary_candidates)
+            elif primary_candidates:
+                elite_id = random.choice(primary_candidates)
+            elif secondary_candidates:
+                elite_id = random.choice(secondary_candidates)
+            else:
+                return [], p1, p2
+                
+            current_build = [elite_id]
+            
+            elite_obj = repo.get_skill(elite_id, is_pvp=is_pvp)
+            equipped_names = {get_clean_name(elite_obj)}
+            active_attributes = set()
+            if elite_obj.attribute != -1:
+                active_attributes.add(elite_obj.attribute)
+            
+            # Determine Secondary Target (1, 2, or 3)
+            # 25% chance of 3, 50% chance of 2, 25% chance of 1 (implicit remainder)
+            # Actually user said: "at least one... 50% chance of two and 25% chance of three"
+            # This implies cumulative?
+            # Let's use specific buckets:
+            roll = random.random()
+            if roll < 0.25: secondary_target = 3
+            elif roll < 0.75: secondary_target = 2
+            else: secondary_target = 1
+            
+            secondary_count = 0
+            if elite_obj.profession == p2 and p2 != 0:
+                secondary_count += 1
+            
+            # 2. Iteratively fill 7 slots
+            # Use Elite's profession as context to prioritize synergy with it
+            context_p1 = elite_obj.profession if elite_obj.profession != 0 else p1
+            
+            if team_skills is None: team_skills = []
+            
+            for _ in range(7):
+                # Check if we must force a secondary skill
+                remaining_slots = 8 - len(current_build)
+                needed_secondary = max(0, secondary_target - secondary_count)
+                force_secondary = (needed_secondary >= remaining_slots) and (p2 != 0)
+                
+                # Combine build + team for context
+                context_ids = current_build + team_skills
+                
+                suggestions = self.get_suggestions(
+                    context_ids, 
+                    limit=50, 
+                    primary_prof_id=context_p1, 
+                    is_pvp=is_pvp
+                )
+                
+                valid_candidates = []
+                
+                for item in suggestions:
+                    sid = item[0]
+                    if sid in current_build: continue
+                    
+                    skill = repo.get_skill(sid, is_pvp=is_pvp)
+                    if not skill: continue
+                    
+                    clean_name = get_clean_name(skill)
+                    if clean_name in equipped_names: continue
+
+                    if skill.is_elite: continue
+                    if skill.profession not in allowed_profs: continue
+                    
+                    # Strict PvP/PvE Filters
+                    if is_pvp and skill.is_pve_only: continue
+                    if not is_pvp and "(PvP)" in skill.name: continue
+                    
+                    if skill.is_pve_only:
+                        pve_count = sum(1 for s in current_build if repo.get_skill(s, is_pvp).is_pve_only)
+                        if pve_count >= 3: continue
+                        
+                    # Force Secondary Logic
+                    if force_secondary and skill.profession != p2:
+                        continue
+                        
+                    # Attribute Limit Check (Max 3)
+                    if skill.attribute != -1 and skill.attribute not in active_attributes:
+                        if len(active_attributes) >= 3:
+                            continue
+                        
+                    valid_candidates.append(sid)
+                    if len(valid_candidates) >= 5:
+                        break
+                
+                if valid_candidates:
+                    # Pick randomly from the top candidates
+                    best_pick = random.choice(valid_candidates)
+                    current_build.append(best_pick)
+                    
+                    # Update tracking
+                    pick_obj = repo.get_skill(best_pick, is_pvp)
+                    equipped_names.add(get_clean_name(pick_obj))
+                    if pick_obj.profession == p2 and p2 != 0:
+                        secondary_count += 1
+                    if pick_obj.attribute != -1:
+                        active_attributes.add(pick_obj.attribute)
+                else:
+                    # Fallback
+                    fallback_candidates = []
+                    active_weapon = get_active_weapon(current_build)
+                    
+                    for sid in all_ids:
+                        if sid in current_build: continue
+                        skill = repo.get_skill(sid, is_pvp=is_pvp)
+                        if not skill or skill.is_elite: continue
+                        if skill.profession not in allowed_profs: continue
+                        
+                        # Strict PvP/PvE Filters (Fallback)
+                        if is_pvp and skill.is_pve_only: continue
+                        if not is_pvp and "(PvP)" in skill.name: continue
+                        
+                        clean_name = get_clean_name(skill)
+                        if clean_name in equipped_names: continue
+
+                        if skill.is_pve_only:
+                            pve_count = sum(1 for s in current_build if repo.get_skill(s, is_pvp).is_pve_only)
+                            if pve_count >= 3: continue
+                            
+                        # Weapon Check
+                        skill_weapon = WEAPON_MAP.get(skill.attribute)
+                        if skill_weapon and active_weapon and skill_weapon != active_weapon:
+                            continue
+                            
+                        # Force Secondary Logic (Fallback)
+                        if force_secondary and skill.profession != p2:
+                            continue
+                            
+                        # Attribute Limit Check
+                        if skill.attribute != -1 and skill.attribute not in active_attributes:
+                            if len(active_attributes) >= 3:
+                                continue
+                            
+                        fallback_candidates.append(sid)
+                    
+                    if fallback_candidates:
+                        chosen_id = random.choice(fallback_candidates)
+                        current_build.append(chosen_id)
+                        
+                        pick_obj = repo.get_skill(chosen_id, is_pvp)
+                        equipped_names.add(get_clean_name(pick_obj))
+                        if pick_obj.profession == p2 and p2 != 0:
+                            secondary_count += 1
+                        if pick_obj.attribute != -1:
+                            active_attributes.add(pick_obj.attribute)
+                    else:
+                        break
+            
+            # 3. Optimization Removed (Respect User Selection)
+            # count_p1 = 0 ... logic removed
+                
+            return current_build, p1, p2
+            
+        finally:
+            repo.conn.close()
+
+    def calculate_attribute_distribution(self, skill_ids, is_pvp=False):
+        repo = SkillRepository(self.mechanics.db_path)
+        try:
+            # 1. Count Attributes
+            raw_counts = {}
+            for sid in skill_ids:
+                skill = repo.get_skill(sid, is_pvp)
+                if skill and skill.attribute != -1:
+                    raw_counts[skill.attribute] = raw_counts.get(skill.attribute, 0) + 1
+            
+            if not raw_counts: return {}
+
+            distribution = {k: 0 for k in raw_counts.keys()}
+            points_left = 200 
+            
+            allocatable_counts = {}
+            for aid, count in raw_counts.items():
+                if aid < 0:
+                    distribution[aid] = 5
+                else:
+                    allocatable_counts[aid] = count
+
+            COSTS = [0, 1, 3, 6, 10, 15, 21, 28, 37, 48, 61, 77, 97]
+            def get_cost(r):
+                return COSTS[min(r, 12)] 
+                
+            WEAPON_IDS = {18, 19, 20, 25, 29, 37, 41}
+            
+            # Phase 1: Weapon Mastery
+            weapon_attrs = [aid for aid in allocatable_counts.keys() if aid in WEAPON_IDS]
+            weapon_attrs.sort(key=lambda aid: allocatable_counts[aid], reverse=True)
+            
+            for aid in weapon_attrs:
+                needed = get_cost(9)
+                if points_left >= needed:
+                    distribution[aid] = 9
+                    points_left -= needed
+                else:
+                    for r in range(8, 0, -1):
+                        c = get_cost(r)
+                        if points_left >= c:
+                            distribution[aid] = r
+                            points_left -= c
+                            break
+
+            # Phase 2: Top Skills
+            sorted_attrs = sorted(allocatable_counts.items(), key=lambda x: x[1], reverse=True)
+            
+            def upgrade_to(aid, target_rank):
+                nonlocal points_left
+                current = distribution[aid]
+                if current >= target_rank: return
+                
+                needed = get_cost(target_rank) - get_cost(current)
+                if points_left >= needed:
+                    distribution[aid] = target_rank
+                    points_left -= needed
+
+            if len(sorted_attrs) > 0: upgrade_to(sorted_attrs[0][0], 12)
+            if len(sorted_attrs) > 1: upgrade_to(sorted_attrs[1][0], 12)
+            
+            if len(sorted_attrs) > 2:
+                attr3 = sorted_attrs[2][0]
+                current = distribution[attr3]
+                for r in range(12, current, -1):
+                    needed = get_cost(r) - get_cost(current)
+                    if points_left >= needed:
+                        distribution[attr3] = r
+                        points_left -= needed
+                        break
+                        
+            return distribution
+        finally:
+            repo.conn.close()
