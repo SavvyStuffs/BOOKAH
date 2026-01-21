@@ -183,143 +183,24 @@ class SynergyWorker(QThread):
         self.wait(500)
 
 class BuildGeneratorWorker(QThread):
-    finished = pyqtSignal(list)
+    finished = pyqtSignal(list, int, int)
     
-    def __init__(self, engine, db_path, p1, p2, is_pvp=False):
+    def __init__(self, engine, p1, p2, is_pvp=False):
         super().__init__()
         self.engine = engine
-        self.db_path = db_path
         self.p1 = p1
         self.p2 = p2
         self.is_pvp = is_pvp
         
     def run(self):
-        import random
-        from src.database import SkillRepository
-        
-        # Create local repo for thread safety
-        repo = SkillRepository(self.db_path)
-        
-        WEAPON_MAP = {
-            18: "Axe", 19: "Hammer", 20: "Sword", 25: "Bow",
-            29: "Dagger", 37: "Spear", 41: "Scythe"
-        }
-        
-        def get_active_weapon(build_ids):
-            for s in build_ids:
-                sk = repo.get_skill(s, self.is_pvp)
-                if sk and sk.attribute in WEAPON_MAP:
-                    return WEAPON_MAP[sk.attribute]
-            return None
-        
         try:
-            # 1. Select Random Elite
-            allowed_profs = {0, self.p1, self.p2}
-            candidates = []
-            
-            all_ids = repo.get_all_skill_ids(is_pvp=self.is_pvp)
-            
-            for sid in all_ids:
-                skill = repo.get_skill(sid, is_pvp=self.is_pvp)
-                if not skill: continue
-                
-                if skill.is_elite and skill.profession in allowed_profs:
-                    if self.is_pvp and skill.is_pve_only: continue
-                    if not self.is_pvp and "(PvP)" in skill.name: continue
-                    
-                    candidates.append(sid)
-                    
-            if not candidates:
-                self.finished.emit([])
-                return
-                
-            elite_id = random.choice(candidates)
-            current_build = [elite_id]
-            
-            # Track names to prevent Kurzick/Luxon/PvP duplicates
-            def get_clean_name(s):
-                return s.name.lower().replace(" (pvp)", "").strip()
-            
-            elite_obj = repo.get_skill(elite_id, is_pvp=self.is_pvp)
-            equipped_names = {get_clean_name(elite_obj)}
-            
-            # 2. Iteratively fill 7 slots
-            for _ in range(7):
-                if self.isInterruptionRequested(): return
-                
-                suggestions = self.engine.get_suggestions(
-                    current_build, 
-                    limit=50, 
-                    primary_prof_id=self.p1, 
-                    is_pvp=self.is_pvp
-                )
-                
-                best_pick = None
-                
-                for item in suggestions:
-                    sid = item[0]
-                    if sid in current_build: continue
-                    
-                    skill = repo.get_skill(sid, is_pvp=self.is_pvp)
-                    if not skill: continue
-                    
-                    # Name check (Dup prevention)
-                    clean_name = get_clean_name(skill)
-                    if clean_name in equipped_names:
-                        continue
-
-                    if skill.is_elite: continue
-                    if skill.profession not in allowed_profs: continue
-                    
-                    if skill.is_pve_only:
-                        pve_count = sum(1 for s in current_build if repo.get_skill(s, self.is_pvp).is_pve_only)
-                        if pve_count >= 3: continue
-                        
-                    best_pick = sid
-                    equipped_names.add(clean_name)
-                    break
-                
-                if best_pick:
-                    current_build.append(best_pick)
-                else:
-                    # Fallback
-                    fallback_candidates = []
-                    active_weapon = get_active_weapon(current_build)
-                    
-                    for sid in all_ids:
-                        if sid in current_build: continue
-                        skill = repo.get_skill(sid, is_pvp=self.is_pvp)
-                        if not skill or skill.is_elite: continue
-                        if skill.profession not in allowed_profs: continue
-                        
-                        clean_name = get_clean_name(skill)
-                        if clean_name in equipped_names: continue
-
-                        if skill.is_pve_only:
-                            pve_count = sum(1 for s in current_build if repo.get_skill(s, self.is_pvp).is_pve_only)
-                            if pve_count >= 3: continue
-                            
-                        # Weapon Check
-                        skill_weapon = WEAPON_MAP.get(skill.attribute)
-                        if skill_weapon and active_weapon and skill_weapon != active_weapon:
-                            continue
-                            
-                        fallback_candidates.append(sid)
-                    
-                    if fallback_candidates:
-                        chosen_id = random.choice(fallback_candidates)
-                        current_build.append(chosen_id)
-                        equipped_names.add(get_clean_name(repo.get_skill(chosen_id, self.is_pvp)))
-                    else:
-                        break
-                        
-            self.finished.emit(current_build)
-            
+            skills, final_p1, final_p2 = self.engine.generate_random_build_sequence(
+                self.p1, self.p2, self.is_pvp
+            )
+            self.finished.emit(skills, final_p1, final_p2)
         except Exception as e:
             print(f"BuildGen Error: {e}")
-            self.finished.emit([])
-        finally:
-            repo.conn.close()
+            self.finished.emit([], 0, 0)
 
 class MainWindow(QMainWindow):
     def __init__(self, engine=None):
@@ -1507,7 +1388,13 @@ class MainWindow(QMainWindow):
         self.btn_team_view.blockSignals(True)
         self.btn_team_view.setChecked(False)
         self.btn_team_view.blockSignals(False)
+
+        self.btn_char_view.blockSignals(True)
+        self.btn_char_view.setChecked(False)
+        self.btn_char_view.blockSignals(False)
+
         self.center_stack.setCurrentIndex(0) # Back to Library
+        self.right_stack.setCurrentIndex(0) # Back to Attributes
         
         self.attr_editor.set_read_only(False) # Ensure editable on reset
         
@@ -1606,24 +1493,25 @@ class MainWindow(QMainWindow):
         self.current_secondary_prof = secondary_prof_id
         self.is_swapped = False
         
-        # Only auto-switch profession filter if we are NOT in a specific Team/Category view
-        # This prevents the list from suddenly filtering out other members of the team
-        current_team = self.combo_team.currentText()
-        current_cat = self.combo_cat.currentText()
-        should_switch_prof = (current_team == "All" and current_cat == "All")
-
-        if primary_prof_id != 0 and should_switch_prof:
-            for i in range(self.combo_prof.count()):
-                if self.combo_prof.itemData(i) == primary_prof_id:
-                    self.combo_prof.setCurrentIndex(i)
-                    break
-        
         skills = build_data.get("skills", [])
         if len(skills) < 8:
             skills.extend([0] * (8 - len(skills)))
         skills = skills[:8]
         
         is_pvp = self.check_pvp.isChecked()
+
+        # --- Elite Placement Enforcement ---
+        elite_index = -1
+        for i, sid in enumerate(skills):
+            if sid == 0: continue
+            s = self.repo.get_skill(sid, is_pvp=is_pvp)
+            if s and s.is_elite:
+                elite_index = i
+                break
+        
+        if elite_index > 0:
+            skills[0], skills[elite_index] = skills[elite_index], skills[0]
+        # -----------------------------------
         
         # Collect active skill objects for PvE attribute detection & Attribute Panel update
         active_skill_objs = []
@@ -1987,6 +1875,29 @@ class MainWindow(QMainWindow):
             if not decoded:
                 QMessageBox.warning(self, "Import Error", "Invalid build template file.")
                 return
+
+            # --- Elite Placement Enforcement ---
+            skills = decoded.get('skills', [])
+            if len(skills) < 8: skills.extend([0] * (8 - len(skills)))
+            skills = skills[:8]
+            
+            elite_index = -1
+            # Using repo to check for elite (assuming default PvE/Global context is fine for import)
+            for i, sid in enumerate(skills):
+                if sid == 0: continue
+                s_obj = self.repo.get_skill(sid)
+                if s_obj and s_obj.is_elite:
+                    elite_index = i
+                    break
+            
+            if elite_index > 0:
+                skills[0], skills[elite_index] = skills[elite_index], skills[0]
+                decoded['skills'] = skills
+                
+                # Re-encode to ensure code matches new order
+                encoder = GuildWarsTemplateEncoder(decoded)
+                code = encoder.encode()
+            # -----------------------------------
 
             # Update Build Object
             build.code = code
@@ -2381,127 +2292,32 @@ class MainWindow(QMainWindow):
     def generate_random_build(self):
         import random
         
-        # 1. Profession Logic
         p1 = self.current_primary_prof
         p2 = self.current_secondary_prof
         
-        # Check if current state matches the last auto-generated state
-        # If so, we treat it as "unlocked" and re-randomize
-        last_gen = getattr(self, 'last_generated_profs', None)
-        is_auto_state = (last_gen is not None and (p1, p2) == last_gen)
+        # If no primary is selected, we are in "Random Mode"
+        self._gen_was_random = (p1 == 0)
         
-        # Determine P1
-        if p1 == 0 or is_auto_state:
+        if self._gen_was_random:
+            # Pick random for the generation process
             p1 = random.randint(1, 10)
-            # If we randomized P1, we must randomize P2
             available = [p for p in range(1, 11) if p != p1]
             p2 = random.choice(available)
         elif p2 == 0 or p2 == p1:
-            # P1 was manually set, but P2 is missing/invalid
+            # P1 was selected, but P2 is missing
             available = [p for p in range(1, 11) if p != p1]
             p2 = random.choice(available)
-        
-        # Store for next time
-        self.last_generated_profs = (p1, p2)
-            
-        # Update UI & State
-        self.current_primary_prof = p1
-        self.current_secondary_prof = p2
-        self.update_build_code() # Updates visual state
         
         # 2. Start Generation
         self.lbl_bar_loading.setVisible(True)
         self.btn_make_build.setEnabled(False)
         self.btn_make_build.setText("Generating...")
         
-        self.gen_worker = BuildGeneratorWorker(self.engine, DB_FILE, p1, p2, is_pvp=self.check_pvp.isChecked())
+        self.gen_worker = BuildGeneratorWorker(self.engine, p1, p2, is_pvp=self.check_pvp.isChecked())
         self.gen_worker.finished.connect(self.on_build_generated)
         self.gen_worker.start()
 
-    def apply_auto_attributes(self, skill_ids):
-        # 1. Count Attributes
-        raw_counts = {}
-        is_pvp = self.check_pvp.isChecked()
-        for sid in skill_ids:
-            skill = self.repo.get_skill(sid, is_pvp)
-            if skill and skill.attribute != -1:
-                raw_counts[skill.attribute] = raw_counts.get(skill.attribute, 0) + 1
-        
-        if not raw_counts: return
-
-        distribution = {k: 0 for k in raw_counts.keys()}
-        points_left = 200 
-        
-        # Split into PvE (Free) vs Standard (Allocatable)
-        allocatable_counts = {}
-        
-        for aid, count in raw_counts.items():
-            if aid < 0:
-                # PvE Title Track: Free Rank 5 (No point cost)
-                distribution[aid] = 5
-            else:
-                allocatable_counts[aid] = count
-
-        # 2. Setup Costs
-        def get_cost(r):
-            return (r * (r + 1)) // 2 
-            
-        WEAPON_IDS = {18, 19, 20, 25, 29, 37, 41}
-        
-        # 3. Phase 1: Enforce Weapon Mastery (Rank 9)
-        weapon_attrs = [aid for aid in allocatable_counts.keys() if aid in WEAPON_IDS]
-        # Sort by skill count to prioritize main weapon
-        weapon_attrs.sort(key=lambda aid: allocatable_counts[aid], reverse=True)
-        
-        for aid in weapon_attrs:
-            needed = get_cost(9) # 45 points
-            if points_left >= needed:
-                distribution[aid] = 9
-                points_left -= needed
-            else:
-                # Max out remaining if we can't afford 9
-                for r in range(8, 0, -1):
-                    c = get_cost(r)
-                    if points_left >= c:
-                        distribution[aid] = r
-                        points_left -= c
-                        break
-
-        # 4. Phase 2: Allocate to Top Skills
-        sorted_attrs = sorted(allocatable_counts.items(), key=lambda x: x[1], reverse=True)
-        
-        def upgrade_to(aid, target_rank):
-            nonlocal points_left
-            current = distribution[aid]
-            if current >= target_rank: return
-            
-            needed = get_cost(target_rank) - get_cost(current)
-            if points_left >= needed:
-                distribution[aid] = target_rank
-                points_left -= needed
-
-        # Top 1 -> 12
-        if len(sorted_attrs) > 0: upgrade_to(sorted_attrs[0][0], 12)
-            
-        # Top 2 -> 12
-        if len(sorted_attrs) > 1: upgrade_to(sorted_attrs[1][0], 12)
-                
-        # Top 3 -> Max Possible (up to 12)
-        if len(sorted_attrs) > 2:
-            attr3 = sorted_attrs[2][0]
-            current = distribution[attr3]
-            # Try ranks 12 down to current+1
-            for r in range(12, current, -1):
-                needed = get_cost(r) - get_cost(current)
-                if points_left >= needed:
-                    distribution[attr3] = r
-                    points_left -= needed
-                    break
-                
-        self.attr_editor.set_distribution(distribution)
-        self.update_build_code()
-
-    def on_build_generated(self, skill_ids):
+    def on_build_generated(self, skill_ids, p1, p2):
         self.lbl_bar_loading.setVisible(False)
         self.btn_make_build.setEnabled(True)
         self.btn_make_build.setText("Make me a build")
@@ -2510,42 +2326,38 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Error", "Could not generate a build (No elites found?).")
             return
             
-        # Optimize Professions based on Skill Counts
-        # We check if the generated build leans heavily towards the Secondary profession
-        p1 = self.current_primary_prof
-        p2 = self.current_secondary_prof
-        count_p1 = 0
-        count_p2 = 0
-        is_pvp = self.check_pvp.isChecked()
+        # Clear previous build artifacts (Runes, Cons, Weapons)
+        if hasattr(self, 'character_panel'):
+            self.character_panel.clear_runes()
+            self.character_panel.clear_consumables()
+            self.character_panel.active_weapon = None 
+            self.character_panel.update_stats()
+            
+        if hasattr(self, 'weapons_panel') and hasattr(self.weapons_panel, 'weapon_widgets'):
+            for w in self.weapons_panel.weapon_widgets.values():
+                w.button.blockSignals(True)
+                w.button.setChecked(False)
+                w.button.blockSignals(False)
+            
+        # Update Professions ONLY if the user already had a selection
+        # (This keeps the generator in "Random" mode if it started that way)
+        if not getattr(self, '_gen_was_random', False):
+            self.current_primary_prof = p1
+            self.current_secondary_prof = p2
         
-        for sid in skill_ids:
-            skill = self.repo.get_skill(sid, is_pvp=is_pvp)
-            if not skill: continue
-            if skill.profession == p1: count_p1 += 1
-            elif skill.profession == p2: count_p2 += 1
-            
-        # Logic: 5+ skills overrides everything. Otherwise, majority wins.
-        should_swap = False
-        if count_p2 >= 5:
-            should_swap = True
-        elif count_p2 > count_p1:
-            should_swap = True
-            
-        if should_swap:
-            self.current_primary_prof, self.current_secondary_prof = p2, p1
-            # Update tracking for random generator state so it doesn't think user manually swapped
-            self.last_generated_profs = (self.current_primary_prof, self.current_secondary_prof)
-            self.update_build_code()
-            
         # Fill Bar
         self.bar_skills = [None] * 8
         for i, sid in enumerate(skill_ids):
             if i < 8:
                 self.handle_skill_equipped(i, sid)
         
-        # Apply Attributes
-        self.apply_auto_attributes(skill_ids)
-                
+        # Apply Attributes via Engine (Must happen AFTER bar is filled so widgets exist)
+        dist = self.engine.calculate_attribute_distribution(skill_ids, self.check_pvp.isChecked())
+        self.attr_editor.set_distribution(dist)
+        
+        # Final Code Update
+        self.update_build_code()
+        
         self.update_suggestions() # Refresh context
 
     def on_synergies_loaded(self, suggestions):
@@ -2877,7 +2689,12 @@ class MainWindow(QMainWindow):
         
         effective = {}
         for aid, rank in dist.items():
-            bonus = self.current_bonuses.get(aid, 0) + global_bonus + hr_bonus
+            # PvE attributes (negative IDs) do not benefit from All Attributes bonuses
+            if aid < 0:
+                bonus = self.current_bonuses.get(aid, 0)
+            else:
+                bonus = self.current_bonuses.get(aid, 0) + global_bonus + hr_bonus
+                
             total = rank + bonus
             if total > 20: total = 20
             effective[aid] = total

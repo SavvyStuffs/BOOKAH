@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>dev.savvy_stuff.Bookah.desktop</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>CC-BY-NC-SA-4.0</project_license>
+  <name>BOOKAH</name>
+  <developer_name>Savvy Stuff</developer_name>
+  <summary>Build Optimization &amp; Organization for Knowledge-Agnostic Hominids</summary>
+  <description>
+    <p>
+      BOOKAH is a sophisticated build maker for Guild Wars 1, featuring PvX wiki integration 
+      and a "Smart Mode" that leverages AI to discover skill synergies.
+    </p>
+    <p>Key Features:</p>
+    <ul>
+      <li>Behavioral Engine: Analyzes historical meta-build data to identify frequent skill pairings.</li>
+      <li>Semantic Engine: Uses Sentence-BERT to map mechanical relationships between skill descriptions.</li>
+      <li>Heuristic Mechanics Engine: Validates attributes, energy management, and core build requirements.</li>
+    </ul>
+  </description>
+  <launchable type="desktop-id">dev.savvy_stuff.Bookah.desktop</launchable>
+  <screenshots>
+    <screenshot type="default">
+      <caption>Main Build Interface</caption>
+      <image>https://raw.githubusercontent.com/SavvyStuffs/BOOKAH/main/icons/screenshots/1.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>Skill Selection and Search</caption>
+      <image>https://raw.githubusercontent.com/SavvyStuffs/BOOKAH/main/icons/screenshots/2.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>AI Smart Mode Synergies</caption>
+      <image>https://raw.githubusercontent.com/SavvyStuffs/BOOKAH/main/icons/screenshots/3.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>Build Statistics and Validation</caption>
+      <image>https://raw.githubusercontent.com/SavvyStuffs/BOOKAH/main/icons/screenshots/4.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>Theme Customization</caption>
+      <image>https://raw.githubusercontent.com/SavvyStuffs/BOOKAH/main/icons/screenshots/5.png</image>
+    </screenshot>
+  </screenshots>
+  <url type="homepage">https://github.com/SavvyStuffs/BOOKAH</url>
+  <provides>
+    <binary>bookah_flatpak</binary>
+  </provides>
+  <releases>
+    <release version="1.4.3" date="2026-01-20" />
+  </releases>
+  <content_rating type="oars-1.1" />
+</component>

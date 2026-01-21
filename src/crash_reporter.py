@@ -2,6 +2,8 @@ import sys
 import traceback
 import urllib.request
 import urllib.parse
+import ssl
+import certifi
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QLabel, QTextEdit, QPushButton, QHBoxLayout, QMessageBox, QProgressBar
 )
@@ -28,7 +30,11 @@ class CrashWorker(QThread):
             }
             encoded_data = urllib.parse.urlencode(data).encode('utf-8')
             req = urllib.request.Request(FORM_URL, data=encoded_data)
-            with urllib.request.urlopen(req) as response:
+            
+            # Use certifi to provide valid CA certificates
+            context = ssl.create_default_context(cafile=certifi.where())
+            
+            with urllib.request.urlopen(req, context=context) as response:
                 if response.status == 200:
                     self.finished.emit(True, "Report sent successfully.")
                 else:

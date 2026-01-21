@@ -1,4 +1,5 @@
 app-id: dev.savvy_stuff.Bookah
+branch: stable
 runtime: org.kde.Platform
 runtime-version: '6.6'
 sdk: org.kde.Sdk
@@ -20,17 +21,24 @@ modules:
       - mkdir -p /app/bin
       
       # Copy the pre-built PyInstaller contents (which are in the current dir)
-      - cp -r . /app/share/bookah/
+      - cp -a . /app/share/bookah/
       
       # Fix line endings for launcher (Windows compatibility)
       - sed -i 's/\r$//' bookah_flatpak
       
+      # Fix line endings for desktop file
+      - sed -i 's/\r$//' dev.savvy_stuff.Bookah.desktop
+      
+      # Fix line endings for metainfo file
+      - sed -i 's/\r$//' dev.savvy_stuff.Bookah.desktop.metainfo.xml
+
       # Install launcher
       - install -D bookah_flatpak /app/bin/bookah_flatpak
       - chmod +x /app/bin/bookah_flatpak
       
       # Install Metadata
       - install -D dev.savvy_stuff.Bookah.desktop /app/share/applications/dev.savvy_stuff.Bookah.desktop
+      - install -D dev.savvy_stuff.Bookah.desktop.metainfo.xml /app/share/metainfo/dev.savvy_stuff.Bookah.desktop.metainfo.xml
       - install -D icons/bookah_flatpak_icon.png /app/share/icons/hicolor/512x512/apps/dev.savvy_stuff.Bookah.png
     sources:
       # This points to the folder containing the PyInstaller output
@@ -41,6 +49,8 @@ modules:
         path: bookah_flatpak
       - type: file
         path: dev.savvy_stuff.Bookah.desktop
+      - type: file
+        path: dev.savvy_stuff.Bookah.desktop.metainfo.xml
       # Include icons from the main project
       - type: dir
         path: ../icons
