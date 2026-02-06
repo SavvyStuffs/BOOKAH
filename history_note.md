@@ -42,8 +42,6 @@
 
 <!--end of list-->
 
-## 1.2.0  
-    Updates: 
-    - Added feedback report and crash reports 
-    - Added tutorial video. 
-    - Squashed some bugs.
+## 1.3.0  
+    
+    Release version!
