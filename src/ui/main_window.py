@@ -230,7 +230,7 @@ class MainWindow(QMainWindow):
         try:
             import sqlite3
             with sqlite3.connect(DB_FILE) as conn:
-                cursor = conn.execute("SELECT skill_id, name FROM skills UNION SELECT skill_id, name FROM skills_pvp")
+                cursor = conn.execute("SELECT skill_id, name FROM skills")
                 for sid, name in cursor.fetchall():
                     self.skill_name_map[sid] = name.lower()
         except Exception as e:
@@ -2054,33 +2054,10 @@ class MainWindow(QMainWindow):
         
         # Turn off updates briefly for insertion speed
         self.library_widget.setUpdatesEnabled(False)
-        
-        for skill in filtered_skills:
-            item = QListWidgetItem(skill.name)
-            item.setData(Qt.ItemDataRole.UserRole, skill.id)
-            item.setData(Qt.ItemDataRole.DisplayRole, skill.name) # Explicitly set display role for delegate
-            
-            # Icon Loading (Size-Aware Caching)
-            cache_key = f"{skill.icon_filename}_{current_size}"
-            pix = None
-            
-            if cache_key in PIXMAP_CACHE:
-                pix = PIXMAP_CACHE[cache_key]
-            else:
-                path = os.path.join(ICON_DIR, skill.icon_filename)
-                if os.path.exists(path):
-                    pix = QPixmap(path)
-                    # Cache based on current magnification size
-                    pix = pix.scaled(current_size, current_size, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
-                    PIXMAP_CACHE[cache_key] = pix
-            
-            if pix:
-                item.setIcon(QIcon(pix))
-                item.setData(Qt.ItemDataRole.DecorationRole, QIcon(pix)) # Ensure delegate gets the icon
-            
-            self.library_widget.addItem(item)
-            
-        self.library_widget.setUpdatesEnabled(True)
+        try:
+            self.library_widget.update_standard_list(filtered_skills)
+        finally:
+            self.library_widget.setUpdatesEnabled(True)
 
     def handle_skill_equipped_auto(self, data):
         if isinstance(data, dict): return

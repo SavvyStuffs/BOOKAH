@@ -1,5 +1,10 @@
 ### Release Notes and Bug Fix History ###
 
+## 1.4.4  
+    Updates:
+    - Updates skill data to match the new updates!
+    - Changed the skill list layout to make it easier to read
+
 ## 1.4.3  
     Updates:
     - Added a Teambuild sharing feature (Manage Teams -> Share)
@@ -42,8 +47,6 @@
 
 <!--end of list-->
 
-## 1.2.0  
-    Updates: 
-    - Added feedback report and crash reports 
-    - Added tutorial video. 
-    - Squashed some bugs.
+## 1.3.0  
+    
+    Release version!
