@@ -230,7 +230,7 @@ class MainWindow(QMainWindow):
         try:
             import sqlite3
             with sqlite3.connect(DB_FILE) as conn:
-                cursor = conn.execute("SELECT skill_id, name FROM skills UNION SELECT skill_id, name FROM skills_pvp")
+                cursor = conn.execute("SELECT skill_id, name FROM skills")
                 for sid, name in cursor.fetchall():
                     self.skill_name_map[sid] = name.lower()
         except Exception as e:

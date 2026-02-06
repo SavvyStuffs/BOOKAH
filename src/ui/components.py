@@ -340,7 +340,17 @@ class SkillSlot(QFrame):
         self.current_skill_id = skill_id
         self.is_ghost = ghost
         
-        icon_file = skill_obj.icon_filename if skill_obj else f"{skill_id}.jpg"
+        try:
+            from src.pvp_mapping import PVE_TO_PVP_MAP
+            PVP_TO_PVE_MAP = {v: k for k, v in PVE_TO_PVP_MAP.items()}
+        except ImportError:
+            PVP_TO_PVE_MAP = {}
+            
+        icon_id = skill_id
+        if not skill_obj and skill_id in PVP_TO_PVE_MAP:
+            icon_id = PVP_TO_PVE_MAP[skill_id]
+            
+        icon_file = skill_obj.icon_filename if skill_obj else f"{icon_id}.jpg"
         if not icon_file.lower().endswith('.jpg'):
             icon_file += '.jpg'
             
