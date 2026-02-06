@@ -47,7 +47,7 @@ MAIN FEATURES
 5. ATTRIBUTE EDITOR
    On the right side, you can adjust your attribute points. The editor uses 
    real Guild Wars math (costs increase as you rank up). It also supports 
-   PvE ranks like Sunspear or Lightbringer.
+   PvE titles like Sunspear or Lightbringer.
 
 6. IS THIS UNIQUE?
    Click this button to compare your finished bar against thousands of known 

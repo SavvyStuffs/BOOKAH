@@ -233,7 +233,7 @@ class MechanicsEngine:
         self.mode = mode_str.lower()
 
     def _get_table(self):
-        return "skills_pvp" if self.mode == 'pvp' else "skills"
+        return "skills"
 
     # --- MECHANIC CHECKS ---
     def check_weapon_compatibility(self, candidate_attr, context):
@@ -1145,7 +1145,7 @@ class SynergyEngine:
                 if is_pre: continue 
                 
                 # PvP table doesn't have all columns, but we need basics
-                cursor.execute("SELECT skill_id, name, is_elite, profession FROM skills_pvp WHERE skill_id = ?", (sid,))
+                cursor.execute("SELECT skill_id, name, is_elite, profession FROM skills WHERE skill_id = ?", (sid,))
                 row_pvp = cursor.fetchone()
                 if not row_pvp:
                     print(f"[Engine] Dropped ID {sid} (Not found in DB)")
@@ -1257,7 +1257,7 @@ class SynergyEngine:
             cursor.execute("SELECT is_elite FROM skills WHERE skill_id = ?", (sid,))
             row = cursor.fetchone()
             if not row:
-                cursor.execute("SELECT is_elite FROM skills_pvp WHERE skill_id = ?", (sid,))
+                cursor.execute("SELECT is_elite FROM skills WHERE skill_id = ?", (sid,))
                 row = cursor.fetchone()
 
             is_elite = bool(row[0]) if row else False

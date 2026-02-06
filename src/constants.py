@@ -83,8 +83,8 @@ PROF_SHORT_MAP = {
 }
 
 ATTR_MAP = {
-    -9: "Norn Rank", -8: "Ebon Vanguard Rank", -7: "Dwarven Rank", -6: "Asuran Rank",
-    -5: "Kurzick Rank", -4: "Luxon Rank", -3: "Lightbringer Rank", -2: "Sunspear Rank",
+    -9: "Norn", -8: "Ebon Vanguard", -7: "Delver", -6: "Asuran",
+    -5: "Kurzick", -4: "Luxon", -3: "Lightbringer", -2: "Sunspear",
     -1: "No Attribute",
     0: "Fast Casting", 1: "Illusion Magic", 2: "Domination Magic", 3: "Inspiration Magic",
     4: "Blood Magic", 5: "Death Magic", 6: "Soul Reaping", 7: "Curses",

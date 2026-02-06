@@ -8,6 +8,13 @@ import sqlite3
 import networkx as nx
 from networkx.algorithms import community
 
+try:
+    from src.pvp_mapping import PVE_TO_PVP_MAP
+    PVP_TO_PVE_MAP = {v: k for k, v in PVE_TO_PVP_MAP.items()}
+except ImportError:
+    PVE_TO_PVP_MAP = {}
+    PVP_TO_PVE_MAP = {}
+
 # ==========================================
 # CONFIGURATION
 # ==========================================
@@ -41,9 +48,10 @@ class VisualAnalyzer:
                 skill_map = {}
                 for row in cursor.fetchall():
                     s_id = int(row[0])
+                    icon_id = PVP_TO_PVE_MAP.get(s_id, s_id)
                     skill_map[s_id] = {
                         'name': row[1],
-                        'icon': f"{s_id}.jpg"
+                        'icon': f"{icon_id}.jpg"
                     }
                 conn.close()
                 print(f" -> Successfully loaded {len(skill_map)} names and icons from SQLite.")
@@ -68,19 +76,23 @@ class VisualAnalyzer:
                     s_name = item.get('name') or item.get('skill_name') or item.get('en')
                     
                     if s_id is not None and s_name:
-                        skill_map[int(s_id)] = {'name': s_name, 'icon': f"{s_id}.jpg"}
+                        sid_int = int(s_id)
+                        icon_id = PVP_TO_PVE_MAP.get(sid_int, sid_int)
+                        skill_map[sid_int] = {'name': s_name, 'icon': f"{icon_id}.jpg"}
 
             # CASE 2: The file is a Dictionary { "1": "X", ... }
             elif isinstance(data, dict):
                 print(" -> Detected Dictionary format. Normalizing keys...")
                 for k, v in data.items():
+                    sid_int = int(k)
+                    icon_id = PVP_TO_PVE_MAP.get(sid_int, sid_int)
                     # If the value is a dictionary (common in GW2 API), extract the name
                     if isinstance(v, dict):
                         name = v.get('name', f"Unknown-{k}")
-                        skill_map[int(k)] = {'name': name, 'icon': f"{k}.jpg"}
+                        skill_map[sid_int] = {'name': name, 'icon': f"{icon_id}.jpg"}
                     # If the value is just a string, use it directly
                     else:
-                        skill_map[int(k)] = {'name': str(v), 'icon': f"{k}.jpg"}
+                        skill_map[sid_int] = {'name': str(v), 'icon': f"{icon_id}.jpg"}
 
             print(f" -> Successfully loaded {len(skill_map)} entries.")
             return skill_map
