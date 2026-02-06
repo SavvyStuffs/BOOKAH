@@ -336,7 +336,7 @@ class TutorialManager:
             {
                 "widget": None, # Will be set in action
                 "title": "PvE Attributes",
-                "desc": "PvE Title tracks like Norn Rank don't cost points but affect the power of their associated skills.",
+                "desc": "PvE Title tracks like Norn don't cost points but affect the power of their associated skills.",
                 "action": lambda: self._prep_norn_step()
             },
             {

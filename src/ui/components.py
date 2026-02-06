@@ -903,17 +903,69 @@ class BuildPreviewWidget(QFrame):
 class SkillItemDelegate(QStyledItemDelegate):
     """
     Renders the skill items with dynamic sizing support.
+    Handles both standard Skill Icons and "Header" text items.
     """
     def __init__(self, parent=None):
         super().__init__(parent)
         self.icon_size = 64 # Default size
 
     def sizeHint(self, option, index):
+        data = index.data(Qt.ItemDataRole.UserRole)
+        
+        # Header Handling
+        if isinstance(data, str):
+            # Full width for headers
+            width = option.widget.viewport().width() - 20 # Safety margin
+            if data.startswith("##"):
+                return QSize(width, 40) # Main Header Height
+            else:
+                return QSize(width, 30) # Sub Header Height
+
         return QSize(self.icon_size + 10, self.icon_size + 80)
 
     def paint(self, painter, option, index):
         if not index.isValid(): return
 
+        data = index.data(Qt.ItemDataRole.UserRole)
+        
+        # --- HEADER RENDERING ---
+        if isinstance(data, str):
+            painter.save()
+            rect = option.rect
+            
+            # Transparent Background for Headers
+            if data.startswith("##"):
+                # Main Header (Profession)
+                # painter.fillRect(rect, QColor(get_color("bg_tertiary"))) # REMOVED
+                painter.setPen(QColor(get_color("text_accent")))
+                font = painter.font()
+                font.setBold(True)
+                font.setPointSize(14)
+                painter.setFont(font)
+                text = data.replace("##", "").strip()
+                painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, text)
+                
+                # Bottom Border
+                painter.setPen(QColor(get_color("border")))
+                painter.drawLine(rect.bottomLeft(), rect.bottomRight())
+                
+            else:
+                # Sub Header (Attribute)
+                # painter.fillRect(rect, QColor(get_color("bg_secondary"))) # REMOVED
+                painter.setPen(QColor(get_color("text_primary")))
+                font = painter.font()
+                font.setBold(True)
+                font.setPointSize(11)
+                painter.setFont(font)
+                text = data.replace("#", "").strip()
+                # Indent slightly
+                text_rect = rect.adjusted(10, 0, 0, 0)
+                painter.drawText(text_rect, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, text)
+                
+            painter.restore()
+            return
+
+        # --- SKILL RENDERING (Existing Logic) ---
         painter.save()
         
         # Data Retrieval
@@ -975,7 +1027,7 @@ class SkillLibraryWidget(QListWidget):
         
         self.setViewMode(QListWidget.ViewMode.IconMode)
         self.setResizeMode(QListWidget.ResizeMode.Adjust)
-        self.setUniformItemSizes(True)
+        self.setUniformItemSizes(False) # DISABLED for Headers support
         self.setDragEnabled(True)
         self.setAcceptDrops(True)
         self.setDropIndicatorShown(True)
@@ -1002,11 +1054,19 @@ class SkillLibraryWidget(QListWidget):
 
     def _on_item_clicked(self, item):
         data = item.data(Qt.ItemDataRole.UserRole)
+        # Don't click headers
+        if isinstance(data, str):
+            return
+            
         if not isinstance(data, Build):
             self.skill_clicked.emit(data)
 
     def _on_item_double_clicked(self, item):
         data = item.data(Qt.ItemDataRole.UserRole)
+        # Don't double click headers
+        if isinstance(data, str):
+            return
+
         if not isinstance(data, Build):
             self.skill_double_clicked.emit(data)
 
@@ -1082,15 +1142,95 @@ class SkillLibraryWidget(QListWidget):
 
             self.addItem(list_item)
 
-    def update_standard_list(self, skill_ids):
+    def update_standard_list(self, skills):
+        """
+        Populates the list with headers and skill items.
+        skills: List[Skill] objects
+        """
         self.clear()
-        for sid in skill_ids:
-            skill = self.repo.get_skill(sid)
-            if not skill: continue
+        
+        # Sort Key Definition
+        def sort_key(s):
+            # Block Detection
+            if s.attribute <= -2:
+                block = 0 # PvE Only (All reputations including Nightfall/Factions)
+            elif s.profession == 0:
+                block = 99 # Common / No Profession (Last)
+            else:
+                block = 2 + s.profession # Standard Professions
             
+            # Sub-Sort (Attribute)
+            if block == 0: # PvE Special Sort
+                # Tier 0: Luxon (-4) and Kurzick (-5)
+                # Tier 1: Lightbringer (-3) and Sunspear (-2)
+                # Tier 2: Others
+                if s.attribute in [-4, -5]:
+                    pve_tier = 0
+                elif s.attribute in [-2, -3]:
+                    pve_tier = 1
+                else:
+                    pve_tier = 2
+                    
+                attr_name = ATTR_MAP.get(s.attribute, "Unknown")
+                attr_sort = (pve_tier, attr_name)
+            else:
+                # Standard Sort: Name, but No Attribute (-1) is Last
+                if s.attribute == -1:
+                    attr_sort = (1, "ZZZ_NoAttribute")
+                else:
+                    attr_sort = (0, ATTR_MAP.get(s.attribute, "Unknown"))
+            
+            return (block, attr_sort, s.name)
+            
+        sorted_skills = sorted([s for s in skills if s], key=sort_key)
+        
+        last_block = -999
+        last_attr = -999
+        
+        for skill in sorted_skills:
+            # Determine Block
+            if skill.attribute <= -2:
+                block = 0
+            elif skill.profession == 0:
+                block = 99
+            else:
+                block = 2 + skill.profession
+                
+            # 1. Main Header
+            if block != last_block:
+                header_text = ""
+                if block == 0:
+                    header_text = "## PvE Only"
+                elif block == 99:
+                    header_text = "## Common"
+                else:
+                    # Profession ID is block - 2
+                    prof_name = PROF_MAP.get(block - 2, 'Unknown')
+                    header_text = f"## {prof_name}"
+                    
+                h_item = QListWidgetItem()
+                h_item.setData(Qt.ItemDataRole.UserRole, header_text)
+                h_item.setFlags(Qt.ItemFlag.NoItemFlags)
+                self.addItem(h_item)
+                
+                last_block = block
+                last_attr = -999 # Reset attribute tracker
+            
+            # 2. Sub Header (Attribute)
+            if skill.attribute != last_attr:
+                attr_name = ATTR_MAP.get(skill.attribute, "No Attribute")
+                
+                sh_item = QListWidgetItem()
+                sh_item.setData(Qt.ItemDataRole.UserRole, f"# {attr_name}")
+                sh_item.setFlags(Qt.ItemFlag.NoItemFlags)
+                self.addItem(sh_item)
+                
+                last_attr = skill.attribute
+
+            # 3. Skill Item
             list_item = QListWidgetItem()
             list_item.setText(skill.name)
-            list_item.setData(Qt.ItemDataRole.UserRole, sid)
+            list_item.setData(Qt.ItemDataRole.UserRole, skill.id)
             
             attr_name = skill.get_attribute_str()
             type_str = f"<i>{skill.skill_type.title()}</i><br/>" if skill.skill_type else ""
