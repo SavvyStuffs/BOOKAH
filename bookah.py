@@ -61,10 +61,14 @@ if __name__ == "__main__":
         )
     
     splash = QSplashScreen(pixmap)
-    splash.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint)
+    splash.setWindowFlags(Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.FramelessWindowHint)
+    splash.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
     
-    # Center on current screen (where mouse is)
-    screen = app.screenAt(QCursor.pos())
+    if not pixmap.isNull():
+        splash.setMask(pixmap.mask())
+    
+    # Center on current screen (where mouse is) or primary screen
+    screen = app.screenAt(QCursor.pos()) or app.primaryScreen()
     if screen:
         geo = screen.geometry()
         x = geo.x() + (geo.width() - pixmap.width()) // 2

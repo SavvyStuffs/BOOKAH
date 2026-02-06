@@ -18,6 +18,7 @@ a = Analysis(
         ('synergy_map.html', '.'),
         ('icons', 'icons'),
         ('version.json', '.'),
+        ('history_note.md', '.'),
         ('user_manual.txt', '.'),
         ('LICENSE', '.'),
         ('third_party_notices.txt', '.')
