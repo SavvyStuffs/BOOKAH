@@ -1,5 +1,9 @@
 ### Release Notes and Bug Fix History ###
 
+## 1.4.5
+    Updates:
+    - Matched nature ritual skill updates from 2/9/26
+
 ## 1.4.4  
     Updates:
     - Updates skill data to match the new updates!
