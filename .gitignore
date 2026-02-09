@@ -17,7 +17,7 @@ tmp/
 *.spec
 Bookah_Installer.iss
 venv/
-/flatpak_native
+Bookah.flatpak
 
 # Misc
 /tests
