@@ -194,6 +194,14 @@ class RuneItem(QPushButton):
         self.setFixedSize(80, 80)
         self.setToolTip(f"<b>{name}</b>")
         
+        # Count Label for stacks
+        self.count_label = QLabel("", self)
+        self.count_label.setStyleSheet("color: white; font-weight: bold; font-size: 14px; background-color: rgba(0,0,0,180); border-radius: 4px; padding: 1px 3px;")
+        self.count_label.hide()
+        self.count_label.move(0, 0)
+        
+        self.active_count = 0
+        
         if icon_name:
             icon_path = resource_path(os.path.join("icons", icon_dir, icon_name))
             if os.path.exists(icon_path):
@@ -224,12 +232,34 @@ class RuneItem(QPushButton):
         else:
             self.setStyleSheet(self.styleSheet().replace(f"border-radius: {128//2}px;", "border-radius: 40px;"))
 
+    def set_active_count(self, count):
+        self.active_count = count
+        if count > 1:
+            self.count_label.setText(f"x{count}")
+            self.count_label.show()
+            self.count_label.adjustSize()
+        else:
+            self.count_label.hide()
+        self.refresh_theme()
+
     def refresh_theme(self):
         radius = self.width() // 2
+        
+        # Default border
+        border_color = get_color('slot_border')
+        border_style = "dashed"
+        border_width = "1px"
+        
+        # Active Green Border
+        if self.active_count > 0:
+            border_color = "#00FF00" 
+            border_style = "solid"
+            border_width = "3px"
+            
         self.setStyleSheet(f"""
             QPushButton {{
                 background-color: {get_color('slot_bg')};
-                border: 1px dashed {get_color('slot_border')};
+                border: {border_width} {border_style} {border_color};
                 color: {get_color('text_secondary')};
                 border-radius: {radius}px; /* Circular */
             }}
@@ -358,7 +388,7 @@ class CharacterPanel(QWidget):
         self.applied_runes = [] # List of dicts: {"rtype": "sup", "prof_id": 1, "attr_id": 20}
         self.selected_attrs = {} # {prof_id: attr_id}
         self.active_weapon = None # Weapon key from WEAPONS
-        self.primary_prof_id = 0
+        self.primary_prof_id = -1
         self.attr_energy_bonus = 0 # Extra energy from primary attributes
         self.con_widgets = []
         self.rune_widgets = []
@@ -464,6 +494,14 @@ class CharacterPanel(QWidget):
         changed = False
         for r in self.applied_runes:
             r_prof = r.get("prof_id")
+            # If no profession is selected, ALL applied runes are invalid? 
+            # Or should we keep them but they are inactive? 
+            # User says "it just doesnt allow anything to be applied without any indication of why. Graying them out will help."
+            # Usually in GW, you can't have runes without a profession.
+            if prof_id == 0:
+                changed = True
+                continue
+
             if r_prof is None or r_prof == prof_id:
                 valid_runes.append(r)
             else:
@@ -475,7 +513,11 @@ class CharacterPanel(QWidget):
         # 2. Update button states
         for rune in self.rune_widgets:
             if rune.prof_id is not None:
-                rune.setEnabled(rune.prof_id == prof_id)
+                # Profession runes: Only enabled if matching prof_id AND prof_id != 0
+                rune.setEnabled(prof_id != 0 and rune.prof_id == prof_id)
+            else:
+                # General runes (Vigor, Attunement, Vitae): Always enabled
+                rune.setEnabled(True)
                 
         self.update_stats()
 
@@ -535,16 +577,16 @@ class CharacterPanel(QWidget):
         for lbl in self.row_labels:
             lbl.setStyleSheet(label_style)
             
-        base_label_style = f"font-size: 10px; color: {get_color('text_secondary')};"
+        base_label_style = f"font-size: 14px; color: {get_color('text_secondary')};"
         for lbl in self.base_stat_labels:
             lbl.setStyleSheet(base_label_style)
             
-        edit_style = f"background-color: {get_color('input_bg')}; color: {get_color('text_primary')}; border: 1px solid {get_color('border')}; font-size: 10px;"
+        edit_style = f"background-color: {get_color('input_bg')}; color: {get_color('text_primary')}; border: 1px solid {get_color('border')}; font-size: 14px;"
         if hasattr(self, 'edit_hp_player'): self.edit_hp_player.setStyleSheet(edit_style)
         if hasattr(self, 'edit_en_player'): self.edit_en_player.setStyleSheet(edit_style)
         
-        if hasattr(self, 'lbl_hp_adj_val'): self.lbl_hp_adj_val.setStyleSheet(f"font-weight: bold; color: {get_color('text_accent')}; font-size: 10px;")
-        if hasattr(self, 'lbl_en_adj_val'): self.lbl_en_adj_val.setStyleSheet(f"font-weight: bold; color: {get_color('text_accent')}; font-size: 10px;")
+        if hasattr(self, 'lbl_hp_adj_val'): self.lbl_hp_adj_val.setStyleSheet(f"font-weight: bold; color: {get_color('text_accent')}; font-size: 14px;")
+        if hasattr(self, 'lbl_en_adj_val'): self.lbl_en_adj_val.setStyleSheet(f"font-weight: bold; color: {get_color('text_accent')}; font-size: 14px;")
 
         for w in self.con_widgets:
             w.refresh_theme()
@@ -816,8 +858,9 @@ class CharacterPanel(QWidget):
         runes_layout.addWidget(scroll_runes)
 
         # Add to main
-        main_layout.addWidget(self.cons_group, stretch=5)
-        main_layout.addWidget(self.stats_group, stretch=3)
+        # Adjusted stretch factors: Cons 15% smaller, Stats wider
+        main_layout.addWidget(self.cons_group, stretch=4)
+        main_layout.addWidget(self.stats_group, stretch=4)
         main_layout.addWidget(self.runes_group, stretch=10)
         
         self.update_stats()
@@ -863,6 +906,26 @@ class CharacterPanel(QWidget):
         return player_en + bonus_energy
 
     def update_stats(self):
+        # 0. Update Rune Widget Active States
+        rune_counts = {} 
+        for entry in self.applied_runes:
+            rtype = entry.get("rtype")
+            prof_id = entry.get("prof_id")
+            attr_id = entry.get("attr_id")
+            
+            # Key matching RuneItem props
+            if prof_id is not None:
+                key = (rtype, prof_id, None)
+            else:
+                key = (rtype, None, attr_id)
+            
+            rune_counts[key] = rune_counts.get(key, 0) + 1
+            
+        for rune in self.rune_widgets:
+            key = (rune.rtype, rune.prof_id, rune.attr_id)
+            c = rune_counts.get(key, 0)
+            rune.set_active_count(c)
+
         # 1. Gather Consumable Totals
         cons_totals = {
             "hp": 0, "energy": 0, "all_atts": 0, "armor": 0, "hp_regen": 0, "incoming_dmg": 0,
@@ -932,8 +995,32 @@ class CharacterPanel(QWidget):
         if cons_totals["hp_regen"] > CAPS["hp_regen"]: cons_totals["hp_regen"] = CAPS["hp_regen"]
 
         # 4. Format Stats Output
-        stats_text = "<b>Stats:</b><br><br>"
+        stats_text = "<span style='font-size:18px; font-weight:bold; color:#FFD700;'>Stats:</span><br><br>"
         has_stats = False
+        
+        # Helper to format lines
+        def format_line(label, value, details=None, is_health=False):
+            # Health: Much larger (22px) -> Kept large as requested for main stats?
+            # User said "Stats and Attributes in the calculations should be larger than the text underneath".
+            # "For the base text, headers should be 18px and attributes 16px."
+            # "Also, when I said health text, I meant the Player Health and Adjusted Health/Energy at the bottom"
+            # So the "Stats" health line can stay 16px (standard attribute size)? Or larger?
+            # "Stats and Attributes ... should be larger than the text underneath"
+            # Let's align "Stats" (header) to 18px.
+            # "Attributes" (items like Health, Energy, Armor) to 16px.
+            base_size = "16px" 
+            # Is Health special in the list? The user corrected "health text" meaning the bottom widgets.
+            # So I should remove `is_health` special sizing from the list items.
+            
+            detail_size = "13px"
+            color_main = get_color('text_primary')
+            color_detail = get_color('text_secondary')
+            
+            html = f"<span style='font-size:{base_size}; color:{color_main};'>• <b>{label}:</b> {value}</span>"
+            if details:
+                html += f"<br><span style='font-size:{detail_size}; color:{color_detail}; margin-left: 20px;'>&nbsp;&nbsp;&nbsp;({', '.join(details)})</span>"
+            html += "<br><br>"
+            return html
         
         if total_hp != 0:
             val_str = f"+{total_hp}" if total_hp > 0 else str(total_hp)
@@ -945,66 +1032,63 @@ class CharacterPanel(QWidget):
             if vitae_count > 0:
                 hp_details.append(f"x{vitae_count} Vitae")
             
-            if hp_details:
-                stats_text += f"• Health: {val_str} ({', '.join(hp_details)})<br><br>"
-            else:
-                stats_text += f"• Health: {val_str}<br><br>"
+            stats_text += format_line("Health", val_str, hp_details)
             has_stats = True
             
         if cons_totals["energy"] > 0:
-            en_str = f"• Energy: +{cons_totals['energy']}"
+            en_val = f"+{cons_totals['energy']}"
+            en_details = []
             if attunement_count > 0:
-                en_str += f" (x{attunement_count} Attunement)"
-            en_str += "<br><br>"
-            stats_text += en_str
+                en_details.append(f"x{attunement_count} Attunement")
+            stats_text += format_line("Energy", en_val, en_details)
             has_stats = True
             
         if cons_totals["armor"] != 0:
-            stats_text += f"• Armor: +{cons_totals['armor']}<br><br>"
+            stats_text += format_line("Armor", f"+{cons_totals['armor']}")
             has_stats = True
             
         if cons_totals["hp_regen"] != 0:
-            stats_text += f"• Health Regen: +{cons_totals['hp_regen']}<br><br>"
+            stats_text += format_line("Health Regen", f"+{cons_totals['hp_regen']}")
             has_stats = True
             
         if cons_totals["incoming_dmg"] != 0:
-            stats_text += f"• Incoming Damage: {cons_totals['incoming_dmg']}<br><br>"
+            stats_text += format_line("Incoming Dmg", f"{cons_totals['incoming_dmg']}")
             has_stats = True
             
         if cons_totals["crit_immunity"] > 0:
-            stats_text += f"• Crit Immunity: {int(cons_totals['crit_immunity']*100)}%<br><br>"
+            stats_text += format_line("Crit Immunity", f"{int(cons_totals['crit_immunity']*100)}%")
             has_stats = True
             
         if cons_totals["attack_speed"] != 0:
-            stats_text += f"• Attack Speed: +{int(cons_totals['attack_speed']*100)}%<br><br>"
+            stats_text += format_line("Attack Speed", f"+{int(cons_totals['attack_speed']*100)}%")
             has_stats = True
             
         if cons_totals["activation"] != 0:
-            stats_text += f"• Casting Time: {int(cons_totals['activation']*100)}%<br><br>"
+            stats_text += format_line("Casting Time", f"{int(cons_totals['activation']*100)}%")
             has_stats = True
             
         if cons_totals["recharge"] != 0:
-            stats_text += f"• Skill Recharge: {int(cons_totals['recharge']*100)}%<br><br>"
+            stats_text += format_line("Skill Recharge", f"{int(cons_totals['recharge']*100)}%")
             has_stats = True
             
         if cons_totals["move_speed"] != 0:
-            stats_text += f"• Movement Speed: +{int(cons_totals['move_speed']*100)}%<br><br>"
+            stats_text += format_line("Movement Speed", f"+{int(cons_totals['move_speed']*100)}%")
             has_stats = True
 
         if not has_stats:
-            self.lbl_stats.setText("<b>Stats:</b><br><br>No active stat effects.")
+            self.lbl_stats.setText("<span style='font-size:18px; font-weight:bold; color:#FFD700;'>Stats:</span><br><br><span style='font-size:14px; font-style:italic;'>No active stat effects.</span>")
         else:
             self.lbl_stats.setText(stats_text)
 
         # 5. Format Attributes Output
-        attr_text = "<b>Attributes:</b><br><br>"
+        attr_text = "<span style='font-size:18px; font-weight:bold; color:#FFD700;'>Attributes:</span><br><br>"
         has_attrs = False
         
         # Consumable All Attributes
         if cons_totals["all_atts"] > 0:
             val = cons_totals["all_atts"]
             if val > 20: val = 20
-            attr_text += f"• All Attributes: +{val}<br><br>"
+            attr_text += format_line("All Attributes", f"+{val}")
             has_attrs = True
             
         # Add Weapon Bonus
@@ -1039,7 +1123,7 @@ class CharacterPanel(QWidget):
             if weapon_active:
                 details.append(f'"{WEAPONS[self.active_weapon]["name"]}"')
                 
-            attr_text += f"• {attr_name}: +{max_bonus} ({', '.join(details)})<br><br>"
+            attr_text += format_line(attr_name, f"+{max_bonus}", details)
             has_attrs = True
             
         # Check if weapon was NOT in attr_tracking (meaning no runes applied to that attribute)
@@ -1048,11 +1132,11 @@ class CharacterPanel(QWidget):
             aid = w_data["attr"]
             if aid not in attr_tracking:
                 attr_name = ATTR_MAP.get(aid, f"Attr {aid}")
-                attr_text += f"• {attr_name}: +5 (\"{w_data['name']}\")<br><br>"
+                attr_text += format_line(attr_name, "+5", [f'"{w_data["name"]}"'])
                 has_attrs = True
 
         if not has_attrs:
-            self.lbl_runes.setText("<b>Attributes:</b><br><br>No attribute effects.")
+            self.lbl_runes.setText("<span style='font-size:18px; font-weight:bold; color:#FFD700;'>Attributes:</span><br><br><span style='font-size:14px; font-style:italic;'>No attribute effects.</span>")
         else:
             self.lbl_runes.setText(attr_text)
 

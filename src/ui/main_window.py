@@ -1,13 +1,14 @@
 import sys
 import os
 import json
+import math
 import webbrowser
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QComboBox, QLabel, QSplitter, 
     QTabWidget, QCheckBox, QPushButton, QFileDialog, QMessageBox, QFrame, QLineEdit, QApplication, QListWidgetItem, QListWidget, QSizePolicy, QGridLayout, QStyle, QProgressDialog, QStackedWidget
 )
-from PyQt6.QtCore import Qt, QTimer, QUrl, QThread, pyqtSignal, QSize, QSettings, QPoint
-from PyQt6.QtGui import QIcon, QPixmap
+from PyQt6.QtCore import Qt, QTimer, QUrl, QThread, pyqtSignal, QSize, QSettings, QPoint, QPropertyAnimation, QVariantAnimation
+from PyQt6.QtGui import QIcon, QPixmap, QColor
 
 from src.constants import DB_FILE, JSON_FILE, PROF_MAP, PROF_SHORT_MAP, resource_path, ICON_DIR, ICON_SIZE, PIXMAP_CACHE, PROF_PRIMARY_ATTR, ATTR_MAP, PROF_ATTRS
 from src.database import SkillRepository
@@ -267,6 +268,14 @@ class MainWindow(QMainWindow):
         self.filter_debounce_timer.timeout.connect(self._run_filter)
         
         self.tutorial_manager = TutorialManager(self)
+        
+        # Setup pulsing timer for profession button
+        # 5000ms duration, 50ms interval = 100 steps
+        self.prof_pulse_timer = QTimer()
+        self.prof_pulse_timer.setInterval(50) 
+        self.prof_pulse_timer.timeout.connect(self._on_pulse_tick)
+        self.prof_pulse_counter = 0
+        
         self.init_ui()
         
         # Apply initial theme
@@ -281,6 +290,9 @@ class MainWindow(QMainWindow):
         self.update_checker.error.connect(lambda e: print(f"Update Check Error: {e}"))
         
         self._update_check_triggered = False
+        
+        # Ensure UI state (runes, pulse animation) is correct on startup
+        self.update_build_code()
 
     def on_update_available(self, new_version, download_url, release_notes=""):
         self._update_dialog_shown = True
@@ -2753,6 +2765,17 @@ class MainWindow(QMainWindow):
         
         if hasattr(self, 'btn_prof_select'):
             self.btn_prof_select.setText(f"Prof: {p1_str}/{p2_str}")
+            
+            # Pulsing effect if no professions
+            if p1 == 0 and p2 == 0:
+                if not self.prof_pulse_timer.isActive():
+                    self.prof_pulse_counter = 0
+                    self.prof_pulse_timer.start()
+            else:
+                if self.prof_pulse_timer.isActive():
+                    self.prof_pulse_timer.stop()
+                    # Reset to default style
+                    self.btn_prof_select.setStyleSheet(f"color: {get_color('text_primary')}; font-weight: bold; background: transparent; border: 1px solid {get_color('border')}; border-radius: 4px; padding: 2px 5px;")
         
         # Check uniqueness visibility
         active_count = sum(1 for s in active_bar if s != 0)
@@ -2841,6 +2864,33 @@ class MainWindow(QMainWindow):
             self.edit_code.setText(live_code)
         except:
             pass
+
+    def _on_pulse_tick(self):
+        if not hasattr(self, 'btn_prof_select'): 
+            self.prof_pulse_timer.stop()
+            return
+
+        # 0 to 100 steps
+        self.prof_pulse_counter += 1
+        if self.prof_pulse_counter > 100:
+            self.prof_pulse_counter = 0
+            
+        # Calculate sine wave 0 -> 1 -> 0
+        progress = self.prof_pulse_counter / 100.0
+        val = math.sin(progress * math.pi)
+        
+        # Clamp just in case
+        val = max(0.0, min(1.0, val))
+        alpha = int(val * 255)
+        
+        self.btn_prof_select.setStyleSheet(f"""
+            color: {get_color('text_primary')}; 
+            font-weight: bold; 
+            background: transparent; 
+            border: 2px solid rgba(255, 215, 0, {alpha}); 
+            border-radius: 4px; 
+            padding: 2px 5px;
+        """)
 
     def dragEnterEvent(self, event):
         if event.mimeData().hasUrls():
