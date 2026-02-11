@@ -64,7 +64,7 @@ class CrashReporter(QDialog):
         
         layout.addWidget(QLabel("Additional Comments (Optional):"))
         self.edit_comments = QTextEdit()
-        self.edit_comments.setPlaceholderText("What were you doing when it crashed?")
+        self.edit_comments.setPlaceholderText("What were you doing when it crashed? Please include your operating system.")
         self.edit_comments.setMaximumHeight(80)
         layout.addWidget(self.edit_comments)
         

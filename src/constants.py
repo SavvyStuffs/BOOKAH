@@ -38,15 +38,17 @@ if not os.path.exists(USER_DIR):
 
 # Copy bundled models to USER_DIR if missing (Avoids re-training)
 try:
-    BUNDLED_DATA = os.path.join(APP_ROOT, "data")
-    if os.path.exists(BUNDLED_DATA):
-        for filename in ['skill_vectors.model', 'description_embeddings.pt']:
-            src = os.path.join(BUNDLED_DATA, filename)
-            dst = os.path.join(USER_DIR, filename)
-            if os.path.exists(src) and not os.path.exists(dst):
-                shutil.copy2(src, dst)
-except Exception:
-    pass # Fail silently, Engine will retrain
+    for filename in ['skill_vectors.model', 'description_embeddings.pt']:
+        # Use resource_path to find the bundled file (in _MEIPASS or root)
+        src = resource_path(filename)
+        dst = os.path.join(USER_DIR, filename)
+        
+        # Only copy if source exists and dest doesn't
+        if os.path.exists(src) and not os.path.exists(dst):
+            shutil.copy2(src, dst)
+            print(f"[Init] Copied {filename} to {USER_DIR}")
+except Exception as e:
+    print(f"[Init] Error copying bundled models: {e}")
 
 # 1. System Database (Read-Only bundled version)
 JSON_FILE = resource_path('all_skills.json')

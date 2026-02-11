@@ -33,11 +33,12 @@ class SkillBrain:
             self.device = device
             print(f"[Brain] AI Hardware Acceleration: {device.upper()}")
             
-            return SentenceTransformer('all-MiniLM-L6-v2', device=device)
-        except ImportError:
-            import traceback
-            print(f"[Brain] Error: sentence_transformers import failed: {traceback.format_exc()}")
-            print("[Brain] Error: sentence_transformers not installed. Semantic Lobe disabled.")
+            # Force local_files_only to prevent crashing on systems with network/path issues
+            # The model should be bundled or pre-downloaded.
+            return SentenceTransformer('all-MiniLM-L6-v2', device=device, local_files_only=True)
+        except Exception as e:
+            print(f"[Brain] Warning: Could not load local semantic model: {e}")
+            print("[Brain] Semantic Lobe will be disabled.")
             return None
 
     def _load_descriptions_from_db(self, db_path="master.db") -> dict:
