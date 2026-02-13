@@ -41,6 +41,24 @@ a = Analysis(
     # ---------------------------
     noarchive=False,
 )
+
+# Filter out system libraries that should be provided by the Flatpak runtime
+# This prevents GLIBC version mismatch errors (e.g., libsystemd requiring newer GLIBC)
+excluded_binaries = [
+    'libsystemd.so.0',
+    'libdbus-1.so.3',
+    'libgpg-error.so.0',
+    'libgcrypt.so.20',
+    'liblzma.so.5',
+    'libzstd.so.1',
+    'liblz4.so.1',
+    'libcap.so.2',
+    'libgcc_s.so.1',
+    'libstdc++.so.6',
+    'libz.so.1'
+]
+a.binaries = [x for x in a.binaries if x[0] not in excluded_binaries]
+
 pyz = PYZ(a.pure)
 
 # 2. CHANGE: Create a lightweight executable (only scripts)
