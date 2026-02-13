@@ -10,10 +10,10 @@ import time
 import hashlib
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QLineEdit, QListWidget, QMessageBox, QFileDialog, QInputDialog, QTabWidget, QTextEdit, QFrame, QScrollArea, QGridLayout, QWidget, QMenu,
-    QGroupBox, QCheckBox, QRadioButton, QPlainTextEdit, QComboBox, QApplication
+    QGroupBox, QCheckBox, QRadioButton, QPlainTextEdit, QComboBox, QApplication, QTreeWidget, QTreeWidgetItem
 )
 from PyQt6.QtCore import QUrl, QSettings, Qt, QThread, pyqtSignal
-from PyQt6.QtGui import QPixmap, QAction
+from PyQt6.QtGui import QPixmap, QAction, QFont
 
 from src.ui.theme import get_color
 from src.constants import PROF_MAP, JSON_FILE, ICON_DIR, ICON_SIZE, ATTR_MAP, PROF_SHORT_MAP, DB_FILE
@@ -588,9 +588,10 @@ class TeamManagerWidget(QWidget):
         self.edit_search.textChanged.connect(self.refresh_list)
         layout.addWidget(self.edit_search)
         
-        self.list_widget = QListWidget()
+        self.tree_widget = QTreeWidget()
+        self.tree_widget.setHeaderHidden(True)
         self.refresh_list()
-        layout.addWidget(self.list_widget)
+        layout.addWidget(self.tree_widget)
         
         btn_layout = QHBoxLayout()
         
@@ -614,11 +615,57 @@ class TeamManagerWidget(QWidget):
         layout.addLayout(btn_layout)
 
     def refresh_list(self):
-        self.list_widget.clear()
+        self.tree_widget.clear()
         search_text = self.edit_search.text().lower()
+        
+        # 1. Map Team -> Category
+        team_categories = {}
+        for b in self.engine.builds:
+            if b.team and b.team != "General":
+                if b.team not in team_categories:
+                    team_categories[b.team] = b.category
+                    
+        # 2. Group Teams
         teams = sorted(list(self.engine.teams))
-        filtered_teams = [t for t in teams if search_text in t.lower()]
-        self.list_widget.addItems(filtered_teams)
+        cat_map = {}
+        
+        for team in teams:
+            if search_text and search_text not in team.lower():
+                continue
+                
+            cat = team_categories.get(team, "Uncategorized")
+            if cat not in cat_map:
+                cat_map[cat] = []
+            cat_map[cat].append(team)
+            
+        # 3. Populate Tree
+        priority_cats = ["User Created", "User Imported"]
+        other_cats = sorted([c for c in cat_map.keys() if c not in priority_cats])
+        ordered_cats = priority_cats + other_cats
+        
+        for cat in ordered_cats:
+            if cat not in cat_map: continue
+            
+            cat_item = QTreeWidgetItem(self.tree_widget)
+            cat_item.setText(0, cat)
+            
+            font = cat_item.font(0)
+            font.setBold(True)
+            # Double size (approx)
+            curr_size = font.pointSize()
+            if curr_size <= 0: curr_size = 9
+            font.setPointSize(curr_size * 2)
+            cat_item.setFont(0, font)
+            
+            # Expand priority categories by default, collapse others
+            if cat in priority_cats:
+                cat_item.setExpanded(True)
+            else:
+                cat_item.setExpanded(False)
+            
+            for team in cat_map[cat]:
+                team_item = QTreeWidgetItem(cat_item)
+                team_item.setText(0, team)
         
     def show_new_team_menu(self):
         menu = QMenu(self)
@@ -684,9 +731,9 @@ class TeamManagerWidget(QWidget):
         self.engine.save_user_builds()
         self.refresh_list()
         
-        items = self.list_widget.findItems(name, Qt.MatchFlag.MatchExactly)
+        items = self.tree_widget.findItems(name, Qt.MatchFlag.MatchExactly | Qt.MatchFlag.MatchRecursive, 0)
         if items:
-            self.list_widget.setCurrentItem(items[0])
+            self.tree_widget.setCurrentItem(items[0])
             self.load_team()
 
     def open_new_team_dialog(self):
@@ -711,8 +758,8 @@ class TeamManagerWidget(QWidget):
                 self.load_team()
         
     def open_sharing_dialog(self):
-        item = self.list_widget.currentItem()
-        team_name = item.text() if item else None
+        item = self.tree_widget.currentItem()
+        team_name = item.text(0) if (item and item.parent()) else None
         
         dlg = SharingDialog(self, self.engine, team_name)
         dlg.exec()
@@ -720,11 +767,11 @@ class TeamManagerWidget(QWidget):
         self.refresh_list()
 
     def export_team(self):
-        item = self.list_widget.currentItem()
-        if not item:
+        item = self.tree_widget.currentItem()
+        if not item or not item.parent():
             QMessageBox.warning(self, "Export", "Please select a team to export.")
             return
-        team_name = item.text()
+        team_name = item.text(0)
         
         settings = QSettings("Bookah", "Builder")
         last_dir = settings.value("last_export_dir", "")
@@ -783,20 +830,20 @@ class TeamManagerWidget(QWidget):
         QMessageBox.information(self, "Export Complete", f"Successfully exported {saved_count} builds to:\n{export_dir}")
         
     def edit_team(self):
-        item = self.list_widget.currentItem()
-        if not item: return
-        team_name = item.text()
+        item = self.tree_widget.currentItem()
+        if not item or not item.parent(): return
+        team_name = item.text(0)
         dlg = TeamEditorDialog(team_name, self.engine, self)
         dlg.exec()
         self.refresh_list()
 
     def add_team(self):
-        item = self.list_widget.currentItem()
-        if not item:
+        item = self.tree_widget.currentItem()
+        if not item or not item.parent():
             QMessageBox.warning(self, "Select Team", "Please select a team from the list to add this build to.")
             return
             
-        team_name = item.text()
+        team_name = item.text(0)
         existing_builds = [b for b in self.engine.builds if b.team == team_name]
         category = existing_builds[0].category if existing_builds else "User Created"
         
@@ -837,9 +884,9 @@ class TeamManagerWidget(QWidget):
         QMessageBox.information(self, "Success", f"Build '{build_name}' added to team '{team_name}'.")
             
     def load_team(self):
-        item = self.list_widget.currentItem()
-        if not item: return
-        team_name = item.text()
+        item = self.tree_widget.currentItem()
+        if not item or not item.parent(): return
+        team_name = item.text(0)
         
         if self.parent_window:
             # Reset Category to "All" to ensure team is visible
@@ -860,9 +907,9 @@ class TeamManagerWidget(QWidget):
                 QMessageBox.warning(self, "Error", f"Team '{team_name}' not found in main list.")
 
     def remove_team(self):
-        item = self.list_widget.currentItem()
-        if not item: return
-        team_name = item.text()
+        item = self.tree_widget.currentItem()
+        if not item or not item.parent(): return
+        team_name = item.text(0)
         
         confirm = QMessageBox.question(self, "Confirm", f"Delete all builds for team '{team_name}'?", QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
         if confirm == QMessageBox.StandardButton.Yes:
@@ -888,7 +935,7 @@ class TeamManagerDialog(QDialog):
         # Expose widgets for tutorial compatibility (optional proxy)
         self.btn_export = self.widget.btn_export
         self.btn_new_team = self.widget.btn_new_team
-        self.list_widget = self.widget.list_widget
+        self.tree_widget = self.widget.tree_widget
         self.btn_load = self.widget.btn_load
         self.btn_add = self.widget.btn_add
         self.btn_edit = self.widget.btn_edit
