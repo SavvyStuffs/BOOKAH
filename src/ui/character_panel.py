@@ -326,6 +326,28 @@ class CharacterPanel(QWidget):
             slot["btn"].setIcon(QIcon()); slot["btn"].setStyleSheet(f"QPushButton {{ background-color: {eb}; border: 2px dashed {get_color('slot_border')}; border-radius: {slot['btn'].width()//2}px; }} QPushButton:hover {{ border: 2px solid {get_color('text_accent')}; }}")
             slot["label"].setText(f"<b style='color:{tc};'>{slot['slot_name']}</b><br><span style='color:{ec};'>Empty</span>")
         self.update_stats()
+
+    def add_rune_direct(self, rtype, prof_id=None, attr_id=None):
+        # Find first empty slot
+        idx = -1
+        for i, r in enumerate(self.applied_runes):
+            if r is None:
+                idx = i; break
+        if idx == -1: return # No empty slots
+        
+        from src.constants import ATTR_MAP
+        name = f"{rtype.title()} {ATTR_MAP.get(attr_id, 'Rune')}"
+        if attr_id == "attunement": icon = "attunement.png"; name = "Attunement Rune"
+        elif attr_id == "vitae": icon = "attunement.png"; name = "Rune of Vitae"
+        elif attr_id == "vigor":
+            v_icons = {"minor": "minor_vig.png", "major": "major_vig.png", "sup": "sup_vig.png"}
+            icon = v_icons.get(rtype, "minor_vig.png")
+            name = f"{rtype.title()} Vigor"
+        else:
+            pref = {1: "war", 2: "ran", 3: "mo", 4: "nec", 5: "mes", 6: "ele", 7: "sin", 8: "rit", 9: "para", 10: "derv"}.get(prof_id, "war")
+            icon = f"{pref}_{rtype}.png"
+            
+        self.set_rune_slot(idx, {"rtype": rtype, "prof_id": prof_id, "attr_id": attr_id, "name": name, "icon": icon})
     def init_ui(self):
         l = QHBoxLayout(self); l.setContentsMargins(10, 10, 10, 10); l.setSpacing(20); rv = QVBoxLayout(); rv.setSpacing(20)
         self.stats_group = QGroupBox("Consumable Calculations"); self.group_boxes.append(self.stats_group); rv.addWidget(self.stats_group, stretch=2)
