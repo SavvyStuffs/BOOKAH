@@ -1,5 +1,11 @@
 ### Release Notes and Bug Fix History ###
 
+## 1.5.0
+    Updates:
+    - Included skill updates from 2/25/26
+    - Redesigned character panel to mimic in-game Equipment menu for better UX, including images for each profession and gender
+    - Updated Team Manager to a more organized layout
+
 ## 1.4.5
     Updates:
     - Matched nature ritual skill updates from 2/9/26

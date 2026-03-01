@@ -470,7 +470,6 @@ class MainWindow(QMainWindow):
         app.setPalette(palette)
         
         # Enforce global tooltip style on the application instance
-        # This fixes the "black box" issue by ensuring high-contrast colors and no transparency conflicts
         app.setStyleSheet(f"""
             QToolTip {{ 
                 background-color: {get_color('tooltip_bg')}; 
@@ -484,6 +483,7 @@ class MainWindow(QMainWindow):
         self.refresh_theme()
         
         if hasattr(self, 'library_widget'): self.library_widget.refresh_theme()
+        if hasattr(self, 'team_view_widget'): self.team_view_widget.refresh_theme()
         if hasattr(self, 'info_panel'): self.info_panel.refresh_theme()
         if hasattr(self, 'attr_editor'): self.attr_editor.refresh_theme()
         if hasattr(self, 'character_panel'): self.character_panel.refresh_theme()
@@ -499,12 +499,16 @@ class MainWindow(QMainWindow):
         self.update()
 
     def refresh_theme(self):
+        is_light = get_color('bg_primary') == '#FFFFFF'
+        # Containers: bg_primary in dark, bg_secondary in light
+        container_bg = get_color('bg_secondary') if is_light else get_color('bg_primary')
+        
         # Update stylesheets that were hardcoded
         self.setStyleSheet(f"QMainWindow {{ background-color: {get_color('bg_secondary')}; }}")
         
         # Bar Container
         if hasattr(self, 'bar_container'):
-            self.bar_container.setStyleSheet(f"background-color: {get_color('bg_tertiary')}; border-top: 1px solid {get_color('border')};")
+            self.bar_container.setStyleSheet(f"background-color: {container_bg}; border-top: 1px solid {get_color('border')};")
             
         # Code Box
         if hasattr(self, 'edit_code'):
@@ -734,6 +738,24 @@ class MainWindow(QMainWindow):
         self.btn_manage_teams = QPushButton("Manage Teams")
         self.btn_manage_teams.setCheckable(True)
         self.btn_manage_teams.setToolTip("Open Team Manager Pane")
+        self.btn_manage_teams.setStyleSheet("""
+            QPushButton { 
+                border: 1px solid transparent; 
+                background: transparent; 
+                font-size: 11px; 
+                font-weight: bold;
+                border-radius: 4px;
+                padding: 2px 5px;
+            }
+            QPushButton:checked {
+                color: #00AAFF;
+                border: 2px solid #00AAFF;
+                background-color: #2a2a2a;
+            }
+            QPushButton:hover {
+                background-color: #333;
+            }
+        """)
         self.btn_manage_teams.clicked.connect(self.toggle_team_manager_view)
         top_grid.addWidget(self.btn_manage_teams, 0, 6)
         
@@ -980,7 +1002,7 @@ class MainWindow(QMainWindow):
         # --- 3. Build Bar (Updated Layout) ---
         self.bar_container = QFrame()
         self.bar_container.setFixedHeight(140) # Increased height slightly to fit checkbox
-        self.bar_container.setStyleSheet(f"background-color: {get_color('bg_primary')}; border-top: 1px solid {get_color('border')};")
+        self.bar_container.setStyleSheet(f"background-color: {get_color('bg_secondary')}; border-top: 1px solid {get_color('border')};")
         container_layout = QHBoxLayout(self.bar_container)
 
         # --- NEW: Cycle & Debug Column ---
@@ -2917,8 +2939,7 @@ class MainWindow(QMainWindow):
         checked = self.btn_max_icons.isChecked()
         new_size = 128 if checked else 64
         self.library_widget.set_icon_size(new_size)
-        if hasattr(self, 'character_panel'):
-            self.character_panel.set_icon_size(new_size)
+        # Decoupled CharacterPanel to use its own resizeEvent auto-scaling
         if hasattr(self, 'weapons_panel'):
             self.weapons_panel.set_icon_size(new_size)
 
@@ -2927,18 +2948,17 @@ class MainWindow(QMainWindow):
             self.btn_team_view.blockSignals(True)
             self.btn_team_view.setChecked(False)
             self.btn_team_view.blockSignals(False)
-            
+
             self.btn_manage_teams.blockSignals(True)
             self.btn_manage_teams.setChecked(False)
             self.btn_manage_teams.blockSignals(False)
 
             self.center_stack.setCurrentIndex(1)
-            self.right_stack.setCurrentIndex(1) # Show Weapons
+            self.right_stack.setCurrentIndex(0) # Show Attributes
         else:
             if not self.btn_manage_teams.isChecked() and not self.btn_team_view.isChecked():
                 self.center_stack.setCurrentIndex(0)
                 self.right_stack.setCurrentIndex(0) # Show Attributes
-
     def toggle_team_view(self, checked):
         if checked:
             self.btn_char_view.blockSignals(True)

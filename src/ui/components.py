@@ -90,7 +90,7 @@ class EliteSuggestionOverlay(QFrame):
         self.list_widget = QListWidget()
         self.list_widget.setStyleSheet(f"""
             QListWidget {{
-                background-color: {get_color('bg_primary')};
+                background-color: {get_color('bg_secondary')};
                 border: none;
             }}
             QListWidget::item:hover {{
@@ -1081,9 +1081,11 @@ class SkillLibraryWidget(QListWidget):
             self.skill_double_clicked.emit(data)
 
     def refresh_theme(self):
+        is_light = get_color('bg_primary') == '#FFFFFF'
+        bg = get_color('bg_secondary') if is_light else get_color('bg_primary')
         self.setStyleSheet(f"""
             QListWidget {{ 
-                background-color: {get_color('bg_primary')}; 
+                background-color: {bg}; 
                 border: none; 
             }}
             QListWidget::item {{
@@ -1096,6 +1098,14 @@ class SkillLibraryWidget(QListWidget):
                 background-color: {get_color('bg_selected')};
             }}
         """)
+        
+        # Propagate to BuildPreviewWidgets if they exist
+        for i in range(self.count()):
+            item = self.item(i)
+            widget = self.itemWidget(item)
+            if hasattr(widget, 'refresh_theme'):
+                widget.refresh_theme()
+                
         self.viewport().update()
 
     def update_suggestions(self, suggestions):
