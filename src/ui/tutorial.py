@@ -328,6 +328,12 @@ class TutorialManager:
                 "desc": "Paste codes here to load them instantly, copy your current build code, or reset the bar to start fresh."
             },
             {
+                "widget": [self.mw.check_smart_mode, self.mw.bar_area],
+                "title": "Smart Mode & Suggestions",
+                "desc": "This feature uses local AI to find deeper synergies. Note: this may take a few seconds to load.",
+                "action": lambda: self.mw.check_smart_mode.setChecked(True)
+            },
+            {
                 "widget": None, # Will be set in action
                 "title": "Attribute Editor",
                 "desc": "After loading a build, you can adjust your attribute points here. Note that primary attributes (underlined) have passive bonuses, like Mysticism's cost reduction and armor bonus. Hover over the underlined word for more info.",
@@ -351,15 +357,20 @@ class TutorialManager:
                 "desc": "Click here to toggle between the Skills and the Character Stats panel."
             },
             {
-                "widget": self.mw.character_panel.cons_group,
-                "title": "Consumables (Pcons)",
-                "desc": "Here you can toggle various consumables. Lets add a conset.",
+                "widget": [self.mw.character_panel.lbl_body_img, self.mw.character_panel.btn_swap_gender],
+                "title": "Dynamic Character Display",
+                "desc": "The character image automatically updates based on your primary profession. Use the swap button (⇆) to toggle between male and female versions.",
                 "action": lambda: self.mw.btn_char_view.setChecked(True)
             },
             {
+                "widget": self.mw.character_panel.cons_group,
+                "title": "Consumables (Pcons)",
+                "desc": "Here you can toggle various consumables. Lets add a conset."
+            },
+            {
                 "widget": self.mw.character_panel.stats_group,
-                "title": "Consumable Calculations",
-                "desc": "Your health, energy, and attributes are recalculated in real-time.",
+                "title": "Expanded Stat Tracking",
+                "desc": "Your health, energy, armor, and even move speed are recalculated in real-time. If you have many effects active, this area becomes scrollable.",
                 "action": lambda: [self.mw.character_panel.toggle_consumable(k, True) for k in ["armor", "bu", "grail"]]
             },
             {
@@ -369,40 +380,40 @@ class TutorialManager:
                 "action": lambda: self.mw.character_panel.clear_consumables()
             },
             {
+                "widget": self.mw.character_panel.combo_headpiece,
+                "title": "Headpiece Bonus",
+                "desc": "Select your headpiece attribute bonus here. This adds a +1 bonus to the chosen attribute, similar to the +5 from Anniversary weapons.",
+                "action": None
+            },
+            {
                 "widget": self.mw.character_panel.stats_group,
-                "title": "Rune calculations",
-                "desc": "With our runes applied, we can see the stats. Note the health bonus from Superior Vigor (+50) minus the penalty from Superior Earth Prayers (-75), plus energy from Attunement.",
+                "title": "Combined Calculations",
+                "desc": "With our runes and headpiece bonus applied, we can see the totals. Note the health bonus from Superior Vigor (+50) minus the penalty from Superior Earth Prayers (-75).",
                 "action": lambda: self._prep_final_step()
             },
             {
-                "widget": self.mw.weapons_panel,
+                "widget": self.mw.character_panel.btn_weapon,
                 "title": "Anniversary Weapons",
-                "desc": "Anniversary weapons provide unique bonuses",
+                "desc": "Anniversary weapons provide unique bonuses. Click this slot to choose from the available decade weapons.",
                 "action": None
             },
             {
                 "widget": self.mw.character_panel.stats_group,
                 "title": "Weapon Bonuses",
-                "desc": "Selecting 'Soul's Repentance' adds an additional +5 Soul Reaping to our attributes, in addition to our runes.",
-                "action": lambda: self.mw.weapons_panel.select_weapon("decade_scythe")
+                "desc": "Selecting a weapon like 'Soul's Repentance' adds an additional +5 to its associated attribute.",
+                "action": lambda: self.mw.character_panel.set_weapon_slot("decade_scythe")
             },
             {
                 "widget": self.mw.btn_char_view,
                 "title": "Return to Builder",
                 "desc": "Lets go back to the skills",
-                "action": None
+                "action": lambda: self.mw.btn_char_view.setChecked(False)
             },
             {
                 "widget": self.mw.attr_editor,
                 "title": "Applied Effects",
-                "desc": "On the builder page, we can see the +5 Soul Reaping applied from the scythe. The primary attribute inherent effect is also applied (for example, a non-mesmer with the fast cast staff would see updated skill cast and recharge times).",
-                "action": lambda: self.mw.btn_char_view.setChecked(False)
-            },
-            {
-                "widget": [self.mw.check_smart_mode, self.mw.bar_area],
-                "title": "Smart Mode & Suggestions",
-                "desc": "This feature uses local AI to find deeper synergies. Note: this may take a few seconds to load.",
-                "action": lambda: self.mw.check_smart_mode.setChecked(True)
+                "desc": "On the builder page, we can see the +5 Soul Reaping applied from the scythe. The primary attribute inherent effect is also applied.",
+                "action": None
             },
             {
                 "widget": [self.mw.combo_cat, self.mw.combo_team],
@@ -480,25 +491,26 @@ class TutorialManager:
 
         steps = []
         if section == "Full":
-            steps = all_steps
+            # 1. Builds Section (Steps 1-8: Indices 0-7)
+            steps.extend(all_steps[0:8])
+            # 2. Character Section (Steps 9-17: Indices 8-16)
+            steps.extend(all_steps[8:17])
+            # 3. Teams Section (Indices 19 onwards, then finish)
+            steps.extend(all_steps[19:])
+            
         elif section == "Builds":
-            # Steps 1-7 (0-6)
-            steps.extend(all_steps[0:7])
-            # Steps 17-18 (16-17)
-            steps.extend(all_steps[16:18])
-            # Add final step
+            # Steps 1-8 (0-7)
+            steps.extend(all_steps[0:8])
             steps.append(all_steps[-1])
             
         elif section == "Character":
-            # Steps 8-15 (7-15)
-            # Ends with Applied Effects (Index 15)
-            steps.extend(all_steps[7:16])
+            # Steps 9-17 (8-16)
+            steps.extend(all_steps[8:17])
             steps.append(all_steps[-1])
             
         elif section == "Teams":
-            # Steps 19-End (18 onwards)
-            # This automatically includes the final "Tutorial Complete" step
-            steps.extend(all_steps[18:])
+            # User said "Step 1 in the Teams tutorial should not exist. It is a duplicate"
+            steps.extend(all_steps[19:])
         
         def on_tutorial_finished():
             self.mw.settings.setValue("tutorial_complete", True)
@@ -530,9 +542,10 @@ class TutorialManager:
 
     def _prep_speedbooking_select(self):
         tm = self.mw.team_manager_widget
-        items = tm.list_widget.findItems("7 Hero Speedbooking", Qt.MatchFlag.MatchContains)
+        # TeamManagerWidget uses tree_widget, not list_widget
+        items = tm.tree_widget.findItems("7 Hero Speedbooking", Qt.MatchFlag.MatchContains | Qt.MatchFlag.MatchRecursive)
         if items:
-            tm.list_widget.setCurrentItem(items[0])
+            tm.tree_widget.setCurrentItem(items[0])
         self.overlay.target_widgets = [tm.btn_load]
 
     def _prep_duplicate_step(self):
