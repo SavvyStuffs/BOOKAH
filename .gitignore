@@ -22,6 +22,7 @@ Bookah.flatpak
 
 # Misc
 /tests
+SECURITY_AUDIT.md
 
 # Docker
 .dockerignore

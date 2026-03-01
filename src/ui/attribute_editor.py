@@ -107,6 +107,9 @@ class AttributeEditor(QFrame):
                 lbl.name_lbl.setStyleSheet(f"color: {get_color('text_warning')}; font-size: 13px; border: none; font-weight: bold;")
             else:
                 lbl.name_lbl.setStyleSheet(f"color: {get_color('text_secondary')}; font-size: 13px; border: none; font-weight: bold;")
+            
+            # Update bonus label color
+            lbl.bonus_lbl.setStyleSheet(f"color: {get_color('text_accent')}; font-weight: bold; font-size: 13px; border: none;")
 
         # HR Bonus
         if hasattr(self, 'lbl_hr'):
@@ -214,13 +217,7 @@ class AttributeEditor(QFrame):
             
             bonus_lbl = QLabel("")
             bonus_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            # Apply permanent shadow only to the bonus label
-            shadow = QGraphicsDropShadowEffect()
-            shadow.setBlurRadius(2)
-            shadow.setColor(Qt.GlobalColor.black)
-            shadow.setOffset(1, 1)
-            bonus_lbl.setGraphicsEffect(shadow)
-            bonus_lbl.setStyleSheet("color: #00FF00; font-weight: bold; font-size: 13px; border: none;")
+            bonus_lbl.setStyleSheet(f"color: {get_color('text_accent')}; font-weight: bold; font-size: 13px; border: none;")
             bonus_lbl.hide()
             
             layout.addWidget(name_lbl)

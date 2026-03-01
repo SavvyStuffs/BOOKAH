@@ -666,6 +666,14 @@ class TeamManagerWidget(QWidget):
             for team in cat_map[cat]:
                 team_item = QTreeWidgetItem(cat_item)
                 team_item.setText(0, team)
+                
+                # Increase font size for teams (nested builds)
+                t_font = team_item.font(0)
+                t_curr_size = t_font.pointSize()
+                if t_curr_size <= 0: t_curr_size = 9
+                # 1.4x is larger than base but smaller than the 2x category header
+                t_font.setPointSize(int(t_curr_size * 1.4))
+                team_item.setFont(0, t_font)
         
     def show_new_team_menu(self):
         menu = QMenu(self)
