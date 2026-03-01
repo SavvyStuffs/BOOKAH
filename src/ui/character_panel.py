@@ -227,6 +227,8 @@ class CharacterPanel(QWidget):
         for w in self.con_widgets: w.blockSignals(True); w.setChecked(False); w.blockSignals(False)
         self.update_stats()
     def set_primary_profession(self, pid):
+        try: pid = int(pid)
+        except: pid = 0
         if self.primary_prof_id == pid: return
         self.primary_prof_id = pid; self.combo_headpiece.blockSignals(True); self.combo_headpiece.clear(); self.combo_headpiece.addItem("None", None)
         if pid > 0:
@@ -234,6 +236,8 @@ class CharacterPanel(QWidget):
             for aid in PROF_ATTRS.get(pid, []): self.combo_headpiece.addItem(f"{ATTR_MAP.get(aid, f'Attr {aid}')} +1", aid)
         self.combo_headpiece.blockSignals(False)
         self.combo_headpiece.setEnabled(pid > 0)
+        # Apply current theme style to the combo
+        self.refresh_theme()
         for i, r in enumerate(self.applied_runes):
             if r and r.get("prof_id") and r.get("prof_id") != pid: self.set_rune_slot(i, None)
         self.update_body_image(); self.update_stats()
@@ -251,6 +255,10 @@ class CharacterPanel(QWidget):
         self.lbl_stats.setStyleSheet(f"color: {get_color('text_primary')};")
         self.lbl_runes.setStyleSheet(f"color: {get_color('text_primary')};")
         
+        # Explicit combo styling to ensure visibility
+        combo_s = f"QComboBox {{ background-color: {get_color('btn_bg')}; color: {get_color('btn_text')}; border: 1px solid {get_color('border')}; border-radius: 4px; padding-left: 5px; }} QComboBox::drop-down {{ border: none; }} QComboBox QAbstractItemView {{ background-color: {get_color('bg_secondary')}; color: {get_color('text_primary')}; selection-background-color: {get_color('bg_selected')}; }}"
+        if hasattr(self, 'combo_headpiece'): self.combo_headpiece.setStyleSheet(combo_s)
+
         # Remove shadows in light mode
         if is_light:
             self.lbl_hp_adj_val.setGraphicsEffect(None)
@@ -359,10 +367,17 @@ class CharacterPanel(QWidget):
         bs.addWidget(mid_cont, stretch=10)
         
         # Armor Selection on the Right
-        slc = QWidget(); sll = QVBoxLayout(slc); sll.setSpacing(5); sll.setContentsMargins(0, 0, 0, 0)
-        
+        slc = QWidget(); slc.setMinimumWidth(260); sll = QVBoxLayout(slc); sll.setSpacing(5); sll.setContentsMargins(0, 0, 0, 0)
+
         # Move Bonus above headpiece as requested
-        hbl = QHBoxLayout(); hbl.setContentsMargins(10, 0, 0, 0); self.lbl_hb = QLabel("Bonus:"); self.combo_headpiece = QComboBox(); self.combo_headpiece.setFixedWidth(100); self.combo_headpiece.addItem("None", None); self.combo_headpiece.currentIndexChanged.connect(self.update_stats); hbl.addWidget(self.lbl_hb); hbl.addWidget(self.combo_headpiece); hbl.addStretch(); sll.addLayout(hbl)
+        hbl = QHBoxLayout(); hbl.setContentsMargins(10, 0, 0, 0); self.lbl_hb = QLabel("Headpiece Bonus:"); self.combo_headpiece = QComboBox()
+        from PyQt6.QtWidgets import QListView
+        self.combo_headpiece.setView(QListView())
+        self.combo_headpiece.setFixedWidth(150); self.combo_headpiece.addItem("None", None); self.combo_headpiece.currentIndexChanged.connect(self.update_stats)
+
+        # Ensure it opens upwards if space is limited
+        self.combo_headpiece.setMaxVisibleItems(10)
+        hbl.addWidget(self.lbl_hb); hbl.addWidget(self.combo_headpiece); hbl.addStretch(); sll.addLayout(hbl)
 
         self.rune_slots = []; sn = ["Headpiece", "Chestpiece", "Gloves", "Leggings", "Boots"]
         for i in range(5):
