@@ -1,7 +1,8 @@
 import os
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, 
-    QScrollArea, QFrame, QPushButton, QCheckBox, QGroupBox, QComboBox, QLineEdit
+    QScrollArea, QFrame, QPushButton, QCheckBox, QGroupBox, QComboBox, QLineEdit,
+    QApplication, QSizePolicy
 )
 from PyQt6.QtCore import Qt, pyqtSignal, QSize, QEvent
 from PyQt6.QtGui import QIcon, QPixmap
@@ -11,66 +12,18 @@ from src.ui.theme import get_color
 # --- Data Definitions ---
 
 CONSUMABLES = {
-    "apple": {
-        "name": "Candy Apple",
-        "icon": "apple.png",
-        "stats": {"hp": 100, "energy": 10}
-    },
-    "corn": {
-        "name": "Candy Corn",
-        "icon": "corn.png",
-        "stats": {"all_atts": 1}
-    },
-    "egg": {
-        "name": "Golden Egg",
-        "icon": "egg.png",
-        "stats": {"all_atts": 1}
-    },
-    "lunar": {
-        "name": "Lunar Fortune",
-        "icon": "lunar.png",
-        "stats": {"all_atts": 1}
-    },
-    "green_rock": {
-        "name": "Green Rock Candy",
-        "icon": "green_rock.png",
-        "stats": {"attack_speed": 0.15, "activation": -0.15}
-    },
-    "blue_rock": {
-        "name": "Blue Rock Candy",
-        "icon": "blue_rock.png",
-        "stats": {"attack_speed": 0.25, "activation": -0.20}
-    },
-    "red_rock": {
-        "name": "Red Rock Candy",
-        "icon": "red_rock.png",
-        "stats": {"attack_speed": 0.33, "activation": -0.25}
-    },
-    "pie": {
-        "name": "Pumpkin Pie",
-        "icon": "pie.png",
-        "stats": {"attack_speed": 0.25, "activation": -0.15}
-    },
-    "armor": {
-        "name": "Armor of Salvation",
-        "icon": "armor.png",
-        "stats": {"crit_immunity": 0.50, "armor": 10, "hp_regen": 1, "incoming_dmg": -5}
-    },
-    "bu": {
-        "name": "Essence of Celerity",
-        "icon": "bu.png",
-        "stats": {"move_speed": 0.20, "attack_speed": 0.20, "activation": -0.20, "recharge": -0.20}
-    },
-    "grail": {
-        "name": "Grail of Might",
-        "icon": "grail.png",
-        "stats": {"hp": 100, "energy": 10, "all_atts": 1}
-    },
-    "cupcake": {
-        "name": "Birthday Cupcake",
-        "icon": "cupcake.png",
-        "stats": {"hp": 100, "energy": 10, "move_speed": 0.25}
-    }
+    "apple": {"name": "Candy Apple", "icon": "apple.png", "stats": {"hp": 100, "energy": 10}},
+    "corn": {"name": "Candy Corn", "icon": "corn.png", "stats": {"all_atts": 1}},
+    "egg": {"name": "Golden Egg", "icon": "egg.png", "stats": {"all_atts": 1}},
+    "lunar": {"name": "Lunar Fortune", "icon": "lunar.png", "stats": {"all_atts": 1}},
+    "green_rock": {"name": "Green Rock Candy", "icon": "green_rock.png", "stats": {"attack_speed": 0.15, "activation": -0.15}},
+    "blue_rock": {"name": "Blue Rock Candy", "icon": "blue_rock.png", "stats": {"attack_speed": 0.25, "activation": -0.20}},
+    "red_rock": {"name": "Red Rock Candy", "icon": "red_rock.png", "stats": {"attack_speed": 0.33, "activation": -0.25}},
+    "pie": {"name": "Pumpkin Pie", "icon": "pie.png", "stats": {"attack_speed": 0.25, "activation": -0.15}},
+    "armor": {"name": "Armor of Salvation", "icon": "armor.png", "stats": {"crit_immunity": 0.50, "armor": 10, "hp_regen": 1, "incoming_dmg": -5}},
+    "bu": {"name": "Essence of Celerity", "icon": "bu.png", "stats": {"move_speed": 0.20, "attack_speed": 0.20, "activation": -0.20, "recharge": -0.20}},
+    "grail": {"name": "Grail of Might", "icon": "grail.png", "stats": {"hp": 100, "energy": 10, "all_atts": 1}},
+    "cupcake": {"name": "Birthday Cupcake", "icon": "cupcake.png", "stats": {"hp": 100, "energy": 10, "move_speed": 0.25}}
 }
 
 WEAPONS = {
@@ -86,1096 +39,435 @@ WEAPONS = {
     "decade_staff_spirit": {"name": "Spirit's Absolution", "attr": 16, "icon": "decade_staff_spirit.png"},
 }
 
-CAPS = {
-    "activation": -0.25,      # Lower is better (negative), capped at -25%
-    "attack_speed": 0.33,     # Higher is better
-    "move_speed": 0.34,       # Higher is better
-    "hp_regen": 10,           # Max +10
-    "recharge": -0.50,        # Max -50%
-    "armor": 25,              # Max +25
-    "all_atts": 20            # Standard attribute rank cap
-}
+CAPS = {"activation": -0.25, "attack_speed": 0.33, "move_speed": 0.34, "hp_regen": 10, "recharge": -0.50, "armor": 25, "all_atts": 20}
 
 class ConsumableItem(QPushButton):
-    toggled_state = pyqtSignal(str, bool) # key, is_checked
-
+    toggled_state = pyqtSignal(str, bool)
     def __init__(self, key, data):
-        super().__init__()
-        self.key = key
-        self.data = data
-        self.setCheckable(True)
-        self.setFixedSize(64, 64)
-        self.setIconSize(QSize(48, 48))
-        
-        # HTML Tooltip
-        tooltip = f"<b>{data['name']}</b><br/><br/>{self._format_stats(data['stats'])}"
-        self.setToolTip(tooltip)
-        
+        super().__init__(); self.key, self.data = key, data
+        self.setCheckable(True); self.setFixedSize(64, 64); self.setIconSize(QSize(48, 48))
+        self.setToolTip(f"<b>{data['name']}</b><br/><br/>{self._format_stats(data['stats'])}")
         icon_path = resource_path(os.path.join("icons", "cons_icons", data['icon']))
-        if os.path.exists(icon_path):
-            self.setIcon(QIcon(icon_path))
-        else:
-            self.setText(data['name'][:2])
-
-        self.refresh_theme()
-        self.toggled.connect(lambda checked: self.toggled_state.emit(self.key, checked))
-
+        if os.path.exists(icon_path): self.setIcon(QIcon(icon_path))
+        else: self.setText(data['name'][:2])
+        self.refresh_theme(); self.toggled.connect(lambda checked: self.toggled_state.emit(self.key, checked))
     def refresh_theme(self):
-        self.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {get_color('slot_bg')};
-                border: 2px solid {get_color('slot_border')};
-                border-radius: 8px;
-            }}
-            QPushButton:checked {{
-                background-color: {get_color('slot_bg_equipped')};
-                border: 2px solid #00FF00;
-            }}
-            QPushButton:hover {{
-                border-color: {get_color('border_accent')};
-            }}
-            QToolTip {{
-                background-color: {get_color('tooltip_bg')};
-                color: {get_color('tooltip_text')};
-                border: 1px solid {get_color('border')};
-                padding: 4px;
-            }}
-        """)
-
-    def set_icon_size(self, size):
-        self.setFixedSize(size, size)
-        self.setIconSize(QSize(int(size * 0.75), int(size * 0.75)))
-
+        self.setStyleSheet(f"QPushButton {{ background-color: {get_color('slot_bg')}; border: 2px solid {get_color('slot_border')}; border-radius: 8px; padding: 0px; text-align: center; }} QPushButton:checked {{ background-color: {get_color('slot_bg_equipped')}; border: 2px solid #00FF00; }} QPushButton:hover {{ border-color: {get_color('border_accent')}; }} QToolTip {{ background-color: {get_color('tooltip_bg')}; color: {get_color('tooltip_text')}; border: 1px solid {get_color('border')}; padding: 4px; }}")
+    def set_icon_size(self, size): self.setFixedSize(size, size); self.setIconSize(QSize(int(size * 0.75), int(size * 0.75)))
     def _format_stats(self, stats):
         lines = []
         for k, v in stats.items():
-            if "speed" in k or "activation" in k or "recharge" in k or "crit" in k:
-                val = f"{int(v*100)}%"
-                if v > 0: val = f"{val}"
-            else:
-                val = str(v)
-                if v > 0: val = f"{val}"
+            val = f"{int(v*100)}%" if any(x in k for x in ["speed", "activation", "recharge", "crit"]) else str(v)
             lines.append(f"{k.replace('_', ' ').title()}: {val}")
         return "<br/>".join(lines)
 
-class WeaponItem(QPushButton):
-    def __init__(self, name):
-        super().__init__(name)
-        self.setCheckable(True)
-        self.setFixedSize(200, 40) # Wider for weapon names
-        self.setStyleSheet("""
-            QPushButton {
-                background-color: #222;
-                border: 1px solid #555;
-                color: #aaa;
-                border-radius: 4px;
-            }
-            QPushButton:checked {
-                border: 2px solid #FFD700;
-                color: white;
-                background-color: #333;
-            }
-            QPushButton:hover {
-                border-color: #888;
-            }
-        """)
-
-class RuneItem(QPushButton):
-    toggled_state = pyqtSignal(object, bool) # self, is_checked
-    clicked_rune = pyqtSignal(object) # self
-    right_clicked_rune = pyqtSignal(object) # self
-
-    def __init__(self, name, icon_name=None, rtype=None, prof_id=None, attr_id=None, checkable=False, icon_dir="runes_icons"):
-        super().__init__()
-        self.rtype = rtype # "minor", "major", "sup", "vigor", "attunement"
-        self.prof_id = prof_id
-        self.attr_id = attr_id 
-        self.setCheckable(checkable)
-        self.setFixedSize(80, 80)
-        self.setToolTip(f"<b>{name}</b>")
-        
-        # Count Label for stacks
-        self.count_label = QLabel("", self)
-        self.count_label.setStyleSheet("color: white; font-weight: bold; font-size: 14px; background-color: rgba(0,0,0,180); border-radius: 4px; padding: 1px 3px;")
-        self.count_label.hide()
-        self.count_label.move(0, 0)
-        
-        self.active_count = 0
-        
-        if icon_name:
-            icon_path = resource_path(os.path.join("icons", icon_dir, icon_name))
-            if os.path.exists(icon_path):
-                self.setIcon(QIcon(icon_path))
-                self.setIconSize(QSize(56, 56))
-            else:
-                self.setText(name)
-        else:
-            self.setText(name)
-
-        self.refresh_theme()
-        if checkable:
-            self.toggled.connect(lambda checked: self.toggled_state.emit(self, checked))
-        else:
-            self.clicked.connect(lambda: self.clicked_rune.emit(self))
-
-    def mousePressEvent(self, event):
-        if event.button() == Qt.MouseButton.RightButton:
-            self.right_clicked_rune.emit(self)
-        else:
-            super().mousePressEvent(event)
-
-    def set_icon_size(self, size):
-        self.setFixedSize(size, size)
-        self.setIconSize(QSize(int(size * 0.75), int(size * 0.75)))
-        if size > 100:
-            self.setStyleSheet(self.styleSheet().replace("border-radius: 40px;", f"border-radius: {size//2}px;"))
-        else:
-            self.setStyleSheet(self.styleSheet().replace(f"border-radius: {128//2}px;", "border-radius: 40px;"))
-
-    def set_active_count(self, count):
-        self.active_count = count
-        if count > 1:
-            self.count_label.setText(f"x{count}")
-            self.count_label.show()
-            self.count_label.adjustSize()
-        else:
-            self.count_label.hide()
-        self.refresh_theme()
-
-    def refresh_theme(self):
-        radius = self.width() // 2
-        
-        # Default border
-        border_color = get_color('slot_border')
-        border_style = "dashed"
-        border_width = "1px"
-        
-        # Active Green Border
-        if self.active_count > 0:
-            border_color = "#00FF00" 
-            border_style = "solid"
-            border_width = "3px"
-            
-        self.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {get_color('slot_bg')};
-                border: {border_width} {border_style} {border_color};
-                color: {get_color('text_secondary')};
-                border-radius: {radius}px; /* Circular */
-            }}
-            QPushButton:checked {{
-                border: 2px solid {get_color('border_accent')};
-                color: {get_color('text_primary')};
-                background-color: {get_color('slot_bg_equipped')};
-            }}
-            QPushButton:hover {{
-                border-color: {get_color('text_accent')};
-            }}
-            QPushButton:disabled {{
-                background-color: {get_color('bg_secondary')};
-                border: 1px solid {get_color('border')};
-                opacity: 0.5;
-            }}
-            QToolTip {{
-                background-color: {get_color('tooltip_bg')};
-                color: {get_color('tooltip_text')};
-                border: 1px solid {get_color('border')};
-                padding: 4px;
-            }}
-        """)
-
 class WeaponWidget(QWidget):
-    toggled = pyqtSignal(str, bool) # weapon_key, is_checked
-
+    toggled = pyqtSignal(str, bool)
     def __init__(self, key, data):
-        super().__init__()
-        self.key = key
-        self.data = data
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(2)
-        layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
-
-        self.button = RuneItem(data['name'], icon_name=data['icon'], checkable=True, icon_dir="weapons_icons")
+        super().__init__(); self.key, self.data = key, data
+        layout = QVBoxLayout(self); layout.setContentsMargins(0, 0, 0, 0); layout.setSpacing(2); layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.button = QPushButton(); self.button.setCheckable(True); self.button.setFixedSize(80, 80)
+        icon_path = resource_path(os.path.join("icons", "weapons_icons", data['icon']))
+        if os.path.exists(icon_path): self.button.setIcon(QIcon(icon_path)); self.button.setIconSize(QSize(56, 56))
         self.button.toggled.connect(lambda checked: self.toggled.emit(self.key, checked))
-        
-        self.label = QLabel(f'"{data["name"]}"')
-        self.label.setWordWrap(True)
-        self.label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.label.setFixedWidth(140)
-        self.label.setStyleSheet(f"font-size: 11px; color: {get_color('text_primary')}; font-style: italic;")
-        
-        layout.addWidget(self.button)
-        layout.addWidget(self.label)
-
-    def set_icon_size(self, size):
-        self.button.set_icon_size(size)
-        self.label.setFixedWidth(size + 60)
-
+        self.label = QLabel(f'"{data["name"]}"'); self.label.setWordWrap(True); self.label.setAlignment(Qt.AlignmentFlag.AlignCenter); self.label.setFixedWidth(140); self.label.setStyleSheet(f"font-size: 11px; color: {get_color('text_primary')}; font-style: italic;")
+        layout.addWidget(self.button); layout.addWidget(self.label); self.refresh_theme()
+    def set_icon_size(self, size): self.button.setFixedSize(size, size); self.button.setIconSize(QSize(int(size * 0.75), int(size * 0.75))); self.label.setFixedWidth(size + 60)
     def refresh_theme(self):
-        self.button.refresh_theme()
+        radius = self.button.width() // 2
+        self.button.setStyleSheet(f"QPushButton {{ background-color: {get_color('slot_bg')}; border: 1px dashed {get_color('slot_border')}; border-radius: {radius}px; }} QPushButton:checked {{ border: 3px solid #00FF00; background-color: {get_color('slot_bg_equipped')}; }} QPushButton:hover {{ border-color: {get_color('border_accent')}; }}")
         self.label.setStyleSheet(f"font-size: 11px; color: {get_color('text_primary')}; font-style: italic;")
 
 class WeaponsPanel(QWidget):
     def __init__(self, parent_panel=None):
-        super().__init__()
-        self.parent_panel = parent_panel
-        self.weapon_widgets = {}
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        
-        self.group = QGroupBox("Weapons")
-        group_layout = QVBoxLayout(self.group)
-        group_layout.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter)
-        
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setStyleSheet("background: transparent; border: none;")
-        
-        container = QWidget()
-        vbox = QVBoxLayout(container)
-        vbox.setSpacing(15)
-        vbox.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter)
-        
+        super().__init__(); self.parent_panel = parent_panel; self.weapon_widgets = {}
+        layout = QVBoxLayout(self); layout.setContentsMargins(0, 0, 0, 0)
+        self.group = QGroupBox("Weapons"); group_layout = QVBoxLayout(self.group); group_layout.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter)
+        scroll = QScrollArea(); scroll.setWidgetResizable(True); scroll.setStyleSheet("background: transparent; border: none;"); container = QWidget(); vbox = QVBoxLayout(container); vbox.setSpacing(15); vbox.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter)
         for key, data in WEAPONS.items():
-            w = WeaponWidget(key, data)
-            w.toggled.connect(self.on_weapon_toggled)
-            self.weapon_widgets[key] = w
-            vbox.addWidget(w)
-                
-        scroll.setWidget(container)
-        group_layout.addWidget(scroll)
-        layout.addWidget(self.group)
-        self.refresh_theme()
-
+            w = WeaponWidget(key, data); w.toggled.connect(self.on_weapon_toggled); self.weapon_widgets[key] = w; vbox.addWidget(w)
+        scroll.setWidget(container); group_layout.addWidget(scroll); layout.addWidget(self.group); self.refresh_theme()
     def set_icon_size(self, size):
-        for w in self.weapon_widgets.values():
-            w.set_icon_size(size)
-
+        for w in self.weapon_widgets.values(): w.set_icon_size(size)
     def on_weapon_toggled(self, key, checked):
         if checked:
-            # Uncheck others
             for k, w in self.weapon_widgets.items():
-                if k != key:
-                    w.button.blockSignals(True)
-                    w.button.setChecked(False)
-                    w.button.blockSignals(False)
-            
-            if self.parent_panel:
-                self.parent_panel.active_weapon = key
-        else:
-            if self.parent_panel and self.parent_panel.active_weapon == key:
-                self.parent_panel.active_weapon = None
-        
-        if self.parent_panel:
-            self.parent_panel.update_stats()
-
+                if k != key: w.button.blockSignals(True); w.button.setChecked(False); w.button.blockSignals(False)
+            if self.parent_panel: self.parent_panel.active_weapon = key
+        elif self.parent_panel and self.parent_panel.active_weapon == key: self.parent_panel.active_weapon = None
+        if self.parent_panel: self.parent_panel.update_stats()
     def select_weapon(self, key):
-        if key in self.weapon_widgets:
-            self.weapon_widgets[key].button.setChecked(True)
-
+        if key in self.weapon_widgets: self.weapon_widgets[key].button.setChecked(True)
     def refresh_theme(self):
         self.group.setStyleSheet(f"QGroupBox {{ font-weight: bold; color: {get_color('text_secondary')}; border: 1px solid {get_color('border')}; margin-top: 10px; }} QGroupBox::title {{ subcontrol-origin: margin; left: 10px; padding: 0 5px; }}")
-        for w in self.weapon_widgets.values():
-            w.refresh_theme()
+        for w in self.weapon_widgets.values(): w.refresh_theme()
+
+class ScaledImageLabel(QLabel):
+    def __init__(self, pixmap, parent=None):
+        super().__init__(parent); self._pixmap = pixmap
+        self.setAlignment(Qt.AlignmentFlag.AlignCenter); self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+    def resizeEvent(self, event):
+        if not self._pixmap.isNull():
+            # Use exactly 90% of available space as requested for the "perfect" size
+            sz = self.size()
+            target_sz = QSize(int(sz.width() * 0.9), int(sz.height() * 0.9))
+            super().setPixmap(self._pixmap.scaled(target_sz, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
+        if event: super().resizeEvent(event)
+
+class RuneSelectionPopup(QWidget):
+    def __init__(self, parent=None, on_select=None):
+        super().__init__(parent, Qt.WindowType.Popup); self.on_select = on_select
+        self.setFixedSize(300, 400); self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        self.setStyleSheet(f"QWidget {{ background-color: {get_color('bg_secondary')}; border: 1px solid {get_color('border')}; border-radius: 8px; }} QScrollArea {{ border: none; }}")
+        layout = QVBoxLayout(self); layout.setContentsMargins(0, 0, 0, 0)
+        scroll = QScrollArea(); scroll.setWidgetResizable(True); scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff); layout.addWidget(scroll)
+        self.container = QWidget(); self.vbox = QVBoxLayout(self.container); self.vbox.setSpacing(5); self.vbox.setAlignment(Qt.AlignmentFlag.AlignTop); scroll.setWidget(self.container)
+    def add_option(self, text, icon_path, data, subtext=None):
+        btn = QPushButton(); btn.setFixedHeight(64); btn.setStyleSheet(f"QPushButton {{ background-color: {get_color('slot_bg')}; border: 1px solid {get_color('slot_border')}; border-radius: 8px; text-align: left; padding-left: 10px; color: {get_color('text_primary')}; font-size: 14px; font-weight: bold; }} QPushButton:hover {{ background-color: {get_color('bg_hover')}; border: 1px solid {get_color('border_accent')}; }}")
+        if icon_path and os.path.exists(icon_path): btn.setIcon(QIcon(icon_path)); btn.setIconSize(QSize(48, 48))
+        if subtext:
+            btn.setText(""); l = QVBoxLayout(btn); l.setContentsMargins(70, 5, 5, 5); l.setSpacing(0)
+            m = QLabel(text); m.setStyleSheet("font-weight: bold; font-size: 14px; background: transparent; border: none;"); l.addWidget(m)
+            s = QLabel(subtext); s.setStyleSheet(f"font-weight: normal; font-size: 11px; color: {get_color('text_secondary')}; background: transparent; border: none;"); l.addWidget(s); l.addStretch()
+        else: btn.setText("   " + text)
+        btn.clicked.connect(lambda checked, d=data: self.select_item(d)); self.vbox.addWidget(btn)
+    def add_separator(self, text=None):
+        if text: lbl = QLabel(text); lbl.setStyleSheet(f"color: {get_color('text_tertiary')}; font-weight: bold; padding: 10px 0 5px 5px;"); self.vbox.addWidget(lbl)
+        else: line = QFrame(); line.setFrameShape(QFrame.Shape.HLine); line.setStyleSheet(f"background-color: {get_color('border')}; margin: 5px 0;"); self.vbox.addWidget(line)
+    def select_item(self, data):
+        if self.on_select: self.on_select(data)
+        self.close()
 
 class CharacterPanel(QWidget):
-    stats_changed = pyqtSignal(dict, dict) # bonuses, globals
-
+    stats_changed = pyqtSignal(dict, dict)
     def __init__(self):
-        super().__init__()
-        self.active_cons = set()
-        self.applied_runes = [] # List of dicts: {"rtype": "sup", "prof_id": 1, "attr_id": 20}
-        self.selected_attrs = {} # {prof_id: attr_id}
-        self.active_weapon = None # Weapon key from WEAPONS
-        self.primary_prof_id = -1
-        self.attr_energy_bonus = 0 # Extra energy from primary attributes
-        self.con_widgets = []
-        self.rune_widgets = []
-        self.attunement_widgets = []
-        self.group_boxes = []
-        self.row_labels = []
-        self.combo_boxes = []
-        self.base_stat_labels = []
-        self.init_ui()
+        super().__init__(); self.active_cons = set(); self.applied_runes = [None] * 5; self.active_weapon = None; self.primary_prof_id = -1; self.attr_energy_bonus = 0; self.gender = "m"; self.con_widgets = []; self.group_boxes = []; self.base_stat_labels = []; self.rune_rows = []; self.init_ui()
+    
+    def minimumSizeHint(self):
+        # Allow the panel to shrink very small to avoid layout locking
+        return QSize(400, 300)
 
-    def eventFilter(self, obj, event):
-        if event.type() == QEvent.Type.Wheel and isinstance(obj, QComboBox):
-            event.ignore()
-            return True
-        return super().eventFilter(obj, event)
+    def toggle_gender(self):
+        self.gender = "f" if self.gender == "m" else "m"
+        self.update_body_image()
 
-    def on_rune_clicked(self, rune):
-        if len(self.applied_runes) >= 5:
-            return
-
-        if rune.attr_id == "vigor":
-            self.applied_runes.append({"rtype": rune.rtype, "attr_id": "vigor"})
-        elif rune.attr_id == "attunement":
-            self.applied_runes.append({"rtype": "attunement", "attr_id": "attunement"})
-        elif rune.attr_id == "vitae":
-            self.applied_runes.append({"rtype": "vitae", "attr_id": "vitae"})
-        else:
-            # RESTRICTION: Only primary profession runes allowed
-            if rune.prof_id != self.primary_prof_id:
-                return
-
-            if rune.prof_id in self.selected_attrs:
-                aid = self.selected_attrs[rune.prof_id]
-                self.applied_runes.append({"rtype": rune.rtype, "prof_id": rune.prof_id, "attr_id": aid})
-            else:
-                return # Do nothing if no attribute selected
-        self.update_stats()
-
-    def on_rune_right_clicked(self, rune):
-        # Determine targets
-        target_rtype = rune.rtype
-        target_attr_id = rune.attr_id
-        target_prof_id = rune.prof_id
-
-        # Resolve attribute for profession runes
-        if target_attr_id is None and target_prof_id is not None:
-            target_attr_id = self.selected_attrs.get(target_prof_id)
-            if target_attr_id is None:
-                return # No attribute selected for this profession
-
-        # Find and remove the LAST matching entry (LIFO)
-        for i in range(len(self.applied_runes) - 1, -1, -1):
-            entry = self.applied_runes[i]
-            
-            # Match Type
-            if entry.get("rtype") != target_rtype:
-                continue
-                
-            # Match Attribute
-            entry_attr = entry.get("attr_id")
-            if entry_attr != target_attr_id:
-                continue
-                
-            # Match Profession (if applicable)
-            entry_prof = entry.get("prof_id")
-            if target_prof_id is not None:
-                if entry_prof != target_prof_id:
-                    continue
-            
-            # Found match
-            self.applied_runes.pop(i)
-            self.update_stats()
-            return
-
-    def clear_runes(self):
-        self.applied_runes = []
-        self.update_stats()
-
-    def clear_consumables(self):
-        self.active_cons = set()
-        for widget in self.con_widgets:
-            widget.blockSignals(True)
-            widget.setChecked(False)
-            widget.blockSignals(False)
-        self.update_stats()
-
-    def on_attr_changed(self, prof_id, index, combo):
-        attr_id = combo.itemData(index)
-        if attr_id is not None:
-            self.selected_attrs[prof_id] = attr_id
-        else:
-            self.selected_attrs.pop(prof_id, None)
-        self.update_stats()
-
-    def set_primary_profession(self, prof_id):
-        if self.primary_prof_id == prof_id:
-            return
-            
-        self.primary_prof_id = prof_id
-        
-        # 1. Clear runes that are no longer valid (not vigor/attunement and not primary)
-        valid_runes = []
-        changed = False
-        for r in self.applied_runes:
-            r_prof = r.get("prof_id")
-            # If no profession is selected, ALL applied runes are invalid? 
-            # Or should we keep them but they are inactive? 
-            # User says "it just doesnt allow anything to be applied without any indication of why. Graying them out will help."
-            # Usually in GW, you can't have runes without a profession.
-            if prof_id == 0:
-                changed = True
-                continue
-
-            if r_prof is None or r_prof == prof_id:
-                valid_runes.append(r)
-            else:
-                changed = True
-        
-        if changed:
-            self.applied_runes = valid_runes
-            
-        # 2. Update button states
-        for rune in self.rune_widgets:
-            if rune.prof_id is not None:
-                # Profession runes: Only enabled if matching prof_id AND prof_id != 0
-                rune.setEnabled(prof_id != 0 and rune.prof_id == prof_id)
-            else:
-                # General runes (Vigor, Attunement, Vitae): Always enabled
-                rune.setEnabled(True)
-                
-        self.update_stats()
-
-    def set_attr_energy_bonus(self, amount):
-        if self.attr_energy_bonus != amount:
-            self.attr_energy_bonus = amount
-            self.update_stats()
-
-    def set_icon_size(self, size):
-        for widget in self.con_widgets:
-            widget.set_icon_size(size)
-        for widget in self.rune_widgets:
-            widget.set_icon_size(size)
-
-    def refresh_theme(self):
-        self.lbl_stats.setStyleSheet(f"color: {get_color('text_primary')};")
-        self.lbl_runes.setStyleSheet(f"color: {get_color('text_primary')};")
-        
-        if hasattr(self, 'lbl_rune_hint'):
-            self.lbl_rune_hint.setStyleSheet(f"color: {get_color('text_primary')}; font-size: 12px; font-style: italic;")
-        
-        if hasattr(self, 'btn_clear_runes'):
-            self.btn_clear_runes.setStyleSheet(f"""
-                QPushButton {{
-                    background-color: {get_color('bg_hover')};
-                    color: {get_color('text_warning')};
-                    border: 1px solid {get_color('border')};
-                    border-radius: 4px;
-                    padding: 4px;
-                    font-weight: bold;
-                }}
-                QPushButton:hover {{
-                    background-color: {get_color('bg_selected')};
-                }}
-            """)
-            
-        if hasattr(self, 'btn_clear_cons'):
-            self.btn_clear_cons.setStyleSheet(f"""
-                QPushButton {{
-                    background-color: {get_color('bg_hover')};
-                    color: {get_color('text_warning')};
-                    border: 1px solid {get_color('border')};
-                    border-radius: 4px;
-                    padding: 4px;
-                    font-weight: bold;
-                }}
-                QPushButton:hover {{
-                    background-color: {get_color('bg_selected')};
-                }}
-            """)
-        
-        group_style = f"QGroupBox {{ font-weight: bold; color: {get_color('text_secondary')}; border: 1px solid {get_color('border')}; margin-top: 10px; }} QGroupBox::title {{ subcontrol-origin: margin; left: 10px; padding: 0 5px; }}"
-        for gb in self.group_boxes:
-            gb.setStyleSheet(group_style)
-            
-        label_style = f"font-weight: bold; color: {get_color('text_secondary')}; min-width: 60px;"
-        for lbl in self.row_labels:
-            lbl.setStyleSheet(label_style)
-            
-        base_label_style = f"font-size: 14px; color: {get_color('text_secondary')};"
-        for lbl in self.base_stat_labels:
-            lbl.setStyleSheet(base_label_style)
-            
-        edit_style = f"background-color: {get_color('input_bg')}; color: {get_color('text_primary')}; border: 1px solid {get_color('border')}; font-size: 14px;"
-        if hasattr(self, 'edit_hp_player'): self.edit_hp_player.setStyleSheet(edit_style)
-        if hasattr(self, 'edit_en_player'): self.edit_en_player.setStyleSheet(edit_style)
-        
-        if hasattr(self, 'lbl_hp_adj_val'): self.lbl_hp_adj_val.setStyleSheet(f"font-weight: bold; color: {get_color('text_accent')}; font-size: 14px;")
-        if hasattr(self, 'lbl_en_adj_val'): self.lbl_en_adj_val.setStyleSheet(f"font-weight: bold; color: {get_color('text_accent')}; font-size: 14px;")
-
-        for w in self.con_widgets:
-            w.refresh_theme()
-        for w in self.rune_widgets:
-            w.refresh_theme()
-
-    def init_ui(self):
-        main_layout = QHBoxLayout(self)
-        main_layout.setContentsMargins(10, 10, 10, 10)
-        main_layout.setSpacing(20)
-
-        # --- Left: Consumables ---
-        self.cons_group = QGroupBox("Consumables")
-        self.group_boxes.append(self.cons_group)
-        self.cons_group.setStyleSheet(f"QGroupBox {{ font-weight: bold; color: {get_color('text_secondary')}; border: 1px solid {get_color('border')}; margin-top: 10px; }} QGroupBox::title {{ subcontrol-origin: margin; left: 10px; padding: 0 5px; }}")
-        cons_layout = QVBoxLayout(self.cons_group)
-        
-        # Clear Button
-        cons_clear_hbox = QHBoxLayout()
-        cons_clear_hbox.addStretch()
-        self.btn_clear_cons = QPushButton("Clear Consumables")
-        self.btn_clear_cons.setFixedWidth(120)
-        self.btn_clear_cons.clicked.connect(self.clear_consumables)
-        cons_clear_hbox.addWidget(self.btn_clear_cons)
-        cons_layout.addLayout(cons_clear_hbox)
-        
-        scroll_cons = QScrollArea()
-        scroll_cons.setWidgetResizable(True)
-        scroll_cons.setStyleSheet("background: transparent; border: none;")
-        
-        cons_container = QWidget()
-        self.cons_grid = QGridLayout(cons_container)
-        self.cons_grid.setSpacing(10)
-        self.cons_grid.setAlignment(Qt.AlignmentFlag.AlignTop)
-        
-        # Populate Cons
-        ORDERED_KEYS = [
-            "apple", "corn", "egg", 
-            "lunar", "cupcake", "pie", 
-            "green_rock", "blue_rock", "red_rock", 
-            "armor", "bu", "grail"
-        ]
-        
-        row, col = 0, 0
-        for key in ORDERED_KEYS:
-            data = CONSUMABLES[key]
-            item = ConsumableItem(key, data)
-            item.toggled_state.connect(self.on_con_toggled)
-            self.con_widgets.append(item)
-            self.cons_grid.addWidget(item, row, col)
-            col += 1
-            if col >= 3:
-                col = 0
-                row += 1
-        
-        scroll_cons.setWidget(cons_container)
-        cons_layout.addWidget(scroll_cons)
-        
-        # --- Center: Consumable Calculations ---
-        self.stats_group = QGroupBox("Consumable Calculations")
-        self.group_boxes.append(self.stats_group)
-        self.stats_group.setStyleSheet(f"QGroupBox {{ font-weight: bold; color: {get_color('text_secondary')}; border: 1px solid {get_color('border')}; margin-top: 10px; }} QGroupBox::title {{ subcontrol-origin: margin; left: 10px; padding: 0 5px; }}")
-        stats_layout = QVBoxLayout(self.stats_group)
-        
-        self.lbl_stats = QLabel("No active effects.")
-        self.lbl_stats.setWordWrap(True)
-        self.lbl_stats.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
-        self.lbl_stats.setStyleSheet(f"color: {get_color('text_primary')};")
-        
-        stats_layout.addWidget(self.lbl_stats)
-        
-        # Rune Effects Label
-        self.lbl_runes = QLabel("No rune effects.")
-        self.lbl_runes.setWordWrap(True)
-        self.lbl_runes.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
-        self.lbl_runes.setStyleSheet(f"color: {get_color('text_primary')};")
-        stats_layout.addWidget(self.lbl_runes)
-        
-        stats_layout.addStretch()
-        
-        # --- Adjusted Base Stats ---
-        stats_footer = QGridLayout()
-        stats_footer.setSpacing(5)
-        
-        # Health row
-        lbl_hp_player = QLabel("Player health:")
-        self.base_stat_labels.append(lbl_hp_player)
-        self.edit_hp_player = QLineEdit("480")
-        self.edit_hp_player.setFixedWidth(50)
-        self.edit_hp_player.textChanged.connect(self.update_stats)
-        
-        lbl_hp_adj_title = QLabel("Adjusted:")
-        self.base_stat_labels.append(lbl_hp_adj_title)
-        self.lbl_hp_adj_val = QLabel("480")
-        self.lbl_hp_adj_val.setStyleSheet("font-weight: bold; color: #00AAFF;")
-        
-        stats_footer.addWidget(lbl_hp_player, 0, 0)
-        stats_footer.addWidget(self.edit_hp_player, 0, 1)
-        stats_footer.addWidget(lbl_hp_adj_title, 0, 2)
-        stats_footer.addWidget(self.lbl_hp_adj_val, 0, 3)
-        
-        # Energy row
-        lbl_en_player = QLabel("Player energy:")
-        self.base_stat_labels.append(lbl_en_player)
-        self.edit_en_player = QLineEdit("30")
-        self.edit_en_player.setFixedWidth(50)
-        self.edit_en_player.textChanged.connect(self.update_stats)
-        
-        lbl_en_adj_title = QLabel("Adjusted:")
-        self.base_stat_labels.append(lbl_en_adj_title)
-        self.lbl_en_adj_val = QLabel("20")
-        self.lbl_en_adj_val.setStyleSheet("font-weight: bold; color: #00AAFF;")
-        
-        stats_footer.addWidget(lbl_en_player, 1, 0)
-        stats_footer.addWidget(self.edit_en_player, 1, 1)
-        stats_footer.addWidget(lbl_en_adj_title, 1, 2)
-        stats_footer.addWidget(self.lbl_en_adj_val, 1, 3)
-        
-        stats_layout.addLayout(stats_footer)
-        
-        # --- Right: Runes ---
-        self.runes_group = QGroupBox("Runes")
-        self.group_boxes.append(self.runes_group)
-        self.runes_group.setStyleSheet(f"QGroupBox {{ font-weight: bold; color: {get_color('text_secondary')}; border: 1px solid {get_color('border')}; margin-top: 10px; }} QGroupBox::title {{ subcontrol-origin: margin; left: 10px; padding: 0 5px; }}")
-        runes_layout = QVBoxLayout(self.runes_group)
-        
-        # Clear Button
-        clear_hbox = QHBoxLayout()
-        
-        self.lbl_rune_hint = QLabel("Right click a rune to remove only that rune")
-        self.lbl_rune_hint.setStyleSheet(f"color: {get_color('text_primary')}; font-size: 12px; font-style: italic;")
-        clear_hbox.addWidget(self.lbl_rune_hint)
-        
-        clear_hbox.addStretch()
-        
-        self.btn_clear_runes = QPushButton("Clear Runes")
-        self.btn_clear_runes.setFixedWidth(100)
-        self.btn_clear_runes.clicked.connect(self.clear_runes)
-        clear_hbox.addWidget(self.btn_clear_runes)
-        runes_layout.addLayout(clear_hbox)
-        
-        scroll_runes = QScrollArea()
-        scroll_runes.setWidgetResizable(True)
-        scroll_runes.setStyleSheet("background: transparent; border: none;")
-        
-        runes_container = QWidget()
-        self.runes_grid = QGridLayout(runes_container)
-        self.runes_grid.setSpacing(10)
-        self.runes_grid.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
-        
-        # Adjust column stretches: Label (0), Icons (1-3), Dropdown (4), Spacer (5)
-        self.runes_grid.setColumnStretch(0, 0)
-        self.runes_grid.setColumnStretch(1, 0)
-        self.runes_grid.setColumnStretch(2, 0)
-        self.runes_grid.setColumnStretch(3, 0)
-        self.runes_grid.setColumnStretch(4, 0)
-        self.runes_grid.setColumnStretch(5, 1) # Absorbs extra horizontal space
-        
-        # 1. Attunement Row (Top)
-        att_label = QLabel("Attunement")
-        self.row_labels.append(att_label)
-        att_label.setStyleSheet(f"font-weight: bold; color: {get_color('text_tertiary')}; min-width: 60px;")
-        self.runes_grid.addWidget(att_label, 0, 0)
-        
-        # Single Stackable Icon (Using existing Vigor logic flow)
-        self.att_rune = RuneItem("Attunement Rune", "attunement.png", rtype="attunement", attr_id="attunement")
-        self.att_rune.clicked_rune.connect(self.on_rune_clicked)
-        self.att_rune.right_clicked_rune.connect(self.on_rune_right_clicked)
-        self.rune_widgets.append(self.att_rune)
-        self.runes_grid.addWidget(self.att_rune, 0, 1)
-
-        # Vitae label in middle column (2), icon in right column (3)
-        vitae_label = QLabel("Vitae")
-        self.row_labels.append(vitae_label)
-        vitae_label.setStyleSheet(f"font-weight: bold; color: {get_color('text_tertiary')}; min-width: 60px;")
-        vitae_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        self.runes_grid.addWidget(vitae_label, 0, 2)
-
-        self.vitae_rune = RuneItem("Rune of Vitae", "attunement.png", rtype="vitae", attr_id="vitae")
-        self.vitae_rune.clicked_rune.connect(self.on_rune_clicked)
-        self.vitae_rune.right_clicked_rune.connect(self.on_rune_right_clicked)
-        self.rune_widgets.append(self.vitae_rune)
-        self.runes_grid.addWidget(self.vitae_rune, 0, 3)
-
-        # 2. Vigor Row
-        vig_label = QLabel("Vigor")
-        self.row_labels.append(vig_label)
-        vig_label.setStyleSheet(f"font-weight: bold; color: {get_color('text_tertiary')}; min-width: 60px;")
-        self.runes_grid.addWidget(vig_label, 1, 0)
-        
-        vig_icons = ["minor_vig.png", "major_vig.png", "sup_vig.png"]
-        vig_names = ["Minor Vigor", "Major Vigor", "Superior Vigor"]
-        vig_types = ["minor", "major", "sup"]
-        for i in range(3):
-            rune = RuneItem(vig_names[i], vig_icons[i], rtype=vig_types[i], attr_id="vigor")
-            rune.clicked_rune.connect(self.on_rune_clicked)
-            rune.right_clicked_rune.connect(self.on_rune_right_clicked)
-            self.rune_widgets.append(rune)
-            self.runes_grid.addWidget(rune, 1, i + 1)
-        
-        # 3. Profession Runes
-        from src.constants import PROF_ATTRS, ATTR_MAP
-        
-        prefix_map = {
-            1: "war", 2: "ran", 3: "mo", 4: "nec", 5: "mes",
+    def update_body_image(self):
+        # Mapping profession IDs to file prefixes
+        mapping = {
+            0: "body", 1: "warrior", 2: "ranger", 3: "monk", 4: "necro",
+            5: "mesmer" if self.gender == "f" else "mes", # special case for mesmer naming
             6: "ele", 7: "sin", 8: "rit", 9: "para", 10: "derv"
         }
-        suffixes = ["minor", "major", "sup"]
-        suffix_names = ["Minor", "Major", "Superior"]
-        
-        r_row = 2
-        for pid in sorted(PROF_MAP.keys()):
-            if pid == 0: continue
-            pname = PROF_MAP[pid]
-            
-            # Profession Label
-            p_label = QLabel(pname)
-            self.row_labels.append(p_label)
-            p_label.setStyleSheet(f"font-weight: bold; color: {get_color('text_tertiary')}; min-width: 60px;")
-            self.runes_grid.addWidget(p_label, r_row, 0)
-            
-            prefix = prefix_map.get(pid, pname[:3].lower())
-            
-            for i in range(3):
-                suf = suffixes[i]
-                sname = suffix_names[i]
-                icon_file = f"{prefix}_{suf}.png"
-                rune = RuneItem(f"{sname} {pname} Rune", icon_file, rtype=suf, prof_id=pid)
-                rune.clicked_rune.connect(self.on_rune_clicked)
-                rune.right_clicked_rune.connect(self.on_rune_right_clicked)
-                self.rune_widgets.append(rune)
-                self.runes_grid.addWidget(rune, r_row, i + 1)
-            
-            # Attribute Dropdown
-            attr_combo = QComboBox()
-            self.combo_boxes.append(attr_combo)
-            attr_combo.installEventFilter(self) # Disable scrolling
-            attr_combo.setFixedWidth(120)
-            attr_combo.addItem("Select Attribute", None)
-            attr_combo.setStyleSheet("""
-                QComboBox {
-                    background-color: #333;
-                    color: white;
-                    border: 1px solid #555;
-                    border-radius: 4px;
-                    padding: 2px;
-                }
-                QComboBox::drop-down {
-                    border: none;
-                }
-                QComboBox QAbstractItemView {
-                    background-color: #222;
-                    color: white;
-                    selection-background-color: #00AAFF;
-                    selection-color: white;
-                    border: 1px solid #555;
-                }
-            """)
-            if pid in PROF_ATTRS:
-                for aid in PROF_ATTRS[pid]:
-                    attr_name = ATTR_MAP.get(aid, f"Attr {aid}")
-                    attr_combo.addItem(attr_name, aid)
-            attr_combo.currentIndexChanged.connect(lambda idx, p=pid, c=attr_combo: self.on_attr_changed(p, idx, c))
-            self.runes_grid.addWidget(attr_combo, r_row, 4)
-            
-            r_row += 1
-
-        scroll_runes.setWidget(runes_container)
-        runes_layout.addWidget(scroll_runes)
-
-        # Add to main
-        # Adjusted stretch factors: Cons 15% smaller, Stats wider
-        main_layout.addWidget(self.cons_group, stretch=4)
-        main_layout.addWidget(self.stats_group, stretch=4)
-        main_layout.addWidget(self.runes_group, stretch=10)
-        
-        self.update_stats()
-
-    def on_con_toggled(self, key, checked):
-        if checked:
-            self.active_cons.add(key)
+        prefix = mapping.get(self.primary_prof_id, "body")
+        if self.primary_prof_id == 0:
+            fname = "body.png"
         else:
-            self.active_cons.discard(key)
-        self.update_stats()
+            fname = f"{prefix}_{self.gender}.png"
+        
+        path = resource_path(os.path.join("icons", "profession_images", fname))
+        if os.path.exists(path):
+            pix = QPixmap(path)
+            if not pix.isNull():
+                self.lbl_body_img._pixmap = pix
+                # Trigger a resize event to refresh the scaled pixmap
+                self.lbl_body_img.resizeEvent(None)
 
-    def toggle_consumable(self, key, checked):
-        for widget in self.con_widgets:
-            if widget.key == key:
-                widget.setChecked(checked)
-                break
-
-    def add_rune_direct(self, rtype, prof_id=None, attr_id=None):
-        if len(self.applied_runes) < 5:
-            self.applied_runes.append({
-                "rtype": rtype,
-                "prof_id": prof_id,
-                "attr_id": attr_id
-            })
-            self.update_stats()
-
-    def get_total_energy(self):
-        try:
-            player_en = int(self.edit_en_player.text())
-        except ValueError:
-            player_en = 30
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if hasattr(self, 'cons_group'): 
+            # Halved spacing and increased margin buffer to ensure icons stay contained
+            self.set_icon_size(max(32, min(96, (self.cons_group.width() - 80) // 6)))
+        if hasattr(self, 'runes_group'):
+            # Use current width for calculations, but avoid hard-locking minimum width
+            w = self.width()
+            btn_size = max(48, min(256, w // 18))
+            rg_h = self.runes_group.height()
             
-        bonus_energy = self.attr_energy_bonus
-        for key in self.active_cons:
-            bonus_energy += CONSUMABLES[key]["stats"].get("energy", 0)
+            is_light = get_color('bg_primary') == '#FFFFFF'
+            title_color = "black" if is_light else get_color('text_primary')
+            empty_color = "black" if is_light else get_color('text_secondary')
 
-        # Add Attunement
-        if hasattr(self, 'att_rune') and hasattr(self.att_rune, 'current_stacks'):
-             bonus_energy += (self.att_rune.current_stacks * 2)
-        elif hasattr(self, 'att_combo'):
-             bonus_energy += (self.att_combo.currentIndex() * 2)
-             
-        return player_en + bonus_energy
+            for slot in self.rune_slots:
+                slot["btn"].setFixedSize(btn_size, btn_size)
+                slot["btn"].setIconSize(QSize(int(btn_size * 0.75), int(btn_size * 0.75)))
+                slot["btn"].setStyleSheet(slot["btn"].styleSheet().replace(f"border-radius: {getattr(self, '_last_rad', 32)}px;", f"border-radius: {btn_size//2}px;"))
+                
+                old_text = slot["label"].text()
+                if "Empty" in old_text:
+                    slot["label"].setText(f"<b style='color:{title_color};'>{slot['slot_name']}</b><br><span style='color:{empty_color};'>Empty</span>")
+                else:
+                    slot["label"].setText(old_text.replace("color:white", f"color:{title_color}").replace("color:black", f"color:{title_color}"))
+
+            self.btn_weapon.setFixedSize(btn_size, btn_size)
+            self.btn_weapon.setIconSize(QSize(int(btn_size * 0.75), int(btn_size * 0.75)))
+            self.btn_weapon.setStyleSheet(self.btn_weapon.styleSheet().replace(f"border-radius: {getattr(self, '_last_rad', 32)}px;", f"border-radius: {btn_size//2}px;"))
+            
+            old_w_text = self.lbl_weapon.text()
+            if "Empty" in old_w_text:
+                self.lbl_weapon.setText(f"<b style='color:{title_color};'>Weapon</b><br><span style='color:{empty_color};'>Empty</span>")
+            else:
+                self.lbl_weapon.setText(old_w_text.replace("color:white", f"color:{title_color}").replace("color:black", f"color:{title_color}"))
+
+            self._last_rad = btn_size // 2
+            
+            stagger = btn_size // 2
+            for i, row in enumerate(self.rune_rows):
+                if i in [0, 4]: row.setContentsMargins(0, 0, stagger, 0)
+                else: row.setContentsMargins(stagger, 0, 0, 0)
+            
+            self.weapon_layout.setContentsMargins(0, int(rg_h * 0.18), 0, 0)
+    def eventFilter(self, obj, event):
+        if event.type() == QEvent.Type.Wheel and isinstance(obj, QComboBox): event.ignore(); return True
+        return super().eventFilter(obj, event)
+    def clear_runes(self):
+        for i in range(5): self.set_rune_slot(i, None)
+        self.update_stats()
+    def clear_consumables(self):
+        self.active_cons = set(); 
+        for w in self.con_widgets: w.blockSignals(True); w.setChecked(False); w.blockSignals(False)
+        self.update_stats()
+    def set_primary_profession(self, pid):
+        if self.primary_prof_id == pid: return
+        self.primary_prof_id = pid; self.combo_headpiece.blockSignals(True); self.combo_headpiece.clear(); self.combo_headpiece.addItem("None", None)
+        if pid > 0:
+            from src.constants import PROF_ATTRS, ATTR_MAP
+            for aid in PROF_ATTRS.get(pid, []): self.combo_headpiece.addItem(f"{ATTR_MAP.get(aid, f'Attr {aid}')} +1", aid)
+        self.combo_headpiece.blockSignals(False)
+        self.combo_headpiece.setEnabled(pid > 0)
+        for i, r in enumerate(self.applied_runes):
+            if r and r.get("prof_id") and r.get("prof_id") != pid: self.set_rune_slot(i, None)
+        self.update_body_image(); self.update_stats()
+
+    def set_attr_energy_bonus(self, amount):
+        if self.attr_energy_bonus != amount: self.attr_energy_bonus = amount; self.update_stats()
+    def set_icon_size(self, size):
+        for w in self.con_widgets: w.set_icon_size(size)
+    def refresh_theme(self):
+        is_light = get_color('bg_primary') == '#FFFFFF'
+        h_color = "black" if is_light else "#FFD700"
+        v_color = "#00AAFF" if is_light else "white"
+        t_color = "black" if is_light else get_color('text_primary')
+        
+        self.lbl_stats.setStyleSheet(f"color: {get_color('text_primary')};")
+        self.lbl_runes.setStyleSheet(f"color: {get_color('text_primary')};")
+        
+        # Remove shadows in light mode
+        if is_light:
+            self.lbl_hp_adj_val.setGraphicsEffect(None)
+            self.lbl_en_adj_val.setGraphicsEffect(None)
+            self.lbl_stats.setGraphicsEffect(None)
+            self.lbl_runes.setGraphicsEffect(None)
+
+        if hasattr(self, 'lbl_rune_hint'): self.lbl_rune_hint.setStyleSheet(f"color: {get_color('text_primary')}; font-size: 12px; font-style: italic;")
+        btn_s = f"QPushButton {{ background-color: {get_color('bg_hover')}; color: {get_color('text_warning')}; border: 1px solid {get_color('border')}; border-radius: 4px; padding: 4px; font-weight: bold; }} QPushButton:hover {{ background-color: {get_color('bg_selected')}; }}"
+        if hasattr(self, 'btn_clear_runes'): self.btn_clear_runes.setStyleSheet(btn_s)
+        if hasattr(self, 'btn_clear_cons'): self.btn_clear_cons.setStyleSheet(btn_s)
+        if hasattr(self, 'btn_swap_gender'):
+            self.btn_swap_gender.setStyleSheet(f"QPushButton {{ background-color: {get_color('bg_secondary')}; border: 1px solid {get_color('border')}; border-radius: 4px; color: {get_color('text_primary')}; font-size: 16px; }} QPushButton:hover {{ background-color: {get_color('bg_hover')}; }}")
+        gs = f"QGroupBox {{ font-weight: bold; color: {get_color('text_secondary')}; border: 1px solid {get_color('border')}; margin-top: 10px; }} QGroupBox::title {{ subcontrol-origin: margin; left: 10px; padding: 0 5px; }}"
+        for gb in self.group_boxes: gb.setStyleSheet(gs)
+        if hasattr(self, 'lbl_stats_header'): self.lbl_stats_header.setStyleSheet(f"font-size: 16px; font-weight: bold; color: {h_color};")
+        if hasattr(self, 'lbl_runes_header'): self.lbl_runes_header.setStyleSheet(f"font-size: 16px; font-weight: bold; color: {h_color};")
+        if hasattr(self, 'lbl_hp_player'): self.lbl_hp_player.setStyleSheet(f"font-size: 16px; font-weight: bold; color: {h_color};")
+        if hasattr(self, 'lbl_en_player'): self.lbl_en_player.setStyleSheet(f"font-size: 16px; font-weight: bold; color: {h_color};")
+        if hasattr(self, 'lbl_hb'): self.lbl_hb.setStyleSheet(f"font-size: 11px; color: {t_color}; font-weight: bold;")
+        if hasattr(self, 'lbl_hp_adj_val'): self.lbl_hp_adj_val.setStyleSheet(f"font-weight: bold; color: {v_color}; font-size: 20px;")
+        if hasattr(self, 'lbl_en_adj_val'): self.lbl_en_adj_val.setStyleSheet(f"font-weight: bold; color: {v_color}; font-size: 20px;")
+        for w in self.con_widgets: w.refresh_theme()
+        if hasattr(self, 'active_weapon'): self.set_weapon_slot(self.active_weapon)
+        if hasattr(self, 'applied_runes'):
+            for i, r in enumerate(self.applied_runes): self.set_rune_slot(i, r)
+    def show_weapon_menu(self):
+        from src.constants import ATTR_MAP; p = RuneSelectionPopup(self, on_select=self.set_weapon_slot); p.add_option("Clear Weapon", None, None); p.add_separator("Weapons")
+        for k, d in WEAPONS.items():
+            attr_name = ATTR_MAP.get(d['attr'], f"Attr {d['attr']}")
+            p.add_option(d["name"], resource_path(os.path.join("icons", "weapons_icons", d["icon"])), k, subtext=f"{attr_name} +5")
+        pos = self.btn_weapon.mapToGlobal(self.btn_weapon.rect().bottomLeft())
+        if pos.y() + p.height() > QApplication.primaryScreen().geometry().height(): pos.setY(pos.y() - p.height() - self.btn_weapon.height())
+        p.move(pos); p.show()
+    def set_weapon_slot(self, k):
+        self.active_weapon = k; is_light = get_color('bg_primary') == '#FFFFFF'; ec = "black" if is_light else get_color('text_secondary'); tc = "black" if is_light else get_color('text_primary'); eb = "#FFFFFF" if is_light else get_color('slot_bg')
+        if k in WEAPONS:
+            d = WEAPONS[k]; self.btn_weapon.setIcon(QIcon(resource_path(os.path.join("icons", "weapons_icons", d["icon"])))); self.btn_weapon.setStyleSheet(f"QPushButton {{ background-color: {get_color('slot_bg')}; border: 2px solid #00FF00; border-radius: {self.btn_weapon.width()//2}px; }}")
+            self.lbl_weapon.setText(f"<b style='color:{tc};'>Weapon</b><br><span style='color:{get_color('text_accent')};'>{d['name']}</span>")
+        else:
+            self.btn_weapon.setIcon(QIcon()); self.btn_weapon.setStyleSheet(f"QPushButton {{ background-color: {eb}; border: 2px dashed {get_color('slot_border')}; border-radius: {self.btn_weapon.width()//2}px; }} QPushButton:hover {{ border: 2px solid {get_color('text_accent')}; }}")
+            self.lbl_weapon.setText(f"<b style='color:{tc};'>Weapon</b><br><span style='color:{ec};'>Empty</span>")
+        self.update_stats()
+    def show_rune_menu(self, idx):
+        p = RuneSelectionPopup(self, on_select=lambda d: self.set_rune_slot(idx, d)); p.add_option("Clear Slot", None, None); p.add_separator()
+        p.add_option("Attunement Rune", resource_path(os.path.join("icons", "runes_icons", "attunement.png")), {"rtype": "attunement", "attr_id": "attunement", "name": "Attunement Rune", "icon": "attunement.png"})
+        p.add_option("Rune of Vitae", resource_path(os.path.join("icons", "runes_icons", "attunement.png")), {"rtype": "vitae", "attr_id": "vitae", "name": "Rune of Vitae", "icon": "attunement.png"})
+        p.add_separator(); v_icons = ["minor_vig.png", "major_vig.png", "sup_vig.png"]; v_names = ["Minor Vigor", "Major Vigor", "Superior Vigor"]; v_types = ["minor", "major", "sup"]
+        for i in range(3): p.add_option(v_names[i], resource_path(os.path.join("icons", "runes_icons", v_icons[i])), {"rtype": v_types[i], "attr_id": "vigor", "name": v_names[i], "icon": v_icons[i]})
+        if self.primary_prof_id > 0:
+            from src.constants import PROF_ATTRS, ATTR_MAP; pid = self.primary_prof_id; pref = {1: "war", 2: "ran", 3: "mo", 4: "nec", 5: "mes", 6: "ele", 7: "sin", 8: "rit", 9: "para", 10: "derv"}.get(pid, "war"); p.add_separator()
+            for aid in PROF_ATTRS.get(pid, []):
+                attr_n = ATTR_MAP.get(aid, f"Attr {aid}"); p.add_separator(attr_n)
+                for suf, sn in [("minor", "Minor"), ("major", "Major"), ("sup", "Superior")]:
+                    ic = f"{pref}_{suf}.png"; p.add_option(f"{sn} {attr_n}", resource_path(os.path.join("icons", "runes_icons", ic)), {"rtype": suf, "prof_id": pid, "attr_id": aid, "name": f"{sn} {attr_n}", "icon": ic})
+        btn = self.rune_slots[idx]["btn"]; pos = btn.mapToGlobal(btn.rect().bottomLeft())
+        if idx >= 3: pos.setY(pos.y() - p.height() - btn.height())
+        p.move(pos); p.show()
+    def set_rune_slot(self, idx, d):
+        self.applied_runes[idx] = d; slot = self.rune_slots[idx]; is_light = get_color('bg_primary') == '#FFFFFF'; ec = "black" if is_light else get_color('text_secondary'); tc = "black" if is_light else get_color('text_primary'); eb = "#FFFFFF" if is_light else get_color('slot_bg')
+        if d:
+            slot["btn"].setIcon(QIcon(resource_path(os.path.join("icons", "runes_icons", d["icon"])))); slot["btn"].setStyleSheet(f"QPushButton {{ background-color: {get_color('slot_bg')}; border: 2px solid #00FF00; border-radius: {slot['btn'].width()//2}px; }}")
+            slot["label"].setText(f"<b style='color:{tc};'>{slot['slot_name']}</b><br><span style='color:{get_color('text_accent')};'>{d['name']}</span>")
+        else:
+            slot["btn"].setIcon(QIcon()); slot["btn"].setStyleSheet(f"QPushButton {{ background-color: {eb}; border: 2px dashed {get_color('slot_border')}; border-radius: {slot['btn'].width()//2}px; }} QPushButton:hover {{ border: 2px solid {get_color('text_accent')}; }}")
+            slot["label"].setText(f"<b style='color:{tc};'>{slot['slot_name']}</b><br><span style='color:{ec};'>Empty</span>")
+        self.update_stats()
+    def init_ui(self):
+        l = QHBoxLayout(self); l.setContentsMargins(10, 10, 10, 10); l.setSpacing(20); rv = QVBoxLayout(); rv.setSpacing(20)
+        self.stats_group = QGroupBox("Consumable Calculations"); self.group_boxes.append(self.stats_group); rv.addWidget(self.stats_group, stretch=2)
+        sm = QVBoxLayout(self.stats_group); sc_stats = QScrollArea(); sc_stats.setWidgetResizable(True); sc_stats.setStyleSheet("background: transparent; border: none;"); sm.addWidget(sc_stats)
+        st_cont = QWidget(); st_lay = QHBoxLayout(st_cont); st_lay.setContentsMargins(0, 0, 0, 0); st_lay.setSpacing(40); sc_stats.setWidget(st_cont)
+        
+        sv = QVBoxLayout(); sv.setSpacing(10); sv.setAlignment(Qt.AlignmentFlag.AlignTop)
+        self.lbl_stats_header = QLabel("Stats:"); self.lbl_stats_header.setStyleSheet("font-size: 16px; font-weight: bold; color: #FFD700;"); sv.addWidget(self.lbl_stats_header)
+        self.lbl_stats = QLabel("No effects."); self.lbl_stats.setWordWrap(True); sv.addWidget(self.lbl_stats)
+        
+        rv2 = QVBoxLayout(); rv2.setSpacing(10); rv2.setAlignment(Qt.AlignmentFlag.AlignTop)
+        self.lbl_runes_header = QLabel("Attributes:"); self.lbl_runes_header.setStyleSheet("font-size: 16px; font-weight: bold; color: #FFD700;"); rv2.addWidget(self.lbl_runes_header)
+        self.lbl_runes = QLabel("No effects."); self.lbl_runes.setWordWrap(True); rv2.addWidget(self.lbl_runes)
+        
+        st_lay.addLayout(sv, stretch=1); st_lay.addLayout(rv2, stretch=1)
+        self.cons_group = QGroupBox("Consumables"); self.group_boxes.append(self.cons_group); cl = QVBoxLayout(self.cons_group); self.btn_clear_cons = QPushButton("Clear Consumables"); self.btn_clear_cons.setFixedWidth(120); self.btn_clear_cons.clicked.connect(self.clear_consumables); cl.addWidget(self.btn_clear_cons)
+        sc = QScrollArea(); sc.setWidgetResizable(True); sc.setStyleSheet("background: transparent; border: none;"); cc = QWidget(); self.cons_grid = QGridLayout(cc); self.cons_grid.setSpacing(10)
+        for i, k in enumerate(["apple", "corn", "egg", "lunar", "cupcake", "pie", "green_rock", "blue_rock", "red_rock", "armor", "bu", "grail"]):
+            it = ConsumableItem(k, CONSUMABLES[k]); it.toggled_state.connect(self.on_con_toggled); self.con_widgets.append(it); self.cons_grid.addWidget(it, i//6, i%6)
+        sc.setWidget(cc); cl.addWidget(sc); rv.addWidget(self.cons_group, stretch=2); self.runes_group = QGroupBox("Runes (0/5)"); self.group_boxes.append(self.runes_group); rl = QVBoxLayout(self.runes_group)
+        tb = QHBoxLayout(); sg = QGridLayout(); sg.setSpacing(10); self.lbl_hp_player = QLabel("Health:"); self.lbl_hp_player.setStyleSheet("font-size: 16px; font-weight: bold; color: #FFD700;"); self.lbl_hp_adj_val = QLabel("480"); self.lbl_hp_adj_val.setStyleSheet("font-weight: bold; color: white; font-size: 20px;")
+        sg.addWidget(self.lbl_hp_player, 0, 0); sg.addWidget(self.lbl_hp_adj_val, 0, 1); self.lbl_en_player = QLabel("Energy:"); self.lbl_en_player.setStyleSheet("font-size: 16px; font-weight: bold; color: #FFD700;"); self.lbl_en_adj_val = QLabel("20"); self.lbl_en_adj_val.setStyleSheet("font-weight: bold; color: white; font-size: 20px;")
+        sg.addWidget(self.lbl_en_player, 1, 0); sg.addWidget(self.lbl_en_adj_val, 1, 1); tb.addLayout(sg); tb.addStretch(); self.btn_clear_runes = QPushButton("Clear Runes"); self.btn_clear_runes.setFixedWidth(100); self.btn_clear_runes.clicked.connect(self.clear_runes); tb.addWidget(self.btn_clear_runes); rl.addLayout(tb); rl.addStretch(0)
+        bs = QHBoxLayout(); bs.setSpacing(20); rl.addLayout(bs, stretch=100); op = QPixmap(resource_path(os.path.join("icons", "profession_images", "body.png")))
+        
+        # Weapon Selection on the Left
+        wc = QWidget(); self.weapon_layout = QVBoxLayout(wc); self.weapon_layout.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter); self.weapon_layout.setContentsMargins(0, 100, 0, 0)
+        self.btn_weapon = QPushButton(); self.btn_weapon.setFixedSize(64, 64); self.btn_weapon.setIconSize(QSize(48, 48)); self.btn_weapon.setStyleSheet(f"QPushButton {{ background-color: {get_color('slot_bg')}; border: 2px dashed {get_color('slot_border')}; border-radius: 32px; }} QPushButton:hover {{ border: 2px solid {get_color('text_accent')}; }}"); self.btn_weapon.clicked.connect(self.show_weapon_menu)
+        self.lbl_weapon = QLabel(f"<b>Weapon</b><br><span style='color:{get_color('text_secondary')};'>Empty</span>"); self.lbl_weapon.setAlignment(Qt.AlignmentFlag.AlignHCenter); self.weapon_layout.addWidget(self.btn_weapon, alignment=Qt.AlignmentFlag.AlignHCenter); self.weapon_layout.addWidget(self.lbl_weapon, alignment=Qt.AlignmentFlag.AlignHCenter); bs.addWidget(wc, stretch=0)
+        
+        # Character Image in the Center with Swap Button
+        mid_cont = QWidget(); mid_lay = QVBoxLayout(mid_cont); mid_lay.setContentsMargins(0, 0, 0, 0); mid_lay.setSpacing(5)
+        self.lbl_body_img = ScaledImageLabel(op); mid_lay.addWidget(self.lbl_body_img, stretch=10)
+        
+        self.btn_swap_gender = QPushButton("⇆"); self.btn_swap_gender.setFixedSize(32, 32); self.btn_swap_gender.setToolTip("Swap Gender")
+        self.btn_swap_gender.clicked.connect(self.toggle_gender)
+        mid_lay.addWidget(self.btn_swap_gender, alignment=Qt.AlignmentFlag.AlignCenter)
+        
+        bs.addWidget(mid_cont, stretch=10)
+        
+        # Armor Selection on the Right
+        slc = QWidget(); sll = QVBoxLayout(slc); sll.setSpacing(5); sll.setContentsMargins(0, 0, 0, 0)
+        
+        # Move Bonus above headpiece as requested
+        hbl = QHBoxLayout(); hbl.setContentsMargins(10, 0, 0, 0); self.lbl_hb = QLabel("Bonus:"); self.combo_headpiece = QComboBox(); self.combo_headpiece.setFixedWidth(100); self.combo_headpiece.addItem("None", None); self.combo_headpiece.currentIndexChanged.connect(self.update_stats); hbl.addWidget(self.lbl_hb); hbl.addWidget(self.combo_headpiece); hbl.addStretch(); sll.addLayout(hbl)
+
+        self.rune_slots = []; sn = ["Headpiece", "Chestpiece", "Gloves", "Leggings", "Boots"]
+        for i in range(5):
+            rw = QHBoxLayout(); rw.setAlignment(Qt.AlignmentFlag.AlignLeft); self.rune_rows.append(rw); rw.setContentsMargins(0, 0, 32, 0) if i in [0, 4] else rw.setContentsMargins(32, 0, 0, 0)
+            bt = QPushButton(); bt.setFixedSize(64, 64); bt.setIconSize(QSize(48, 48)); bt.setStyleSheet(f"QPushButton {{ background-color: {get_color('slot_bg')}; border: 2px dashed {get_color('slot_border')}; border-radius: 32px; }} QPushButton:hover {{ border: 2px solid {get_color('text_accent')}; }}"); bt.clicked.connect(lambda c, x=i: self.show_rune_menu(x))
+            lbl = QLabel(f"<b>{sn[i]}</b><br><span style='color:{get_color('text_secondary')};'>Empty</span>"); rw.addWidget(bt); rw.addWidget(lbl); rw.addStretch(); sll.addLayout(rw); self.rune_slots.append({"btn": bt, "label": lbl, "slot_name": sn[i]})
+        
+        bs.addWidget(slc, stretch=0); bs.addStretch(1); l.addLayout(rv, stretch=4); l.addWidget(self.runes_group, stretch=6); self.update_stats()
+    def on_con_toggled(self, k, c):
+        if c: self.active_cons.add(k)
+        else: self.active_cons.discard(k)
+        self.update_stats()
+    def toggle_consumable(self, k, c):
+        for w in self.con_widgets:
+            if w.key == k: w.setChecked(c); break
+    def get_total_energy(self):
+        be = self.attr_energy_bonus
+        for k in self.active_cons: be += CONSUMABLES[k]["stats"].get("energy", 0)
+        for r in self.applied_runes:
+            if r and r.get("attr_id") == "attunement": be += 2
+        return 20 + be
+    def get_base_stats(self):
+        # Default bases
+        hp, energy = 480, 20
+        pid = self.primary_prof_id
+        
+        # Base Energy mapping
+        if pid in [2, 7, 10]: energy = 25 # Ranger, Assassin, Dervish
+        elif pid in [3, 4, 5, 6, 8, 9]: energy = 30 # Monk, Necro, Mesmer, Ele, Rit, Paragon
+        
+        # Base HP mapping
+        if pid == 10: hp = 505 # Dervish
+        
+        return hp, energy
 
     def update_stats(self):
-        # 0. Update Rune Widget Active States
-        rune_counts = {} 
-        for entry in self.applied_runes:
-            rtype = entry.get("rtype")
-            prof_id = entry.get("prof_id")
-            attr_id = entry.get("attr_id")
-            
-            # Key matching RuneItem props
-            if prof_id is not None:
-                key = (rtype, prof_id, None)
-            else:
-                key = (rtype, None, attr_id)
-            
-            rune_counts[key] = rune_counts.get(key, 0) + 1
-            
-        for rune in self.rune_widgets:
-            key = (rune.rtype, rune.prof_id, rune.attr_id)
-            c = rune_counts.get(key, 0)
-            rune.set_active_count(c)
-
-        # 1. Gather Consumable Totals
-        cons_totals = {
-            "hp": 0, "energy": 0, "all_atts": 0, "armor": 0, "hp_regen": 0, "incoming_dmg": 0,
-            "attack_speed": 0.0, "activation": 0.0, "move_speed": 0.0, "recharge": 0.0, "crit_immunity": 0.0
-        }
-
-        for key in self.active_cons:
-            stats = CONSUMABLES[key]["stats"]
-            for k, v in stats.items():
-                if k in cons_totals:
-                    cons_totals[k] += v
-
-        # 2. Gather Rune Totals
-        attr_tracking = {} # {attr_id: {rtype: count}}
-        vigor_counts = {"minor": 0, "major": 0, "sup": 0}
-        attunement_count = 0
-        vitae_count = 0
-        rune_hp_penalty = 0
+        ct = {"hp": 0, "energy": 0, "all_atts": 0, "armor": 0, "hp_regen": 0, "incoming_dmg": 0, "attack_speed": 0.0, "activation": 0.0, "move_speed": 0.0, "recharge": 0.0, "crit_immunity": 0.0}
+        for k in self.active_cons:
+            for sk, v in CONSUMABLES[k]["stats"].items():
+                if sk in ct: ct[sk] += v
+        atr = {}; vc = {"minor": 0, "major": 0, "sup": 0}; ac = vtc = hp = 0
+        for r in self.applied_runes:
+            if not r: continue
+            aid = r.get("attr_id")
+            if aid == "attunement": ac += 1; continue
+            if aid == "vitae": vtc += 1; continue
+            rt = r["rtype"]
+            if aid != "vigor":
+                if rt == "major": hp -= 35
+                elif rt == "sup": hp -= 75
+                if aid not in atr: atr[aid] = {}
+                atr[aid][rt] = atr[aid].get(rt, 0) + 1
+            else: vc[rt] += 1
         
-        for entry in self.applied_runes:
-            aid = entry.get("attr_id")
-            if aid == "attunement":
-                attunement_count += 1
-                continue
-            if aid == "vitae":
-                vitae_count += 1
-                continue
-
-            rtype = entry["rtype"]
-            is_vigor = aid == "vigor"
-            
-            # HP Penalty Stacks for ALL non-vigor Major/Sup runes
-            if not is_vigor:
-                if rtype == "major":
-                    rune_hp_penalty -= 35
-                elif rtype == "sup":
-                    rune_hp_penalty -= 75
-                
-                if aid not in attr_tracking:
-                    attr_tracking[aid] = {}
-                attr_tracking[aid][rtype] = attr_tracking[aid].get(rtype, 0) + 1
-            else:
-                # Vigor has no penalty, track counts for highest-bonus logic
-                vigor_counts[rtype] += 1
-
-        # Attunement logic: +2 Energy per stack
-        cons_totals["energy"] += (attunement_count * 2)
-
-        # Vitae logic: +10 Health per stack
-        vitae_hp = (vitae_count * 10)
-
-        # Vigor logic: Highest bonus applies, they do NOT stack
-        vigor_hp = 0
-        if vigor_counts["sup"] > 0: vigor_hp = 50
-        elif vigor_counts["major"] > 0: vigor_hp = 41
-        elif vigor_counts["minor"] > 0: vigor_hp = 30
-
-        # 3. Consolidate Stats
-        total_hp = cons_totals["hp"] + vigor_hp + vitae_hp + rune_hp_penalty
+        base_hp, base_en = self.get_base_stats()
+        ct["energy"] += (ac * 2); thp = ct["hp"] + (50 if vc["sup"] > 0 else 41 if vc["major"] > 0 else 30 if vc["minor"] > 0 else 0) + (vtc * 10) + hp
+        for k in CAPS:
+            if k in ["activation", "recharge"]: ct[k] = max(ct[k], CAPS[k])
+            else: ct[k] = min(ct[k], CAPS[k])
         
-        # Apply Caps to consumable-derived values
-        if cons_totals["activation"] < CAPS["activation"]: cons_totals["activation"] = CAPS["activation"]
-        if cons_totals["attack_speed"] > CAPS["attack_speed"]: cons_totals["attack_speed"] = CAPS["attack_speed"]
-        if cons_totals["move_speed"] > CAPS["move_speed"]: cons_totals["move_speed"] = CAPS["move_speed"]
-        if cons_totals["recharge"] < CAPS["recharge"]: cons_totals["recharge"] = CAPS["recharge"]
-        if cons_totals["armor"] > CAPS["armor"]: cons_totals["armor"] = CAPS["armor"]
-        if cons_totals["hp_regen"] > CAPS["hp_regen"]: cons_totals["hp_regen"] = CAPS["hp_regen"]
+        def fl(l, v, d=None):
+            h = f"<span style='font-size:14px; color:{get_color('text_primary')};'>• <b>{l}:</b> {v}</span>"
+            if d: h += f"<br><span style='font-size:12px; color:{get_color('text_secondary')};'>&nbsp;&nbsp;&nbsp;({', '.join(d)})</span>"
+            return h + "<br><br>"
 
-        # 4. Format Stats Output
-        stats_text = "<span style='font-size:18px; font-weight:bold; color:#FFD700;'>Stats:</span><br><br>"
-        has_stats = False
+        # --- Expanded Stats Tracking ---
+        stats_html = ""
+        hp_details = []
+        if any(vc.values()): hp_details.append("Vigor")
+        if vtc > 0: hp_details.append(f"x{vtc} Vitae")
+        if thp != 0 or hp_details:
+            stats_html += fl("Health", f"+{thp}" if thp > 0 else str(thp), hp_details if hp_details else None)
         
-        # Helper to format lines
-        def format_line(label, value, details=None, is_health=False):
-            # Health: Much larger (22px) -> Kept large as requested for main stats?
-            # User said "Stats and Attributes in the calculations should be larger than the text underneath".
-            # "For the base text, headers should be 18px and attributes 16px."
-            # "Also, when I said health text, I meant the Player Health and Adjusted Health/Energy at the bottom"
-            # So the "Stats" health line can stay 16px (standard attribute size)? Or larger?
-            # "Stats and Attributes ... should be larger than the text underneath"
-            # Let's align "Stats" (header) to 18px.
-            # "Attributes" (items like Health, Energy, Armor) to 16px.
-            base_size = "16px" 
-            # Is Health special in the list? The user corrected "health text" meaning the bottom widgets.
-            # So I should remove `is_health` special sizing from the list items.
-            
-            detail_size = "13px"
-            color_main = get_color('text_primary')
-            color_detail = get_color('text_secondary')
-            
-            html = f"<span style='font-size:{base_size}; color:{color_main};'>• <b>{label}:</b> {value}</span>"
-            if details:
-                html += f"<br><span style='font-size:{detail_size}; color:{color_detail}; margin-left: 20px;'>&nbsp;&nbsp;&nbsp;({', '.join(details)})</span>"
-            html += "<br><br>"
-            return html
-        
-        if total_hp != 0:
-            val_str = f"+{total_hp}" if total_hp > 0 else str(total_hp)
-            
-            # Show vigor/penalty context in tooltip-like details
-            hp_details = []
-            if vigor_counts["sup"] > 0 or vigor_counts["major"] > 0 or vigor_counts["minor"] > 0:
-                hp_details.append("Vigor")
-            if vitae_count > 0:
-                hp_details.append(f"x{vitae_count} Vitae")
-            
-            stats_text += format_line("Health", val_str, hp_details)
-            has_stats = True
-            
-        if cons_totals["energy"] > 0:
-            en_val = f"+{cons_totals['energy']}"
-            en_details = []
-            if attunement_count > 0:
-                en_details.append(f"x{attunement_count} Attunement")
-            stats_text += format_line("Energy", en_val, en_details)
-            has_stats = True
-            
-        if cons_totals["armor"] != 0:
-            stats_text += format_line("Armor", f"+{cons_totals['armor']}")
-            has_stats = True
-            
-        if cons_totals["hp_regen"] != 0:
-            stats_text += format_line("Health Regen", f"+{cons_totals['hp_regen']}")
-            has_stats = True
-            
-        if cons_totals["incoming_dmg"] != 0:
-            stats_text += format_line("Incoming Dmg", f"{cons_totals['incoming_dmg']}")
-            has_stats = True
-            
-        if cons_totals["crit_immunity"] > 0:
-            stats_text += format_line("Crit Immunity", f"{int(cons_totals['crit_immunity']*100)}%")
-            has_stats = True
-            
-        if cons_totals["attack_speed"] != 0:
-            stats_text += format_line("Attack Speed", f"+{int(cons_totals['attack_speed']*100)}%")
-            has_stats = True
-            
-        if cons_totals["activation"] != 0:
-            stats_text += format_line("Casting Time", f"{int(cons_totals['activation']*100)}%")
-            has_stats = True
-            
-        if cons_totals["recharge"] != 0:
-            stats_text += format_line("Skill Recharge", f"{int(cons_totals['recharge']*100)}%")
-            has_stats = True
-            
-        if cons_totals["move_speed"] != 0:
-            stats_text += format_line("Movement Speed", f"+{int(cons_totals['move_speed']*100)}%")
-            has_stats = True
+        if ct["energy"] != 0: stats_html += fl("Energy", f"+{ct['energy']}")
+        if ct["armor"] != 0: stats_html += fl("Armor", f"+{ct['armor']}")
+        if ct["hp_regen"] != 0: stats_html += fl("HP Regen", f"+{ct['hp_regen']}")
+        if ct["incoming_dmg"] != 0: stats_html += fl("Dmg Reduction", str(ct["incoming_dmg"]))
+        if ct["attack_speed"] != 0: stats_html += fl("Attack Speed", f"+{int(ct['attack_speed']*100)}%")
+        if ct["activation"] != 0: stats_html += fl("Faster Cast", f"{int(abs(ct['activation'])*100)}%")
+        if ct["recharge"] != 0: stats_html += fl("Faster Recharge", f"{int(abs(ct['recharge'])*100)}%")
+        if ct["move_speed"] != 0: stats_html += fl("Move Speed", f"+{int(ct['move_speed']*100)}%")
+        if ct["crit_immunity"] != 0: stats_html += fl("Crit Immunity", f"{int(ct['crit_immunity']*100)}%")
 
-        if not has_stats:
-            self.lbl_stats.setText("<span style='font-size:18px; font-weight:bold; color:#FFD700;'>Stats:</span><br><br><span style='font-size:14px; font-style:italic;'>No active stat effects.</span>")
-        else:
-            self.lbl_stats.setText(stats_text)
-
-        # 5. Format Attributes Output
-        attr_text = "<span style='font-size:18px; font-weight:bold; color:#FFD700;'>Attributes:</span><br><br>"
-        has_attrs = False
+        self.lbl_stats.setText(stats_html if stats_html else "No effects.")
         
-        # Consumable All Attributes
-        if cons_totals["all_atts"] > 0:
-            val = cons_totals["all_atts"]
-            if val > 20: val = 20
-            attr_text += format_line("All Attributes", f"+{val}")
-            has_attrs = True
-            
-        # Add Weapon Bonus
-        if self.active_weapon and self.active_weapon in WEAPONS:
-            w_data = WEAPONS[self.active_weapon]
-            aid = w_data["attr"]
-            attr_tracking[aid] = attr_tracking.get(aid, {})
-            # We don't add to tracking count, we'll handle it separately or just add to total_bonus below
-            
-        # Specific Rune Bonuses (Highest applies per attribute)
+        attr_text = ""; has_attrs = False
+        if ct["all_atts"] > 0: attr_text += fl("All Attributes", f"+{min(ct['all_atts'], 20)}"); has_attrs = True
+        if self.active_weapon in WEAPONS: atr[WEAPONS[self.active_weapon]["attr"]] = atr.get(WEAPONS[self.active_weapon]["attr"], {})
+        hb = self.combo_headpiece.currentData()
+        if hb is not None: atr[hb] = atr.get(hb, {})
         from src.constants import ATTR_MAP
-        for aid, rtypes in sorted(attr_tracking.items()):
-            attr_name = ATTR_MAP.get(aid, f"Attr {aid}")
-            
-            # Calculate Max Bonus from runes
-            max_bonus = 0
-            if "sup" in rtypes: max_bonus = 3
-            elif "major" in rtypes: max_bonus = 2
-            elif "minor" in rtypes: max_bonus = 1
-            
-            # Add Weapon Bonus (+5)
-            weapon_active = False
-            if self.active_weapon and WEAPONS[self.active_weapon]["attr"] == aid:
-                max_bonus += 5
-                weapon_active = True
-            
-            # Gather details
-            details = []
-            if "sup" in rtypes: details.append(f"x{rtypes['sup']} Superior")
-            if "major" in rtypes: details.append(f"x{rtypes['major']} Major")
-            if "minor" in rtypes: details.append(f"x{rtypes['minor']} Minor")
-            if weapon_active:
-                details.append(f'"{WEAPONS[self.active_weapon]["name"]}"')
-                
-            attr_text += format_line(attr_name, f"+{max_bonus}", details)
-            has_attrs = True
-            
-        # Check if weapon was NOT in attr_tracking (meaning no runes applied to that attribute)
+        for aid, rts in sorted(atr.items()):
+            mb = (3 if "sup" in rts else 2 if "major" in rts else 1 if "minor" in rts else 0)
+            if self.active_weapon and WEAPONS[self.active_weapon]["attr"] == aid: mb += 5
+            if hb == aid: mb += 1
+            det = [f"x{rts[r]} {r.title()}" for r in ["sup", "major", "minor"] if r in rts]
+            if hb == aid: det.append("Headpiece")
+            if self.active_weapon and WEAPONS[self.active_weapon]["attr"] == aid: det.append(f'"{WEAPONS[self.active_weapon]["name"]}"')
+            attr_text += fl(ATTR_MAP.get(aid, f"Attr {aid}"), f"+{mb}", det); has_attrs = True
+        self.lbl_runes.setText(attr_text if has_attrs else "No effects.")
+        
+        self.lbl_hp_adj_val.setText(str(base_hp + thp)); self.lbl_en_adj_val.setText(str(base_en + ct["energy"] + self.attr_energy_bonus))
+        bm = {a: (3 if "sup" in rs else 2 if "major" in rs else 1 if "minor" in rs else 0) + (5 if self.active_weapon and WEAPONS[self.active_weapon]["attr"] == a else 0) + (1 if hb == a else 0) for a, rs in atr.items()}
         if self.active_weapon:
-            w_data = WEAPONS[self.active_weapon]
-            aid = w_data["attr"]
-            if aid not in attr_tracking:
-                attr_name = ATTR_MAP.get(aid, f"Attr {aid}")
-                attr_text += format_line(attr_name, "+5", [f'"{w_data["name"]}"'])
-                has_attrs = True
-
-        if not has_attrs:
-            self.lbl_runes.setText("<span style='font-size:18px; font-weight:bold; color:#FFD700;'>Attributes:</span><br><br><span style='font-size:14px; font-style:italic;'>No attribute effects.</span>")
-        else:
-            self.lbl_runes.setText(attr_text)
-
-        # 6. Update Adjusted Base Stats
-        try:
-            player_hp = int(self.edit_hp_player.text())
-            self.lbl_hp_adj_val.setText(str(player_hp + total_hp))
-        except ValueError:
-            self.lbl_hp_adj_val.setText("---")
-
-        try:
-            player_en = int(self.edit_en_player.text())
-            total_adj_en = player_en + cons_totals["energy"] + self.attr_energy_bonus
-            self.lbl_en_adj_val.setText(str(total_adj_en))
-        except ValueError:
-            self.lbl_en_adj_val.setText("---")
-
-        # Emit signal for MainWindow
-        # Construct final bonus map for attributes
-        bonus_map = {}
-        for aid, rtypes in attr_tracking.items():
-            max_bonus = 0
-            if "sup" in rtypes: max_bonus = 3
-            elif "major" in rtypes: max_bonus = 2
-            elif "minor" in rtypes: max_bonus = 1
-            
-            if self.active_weapon and WEAPONS[self.active_weapon]["attr"] == aid:
-                max_bonus += 5
-            
-            bonus_map[aid] = max_bonus
-            
-        # Handle weapon-only bonus if not in runes
-        if self.active_weapon:
-            w_data = WEAPONS[self.active_weapon]
-            aid = w_data["attr"]
-            if aid not in bonus_map:
-                bonus_map[aid] = 5
-
-        # Update Group Box Title with Count
-        self.runes_group.setTitle(f"Runes ({len(self.applied_runes)}/5)")
-
-        self.stats_changed.emit(bonus_map, cons_totals)
+            wa = WEAPONS[self.active_weapon]["attr"]
+            if wa not in bm: bm[wa] = 5
+        if hb is not None and hb not in bm: bm[hb] = 1
+        self.runes_group.setTitle(f"Runes ({sum(1 for r in self.applied_runes if r is not None)}/5)"); self.stats_changed.emit(bm, ct)
