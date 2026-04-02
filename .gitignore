@@ -16,6 +16,7 @@ tmp/
 /dist
 *.spec
 Bookah_Installer.iss
+/installer_assets
 venv/
 Bookah.flatpak
 /flatpak_native

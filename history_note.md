@@ -3,6 +3,7 @@
 ## 1.5.1:
     Updates:
     - Updated Smiter's Boon (PvP)
+    - Updated installer UI
 
 ## 1.5.0
     Updates:
