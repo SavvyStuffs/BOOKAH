@@ -22,6 +22,16 @@ modules:
       
       # Copy the pre-built PyInstaller contents (which are in the current dir)
       - cp -a . /app/share/bookah/
+
+      # Remove bundled system libraries that cause GLIBC mismatches (avoids 'GLIBC_2.43 not found' error)
+      # These libraries should instead be provided by the Flatpak runtime.
+      # Note: We must KEEP libexpat.so.1 as it is required by pyexpat and compatible with the runtime.
+      - |
+        cd /app/share/bookah/_internal
+        for lib in libglib-2.0.so.0 libgio-2.0.so.0 libgobject-2.0.so.0 libgmodule-2.0.so.0 libgthread-2.0.so.0 \
+                   libavcodec.so.62 libgnutls.so.30 libjxl.so.0.11 libmp3lame.so.0 libmvec.so.1; do
+          [ -f "$lib" ] && rm "$lib"
+        done
       
       # Fix line endings for launcher (Windows compatibility)
       - sed -i 's/\r$//' bookah_flatpak
