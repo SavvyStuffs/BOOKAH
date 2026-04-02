@@ -1,5 +1,9 @@
 ### Release Notes and Bug Fix History ###
 
+## 1.5.1:
+    Updates:
+    - Updated Smiter's Boon (PvP)
+
 ## 1.5.0
     Updates:
     - Included skill updates from 2/25/26
