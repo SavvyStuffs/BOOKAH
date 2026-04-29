@@ -1,6 +1,15 @@
 ### Release Notes and Bug Fix History ###
 
+## 1.5.2:
+
+```
+Updates:
+- Added skill updates from 4/28/26
+- Added custom SavvyInstaller for Inno
+```
+
 ## 1.5.1:
+
     Updates:
     - Updated Smiter's Boon (PvP)
     - Updated installer UI
@@ -63,5 +72,5 @@
 <!--end of list-->
 
 ## 1.3.0  
-    
+
     Release version!
