@@ -38,7 +38,7 @@ if not os.path.exists(USER_DIR):
 
 # Copy bundled models to USER_DIR if missing (Avoids re-training)
 try:
-    for filename in ['skill_vectors.model', 'description_embeddings.pt']:
+    for filename in ['skill_vectors.model', 'description_embeddings.npz']:
         # Use resource_path to find the bundled file (in _MEIPASS or root)
         src = resource_path(filename)
         dst = os.path.join(USER_DIR, filename)
@@ -63,7 +63,7 @@ if not os.path.exists(USER_BUILDS_FILE):
 
 # 3. AI Models
 BEHAVIOR_MODEL_PATH = os.path.join(USER_DIR, 'skill_vectors.model')
-SEMANTIC_MODEL_PATH = os.path.join(USER_DIR, 'description_embeddings.pt')
+SEMANTIC_MODEL_PATH = os.path.join(USER_DIR, 'description_embeddings.npz')
 
 # --- Static Data (Bundled in EXE) ---
 DB_FILE = resource_path('master.db') 
