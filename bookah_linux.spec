@@ -62,6 +62,11 @@ excluded_binaries = [
 ]
 a.binaries = [x for x in a.binaries if x[0] not in excluded_binaries]
 
+# Strip any remaining bloat from the analysis object directly
+bloat_keywords = ['torch', 'webengine', 'transformers', 'sentence_transformers', 'pyvis', 'networkx', 'qtqml', 'qtquick', 'qtpdf']
+a.binaries = [x for x in a.binaries if not any(keyword in x[0].lower() for keyword in bloat_keywords)]
+a.datas = [x for x in a.datas if not any(keyword in x[0].lower() for keyword in bloat_keywords)]
+
 pyz = PYZ(a.pure)
 
 # 2. CHANGE: Create a lightweight executable (only scripts)
