@@ -23,11 +23,47 @@ class DraggableSkillIcon(QLabel):
         self.skill = skill
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
-        
+
         # Initialize with correct size and use cache
         current_size = size or ICON_SIZE
         self.set_icon_size(current_size)
 
+        # Build detailed tooltip (Qt automatically shows this only on hover)
+        rank = 12 # Default preview rank for team builds
+        bonuses = {}
+        desc = skill.get_description_for_rank(rank, bonuses)
+        attr_name = ATTR_MAP.get(skill.attribute, "None")
+        tooltip = f"<b>{skill.name}</b><br/>"
+        if skill.attribute != -1:
+            tooltip += f"<i>{attr_name} ({rank})</i><br/>"
+
+        if skill.skill_type:
+            tooltip += f"<i>{skill.skill_type.title()}</i><br/>"
+
+        # Energy Cost in Tooltip
+        eff_energy = skill.get_effective_energy(rank, bonuses)
+        if skill.energy > 0:
+            if eff_energy < skill.energy:
+                tooltip += f"Energy: <span style='color:#00FF00;'>{eff_energy}</span> (Base: {skill.energy})<br/>"
+            else:
+                tooltip += f"Energy: {skill.energy}<br/>"
+
+        # Cast & Recharge in Tooltip
+        eff_act = skill.get_effective_activation(rank, bonuses)
+        if eff_act < skill.activation:
+            tooltip += f"Activation: <span style='color:#00FF00;'>{eff_act}s</span> (Base: {skill.activation}s)<br/>"
+        else:
+            tooltip += f"Activation: {skill.activation}s<br/>"
+
+        eff_rech = skill.get_effective_recharge(rank, bonuses)
+        if skill.recharge > 0:
+            if eff_rech < skill.recharge:
+                tooltip += f"Recharge: <span style='color:#00FF00;'>{eff_rech}s</span> (Base: {skill.recharge}s)<br/>"
+            else:
+                tooltip += f"Recharge: {skill.recharge}s<br/>"
+
+        tooltip += f"<br/>{desc}"
+        self.setToolTip(tooltip)
     def refresh_theme(self):
         if not self.pixmap():
             self.setStyleSheet(f"border: 1px solid {get_color('slot_border')}; background-color: {get_color('input_bg')}; color: {get_color('text_primary')};")

@@ -390,10 +390,6 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.builder_tab, "Builder")
         self.init_builder_ui(self.builder_tab)
 
-        self.map_tab = QWidget()
-        self.tabs.addTab(self.map_tab, "Synergy Map")
-        self.init_map_ui(self.map_tab)
-
         self.settings_tab = SettingsTab()
         self.settings_tab.theme_changed.connect(self.apply_theme)
         self.settings_tab.campaigns_changed.connect(self.on_campaigns_changed)
@@ -404,64 +400,6 @@ class MainWindow(QMainWindow):
         # Refresh both UI list and AI suggestions
         self.apply_filters()
         self.update_suggestions()
-
-    def init_map_ui(self, parent_widget):
-        layout = QVBoxLayout(parent_widget)
-        layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        
-        self.lbl_map_info = QLabel("The Synergy Map visualizes skill relationships and communities.\nIt is best viewed in your full web browser.")
-        self.lbl_map_info.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.lbl_map_info.setStyleSheet(f"color: {get_color('text_primary')}; font-size: 14px; margin-bottom: 20px;")
-        layout.addWidget(self.lbl_map_info)
-        
-        self.btn_map_open = QPushButton("Open Interactive Synergy Map")
-        self.btn_map_open.setFixedSize(250, 50)
-        self.btn_map_open.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_map_open.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {get_color('btn_bg')}; 
-                color: {get_color('btn_text')}; 
-                font-size: 14px; 
-                font-weight: bold; 
-                border-radius: 8px;
-            }}
-            QPushButton:hover {{
-                background-color: {get_color('btn_bg_hover')};
-            }}
-        """)
-        
-        def open_map():
-            import shutil
-            src_html = resource_path("synergy_map.html")
-            
-            # On Linux/Flatpak, use the Cache folder so browsers can see the files
-            if sys.platform != 'win32':
-                try:
-                    # ~/.cache/bookah is standard for Linux temp data
-                    cache_dir = os.path.expanduser("~/.cache/bookah")
-                    html_dst = os.path.join(cache_dir, "synergy_map.html")
-                    icon_dst = os.path.join(cache_dir, "icons/skill_icons")
-                    
-                    os.makedirs(os.path.dirname(icon_dst), exist_ok=True)
-                    
-                    # 1. Sync icons once (first click only)
-                    if not os.path.exists(icon_dst):
-                        print(f"One-time icon sync to {cache_dir}...")
-                        shutil.copytree(resource_path("icons/skill_icons"), icon_dst)
-                    
-                    # 2. Always copy latest HTML
-                    shutil.copy2(src_html, html_dst)
-                    
-                    webbrowser.open(QUrl.fromLocalFile(html_dst).toString())
-                    return
-                except Exception as e:
-                    print(f"Linux map workaround failed: {e}")
-            
-            # Standard open for Windows
-            webbrowser.open(QUrl.fromLocalFile(src_html).toString())
-
-        self.btn_map_open.clicked.connect(open_map)
-        layout.addWidget(self.btn_map_open)
 
     def apply_theme(self, mode):
         # Update Global Theme State & Palette
@@ -548,23 +486,6 @@ class MainWindow(QMainWindow):
 
         if hasattr(self, 'check_smart_mode'):
             self.check_smart_mode.setStyleSheet(f"color: {get_color('text_link')}; font-weight: bold;")
-
-        # Synergy Map (Browser mode)
-        if hasattr(self, 'lbl_map_info'):
-            self.lbl_map_info.setStyleSheet(f"color: {get_color('text_primary')}; font-size: 14px; margin-bottom: 20px;")
-        if hasattr(self, 'btn_map_open'):
-            self.btn_map_open.setStyleSheet(f"""
-                QPushButton {{
-                    background-color: {get_color('btn_bg')}; 
-                    color: {get_color('btn_text')}; 
-                    font-size: 14px; 
-                    font-weight: bold; 
-                    border-radius: 8px;
-                }}
-                QPushButton:hover {{
-                    background-color: {get_color('btn_bg_hover')};
-                }}
-            """)
 
     def update_team_dropdown(self):
         selected_cat = self.combo_cat.currentText()

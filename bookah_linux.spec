@@ -4,6 +4,9 @@ from PyInstaller.utils.hooks import collect_all
 # 1. Collect PyQt6
 tmp_binaries, tmp_datas, tmp_hiddenimports = collect_all('PyQt6')
 
+# Filter out heavy WebEngine and other unused Qt modules
+tmp_binaries = [x for x in tmp_binaries if not any(mod in x[0] for mod in ['WebEngine', 'Qml', 'Quick', 'Pdf', 'Multimedia', 'Bluetooth', 'Nfc', 'Sensors'])]
+
 a = Analysis(
     ['bookah.py'],
     pathex=[],
@@ -14,8 +17,8 @@ a = Analysis(
         ('master.db', '.'),
         ('skills_aq.db', '.'),
         ('skill_vectors.model', '.'),
-        ('description_embeddings.pt', '.'),
-        ('synergy_map.html', '.'),
+        ('data/description_embeddings.npz', '.'),
+        ('onnx_model', 'onnx_model'),
         ('icons', 'icons'),
         ('version.json', '.'),
         ('history_note.md', '.'),
