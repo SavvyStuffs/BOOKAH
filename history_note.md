@@ -4,7 +4,7 @@
 
     Bug Fixes:
 
-    - Fixed unreadable tooltips in light mode and added new tooltips to teambuild skills
+    - Fixed unreadable tooltips in light mode
     - Fixed crashes when loading teambuild to bar
 
 ## 1.5.3:
