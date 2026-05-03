@@ -1,17 +1,24 @@
 ### Release Notes and Bug Fix History ###
 
+## 1.5.4:
+
+    Bug Fixes:
+
+    - Fixed unreadable tooltips in light mode and added new tooltips to teambuild skills
+    - Fixed crashes when loading teambuild to bar
+
 ## 1.5.3:
 
-Updates:
+    Updates:
 
-- Refactored to reduce size
-- Added tooltips to teambuild skills that have the skill description
+    - Refactored to reduce size
+    - Added tooltips to teambuild skills that have the skill description
 
 ## 1.5.2:
 
-Updates:
-- Added skill updates from 4/28/26
-- Added custom SavvyInstaller for Inno
+    Updates:
+    - Added skill updates from 4/28/26
+    - Added custom SavvyInstaller for Inno
 
 ## 1.5.1:
 

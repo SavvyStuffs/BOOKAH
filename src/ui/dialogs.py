@@ -552,30 +552,17 @@ class TeamManagerWidget(QWidget):
         header.addStretch()
 
         self.btn_sharing = QPushButton("Sharing")
-        self.btn_sharing.setFixedSize(70, 24)
         self.btn_sharing.setToolTip("Generate share codes and download teambuilds")
-        self.btn_sharing.setStyleSheet("""
-            QPushButton { 
-                background-color: #0078D7; 
-                color: white; 
-                font-weight: bold;
-                border-radius: 4px;
-            }
-            QPushButton:hover { background-color: #005A9E; }
-        """)
         self.btn_sharing.clicked.connect(self.open_sharing_dialog)
         header.addWidget(self.btn_sharing)
 
         self.btn_export = QPushButton("Export")
-        self.btn_export.setFixedSize(60, 24)
         self.btn_export.setToolTip("Export Selected Team Builds")
         self.btn_export.clicked.connect(self.export_team)
         header.addWidget(self.btn_export)
 
         self.btn_new_team = QPushButton("New...")
-        self.btn_new_team.setFixedSize(60, 24)
         self.btn_new_team.setToolTip("Create New Team")
-        self.btn_new_team.setStyleSheet("font-weight: bold; color: #00AAFF;")
         self.btn_new_team.clicked.connect(self.show_new_team_menu)
         header.addWidget(self.btn_new_team)
         
@@ -584,12 +571,20 @@ class TeamManagerWidget(QWidget):
         # Search Bar
         self.edit_search = QLineEdit()
         self.edit_search.setPlaceholderText("Search teams...")
-        self.edit_search.setStyleSheet("QLineEdit::placeholder { color: white; }")
         self.edit_search.textChanged.connect(self.refresh_list)
         layout.addWidget(self.edit_search)
         
         self.tree_widget = QTreeWidget()
         self.tree_widget.setHeaderHidden(True)
+        from src.ui.theme import get_color
+        self.setStyleSheet(f"""
+            QToolTip {{
+                background-color: {get_color('tooltip_bg')};
+                color: {get_color('tooltip_text')};
+                border: 1px solid {get_color('border')};
+                padding: 4px;
+            }}
+        """)
         self.refresh_list()
         layout.addWidget(self.tree_widget)
         
@@ -760,9 +755,9 @@ class TeamManagerWidget(QWidget):
             
             self.refresh_list()
             
-            items = self.list_widget.findItems(name, Qt.MatchFlag.MatchExactly)
+            items = self.tree_widget.findItems(name, Qt.MatchFlag.MatchExactly | Qt.MatchFlag.MatchRecursive, 0)
             if items:
-                self.list_widget.setCurrentItem(items[0])
+                self.tree_widget.setCurrentItem(items[0])
                 self.load_team()
         
     def open_sharing_dialog(self):
@@ -1331,7 +1326,8 @@ class FeedbackDialog(QDialog):
         # Buttons
         btn_layout = QHBoxLayout()
         self.btn_submit = QPushButton("Submit Feedback")
-        self.btn_submit.setStyleSheet("font-weight: bold; color: #00FF00;")
+        from src.ui.theme import get_color
+        self.btn_submit.setStyleSheet(f"font-weight: bold; color: {get_color('text_accent')};")
         self.btn_submit.clicked.connect(self.submit_feedback)
         btn_layout.addWidget(self.btn_submit)
         

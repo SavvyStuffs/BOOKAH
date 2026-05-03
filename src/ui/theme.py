@@ -71,8 +71,8 @@ LIGHT_PALETTE = {
     "input_bg": "#FFFFFF",
     "input_text": "#0066CC",
 
-    "tooltip_bg": "#D0D0D0",
-    "tooltip_text": "#000000"
+    "tooltip_bg": "#FFFFFF",
+    "tooltip_text": "#333333"
 }
 
 # Current Active Theme (Starts with Dark as default match)
@@ -127,6 +127,7 @@ def _get_dark_qpalette():
     p.setColor(QPalette.ColorRole.Link, QColor(CURRENT_THEME["text_link"]))
     p.setColor(QPalette.ColorRole.Highlight, QColor(CURRENT_THEME["border_accent"]))
     p.setColor(QPalette.ColorRole.HighlightedText, QColor("#000000"))
+    p.setColor(QPalette.ColorRole.PlaceholderText, QColor("#FFFFFF"))
     return p
 
 def _get_light_qpalette():

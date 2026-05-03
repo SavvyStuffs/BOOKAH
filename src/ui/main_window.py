@@ -659,24 +659,6 @@ class MainWindow(QMainWindow):
         self.btn_manage_teams = QPushButton("Manage Teams")
         self.btn_manage_teams.setCheckable(True)
         self.btn_manage_teams.setToolTip("Open Team Manager Pane")
-        self.btn_manage_teams.setStyleSheet("""
-            QPushButton { 
-                border: 1px solid transparent; 
-                background: transparent; 
-                font-size: 11px; 
-                font-weight: bold;
-                border-radius: 4px;
-                padding: 2px 5px;
-            }
-            QPushButton:checked {
-                color: #00AAFF;
-                border: 2px solid #00AAFF;
-                background-color: #2a2a2a;
-            }
-            QPushButton:hover {
-                background-color: #333;
-            }
-        """)
         self.btn_manage_teams.clicked.connect(self.toggle_team_manager_view)
         top_grid.addWidget(self.btn_manage_teams, 0, 6)
         
@@ -784,50 +766,14 @@ class MainWindow(QMainWindow):
         btn_row_layout.setSpacing(5)
         
         self.btn_char_view = QPushButton("Character")
-        self.btn_char_view.setFixedSize(70, 24)
         self.btn_char_view.setCheckable(True)
         self.btn_char_view.setToolTip("Toggle Character View")
-        self.btn_char_view.setStyleSheet("""
-            QPushButton { 
-                border: 1px solid transparent; 
-                background: transparent; 
-                font-size: 11px; 
-                font-weight: bold;
-                border-radius: 4px;
-            }
-            QPushButton:checked {
-                color: #00FF00;
-                border: 2px solid #00FF00;
-                background-color: #2a2a2a;
-            }
-            QPushButton:hover {
-                background-color: #333;
-            }
-        """)
         self.btn_char_view.toggled.connect(self.toggle_character_view)
         btn_row_layout.addWidget(self.btn_char_view)
 
         self.btn_team_view = QPushButton("Teams")
-        self.btn_team_view.setFixedSize(60, 24)
         self.btn_team_view.setCheckable(True)
         self.btn_team_view.setToolTip("Toggle Team View")
-        self.btn_team_view.setStyleSheet("""
-            QPushButton { 
-                border: 1px solid transparent; 
-                background: transparent; 
-                font-size: 11px; 
-                font-weight: bold;
-                border-radius: 4px;
-            }
-            QPushButton:checked {
-                color: #00AAFF;
-                border: 2px solid #00AAFF;
-                background-color: #2a2a2a;
-            }
-            QPushButton:hover {
-                background-color: #333;
-            }
-        """)
         self.btn_team_view.toggled.connect(self.toggle_team_view)
         btn_row_layout.addWidget(self.btn_team_view)
 
@@ -1136,9 +1082,9 @@ class MainWindow(QMainWindow):
         
         # Override the load_team method logic by reconnecting the button
         def synergy_load():
-            item = dlg.list_widget.currentItem()
+            item = dlg.tree_widget.currentItem()
             if not item: return
-            team_name = item.text()
+            team_name = item.text(0)
             
             # 1. Load the context (Activates the AI/Visual mode)
             self.load_team_for_synergy(team_name)
