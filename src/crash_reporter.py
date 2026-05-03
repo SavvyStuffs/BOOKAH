@@ -72,7 +72,14 @@ class CrashReporter(QDialog):
         self.edit_log = QTextEdit()
         self.edit_log.setPlainText(self.traceback_text)
         self.edit_log.setReadOnly(True)
-        self.edit_log.setStyleSheet("font-family: Consolas, monospace; font-size: 9pt; background-color: #222; color: #EEE;")
+        try:
+            from src.ui.theme import get_color
+            bg = get_color('bg_tertiary')
+            fg = get_color('text_primary')
+        except ImportError:
+            bg = "#222"
+            fg = "#EEE"
+        self.edit_log.setStyleSheet(f"font-family: Consolas, monospace; font-size: 9pt; background-color: {bg}; color: {fg};")
         layout.addWidget(self.edit_log)
         
         self.progress = QProgressBar()

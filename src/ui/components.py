@@ -27,6 +27,7 @@ class DraggableSkillIcon(QLabel):
         # Initialize with correct size and use cache
         current_size = size or ICON_SIZE
         self.set_icon_size(current_size)
+        self.refresh_theme()
 
         # Build detailed tooltip (Qt automatically shows this only on hover)
         rank = 12 # Default preview rank for team builds
@@ -65,8 +66,19 @@ class DraggableSkillIcon(QLabel):
         tooltip += f"<br/>{desc}"
         self.setToolTip(tooltip)
     def refresh_theme(self):
+        style = f"""
+            QToolTip {{
+                background-color: {get_color('tooltip_bg')};
+                color: {get_color('tooltip_text')};
+                border: 1px solid {get_color('border')};
+                padding: 4px;
+            }}
+        """
         if not self.pixmap():
-            self.setStyleSheet(f"border: 1px solid {get_color('slot_border')}; background-color: {get_color('input_bg')}; color: {get_color('text_primary')};")
+            style += f"QLabel {{ border: 1px solid {get_color('slot_border')}; background-color: {get_color('input_bg')}; color: {get_color('text_primary')}; }}"
+        else:
+            style += "QLabel { background: transparent; border: none; }"
+        self.setStyleSheet(style)
 
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
@@ -759,7 +771,6 @@ class BuildPreviewWidget(QFrame):
                 skill = repo.get_skill(sid, is_pvp=is_pvp)
                 if skill:
                     skill_widget = DraggableSkillIcon(skill, parent=self, size=icon_size) # Parented
-                    skill_widget.setStyleSheet("background: transparent; border: none;")
                     skill_widget.clicked.connect(self.skill_clicked.emit)
             
             if skill_widget:
@@ -913,7 +924,21 @@ class BuildPreviewWidget(QFrame):
                 border: 1px solid {get_color('border')};
                 border-radius: 8px;
             }}
+            QToolTip {{
+                background-color: {get_color('tooltip_bg')};
+                color: {get_color('tooltip_text')};
+                border: 1px solid {get_color('border')};
+                padding: 4px;
+            }}
         """)
+        
+        # Propagate to icons
+        for i in range(self.content_layout.count()):
+            item = self.content_layout.itemAt(i)
+            if item and item.widget():
+                if isinstance(item.widget(), DraggableSkillIcon):
+                    item.widget().refresh_theme()
+
         if hasattr(self, 'btn_load'):
             self.refresh_button_style()
 
@@ -1135,9 +1160,12 @@ class SkillLibraryWidget(QListWidget):
             }}
         """)
         
-        # Propagate to BuildPreviewWidgets if they exist
+        # Propagate to BuildPreviewWidgets or DraggableSkillIcons if they exist
         for i in range(self.count()):
             item = self.item(i)
+            widget = self.itemWidget(item)
+            if widget and hasattr(widget, 'refresh_theme'):
+                widget.refresh_theme()
             widget = self.itemWidget(item)
             if hasattr(widget, 'refresh_theme'):
                 widget.refresh_theme()

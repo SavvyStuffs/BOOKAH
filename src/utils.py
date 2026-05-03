@@ -57,6 +57,7 @@ class GuildWarsTemplateEncoder:
 
     def _write_bits(self, value, length):
         v = int(value)
+        if v < 0: v = 0
         if v >= (1 << length): v = (1 << length) - 1
         bin_str = f"{v:0{length}b}"
         self.binary_stream += bin_str[::-1]
