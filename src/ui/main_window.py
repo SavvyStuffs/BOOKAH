@@ -1445,6 +1445,7 @@ class MainWindow(QMainWindow):
         self.update_build_code()
 
         self.update_suggestions()
+        self.refresh_skill_displays()
 
     def toggle_elites(self, checked):
         if checked:

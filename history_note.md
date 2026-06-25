@@ -1,5 +1,11 @@
 ### Release Notes and Bug Fix History ###
 
+## 1.5.5:
+
+    Updates:
+    - Added skill updates from 6/24/2026
+    - Fixed Adrenaline numbers
+
 ## 1.5.4:
 
     Bug Fixes:
