@@ -1,5 +1,18 @@
 ### Release Notes and Bug Fix History ###
 
+## 1.5.6:
+
+    Updates:
+    - Skill updates from 6/8/2026
+
+<!--end of list-->
+
+    Bug Fixes:
+    - Fixed a dpi scaling issue causing the custom installer to appear unusably small on TV's  
+
+<!--end of list-->
+    
+    
 ## 1.5.5:
 
     Updates:
