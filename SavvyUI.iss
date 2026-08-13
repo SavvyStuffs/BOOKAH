@@ -99,12 +99,16 @@ begin
           EndP := EndP + 1;
       end;
       Result := Copy(Json, Start, EndP - Start);
+      // Un-escape JSON string characters
+      StringChangeEx(Result, '\\', '\', True);
+      StringChangeEx(Result, '\"', '"', True);
+      StringChangeEx(Result, '\n', #13#10, True);
     end
     else
     begin
       // Numeric/boolean value
       EndP := Start;
-      while (EndP <= Length(Json)) and (Json[EndP] <> ',') and (Json[EndP] <> '}') and (Json[EndP] <> ' ') and (Json[EndP] <> #9) do
+      while (EndP <= Length(Json)) and (EndP <= Length(Json)) and (Json[EndP] <> ',') and (Json[EndP] <> '}') and (Json[EndP] <> ' ') and (Json[EndP] <> #9) do
         EndP := EndP + 1;
       Result := Copy(Json, Start, EndP - Start);
     end;
@@ -130,6 +134,8 @@ var
   PayloadLen: Integer;
   i: Integer;
   JsonStr: String;
+  HTMLStr: String;
+  AnsiHTML: AnsiString;
   DesignWidth, DesignHeight: Integer;
   DesignShape: String;
   DesignRounded: Boolean;
@@ -145,6 +151,22 @@ begin
   ExtractTemporaryFile('WebView2Loader.dll');
 
   HTMLPath := ExpandConstant('{tmp}\SavvyUI_Theme.html');
+  
+  // Inject the real Inno Setup install path into the HTML before showing it
+  if LoadStringFromFile(HTMLPath, AnsiHTML) then
+  begin
+    // Convert AnsiString buffer to Unicode String for manipulation
+    HTMLStr := String(AnsiHTML);
+    StringChangeEx(HTMLStr, '%%INNO_INSTALL_PATH%%', WizardForm.DirEdit.Text, True);
+    
+    // Also fix backslashes for JS strings if any get embedded (though HTML values are usually fine)
+    StringChangeEx(HTMLStr, '\\', '\', True); 
+    
+    // Convert back to AnsiString for saving
+    AnsiHTML := AnsiString(HTMLStr);
+    SaveStringToFile(HTMLPath, AnsiHTML, False);
+  end;
+
   UIPayload := StringOfChar(#0, 8192);
   
   // These values are injected by the Designer during export
@@ -177,8 +199,8 @@ begin
     WizardForm.Top := -10000;
 
     // ── Data Binding: map JSON values back to Inno Setup ──
-    SavvyUI_CreateDesktopIcon := GetJsonValue(UIPayload, 'CreateDesktopIcon');
-    SavvyUI_RunPostInstall := GetJsonValue(UIPayload, 'RunPostInstall');
+  SavvyUI_CreateDesktopIcon := GetJsonValue(UIPayload, 'CreateDesktopIcon');
+  SavvyUI_RunPostInstall := GetJsonValue(UIPayload, 'RunPostInstall');
 
     // Developer note: Access bound values via SavvyUI_<VariableName> in your scripts
   end
