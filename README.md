@@ -1,3 +1,7 @@
+# This project has been remade and is no longer being maintained. You can find the new app at <https://bookahapp.com>
+
+
+
 # BOOKAH (Build Optimization & Organization for Knowledge-Agnostic Hominids)
 
 A build maker for Guild Wars 1 with PvX wiki integrated and a "Smart Mode" that uses AI to find synergy.
