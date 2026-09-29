@@ -1,33 +1,36 @@
-# Cache
-Old_App_Code_(Obsolete)/__pycache__/
-Old_App_Code_(Obsolete)/*.py[cod]
-Old_App_Code_(Obsolete)/*$py.class
-Old_App_Code_(Obsolete)/*.spec
-Old_App_Code_(Obsolete)/
-Old_App_Code_(Obsolete)/
-Old_App_Code_(Obsolete)/.pytest_cache/
-Old_App_Code_(Obsolete)/.vscode/
-Old_App_Code_(Obsolete)/*.log
-Old_App_Code_(Obsolete)/tmp/
-.git/
+# Python environments
+venv/
+venv_test/
+.venv/
+__pycache__/
+*.py[cod]
+*$py.class
 
+# PyInstaller build output
+build/
+dist/
+*.spec
 
-# Build artifacts
-Old_App_Code_(Obsolete)//build
-Old_App_Code_(Obsolete)//dist
-Old_App_Code_(Obsolete)/*.spec
-Old_App_Code_(Obsolete)/Bookah_Installer.iss
-Old_App_Code_(Obsolete)//installer_assets
-Old_App_Code_(Obsolete)/venv/
-Old_App_Code_(Obsolete)/Bookah.flatpak
-Old_App_Code_(Obsolete)//flatpak_native
+# Flatpak packaging
+flatpak_native/
+.flatpak-builder/
+*.filez
+*.flatpak
 
-# Misc
-Old_App_Code_(Obsolete)//tests
-Old_App_Code_(Obsolete)/SECURITY_AUDIT.md
+# Installer tooling
+installer_assets/
+Bookah_Installer.iss
+
+# Editor / test / logs
+.vscode/
+.pytest_cache/
+*.log
+tmp/
 
 # Docker
-Old_App_Code_(Obsolete)/.dockerignore
-Old_App_Code_(Obsolete)/Dockerfile
+.dockerignore
+Dockerfile
 
-!.github/
+# Note: UI_Bridge.dll, WebView2Loader.dll, onnx_model/ and the .db files
+# are intentionally tracked -- they are shipped components of the
+# archived application, not build artifacts.
