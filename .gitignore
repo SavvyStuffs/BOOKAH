@@ -1,0 +1,33 @@
+# Cache
+Old_App_Code_(Obsolete)/__pycache__/
+Old_App_Code_(Obsolete)/*.py[cod]
+Old_App_Code_(Obsolete)/*$py.class
+Old_App_Code_(Obsolete)/*.spec
+Old_App_Code_(Obsolete)/
+Old_App_Code_(Obsolete)/
+Old_App_Code_(Obsolete)/.pytest_cache/
+Old_App_Code_(Obsolete)/.vscode/
+Old_App_Code_(Obsolete)/*.log
+Old_App_Code_(Obsolete)/tmp/
+.git/
+
+
+# Build artifacts
+Old_App_Code_(Obsolete)//build
+Old_App_Code_(Obsolete)//dist
+Old_App_Code_(Obsolete)/*.spec
+Old_App_Code_(Obsolete)/Bookah_Installer.iss
+Old_App_Code_(Obsolete)//installer_assets
+Old_App_Code_(Obsolete)/venv/
+Old_App_Code_(Obsolete)/Bookah.flatpak
+Old_App_Code_(Obsolete)//flatpak_native
+
+# Misc
+Old_App_Code_(Obsolete)//tests
+Old_App_Code_(Obsolete)/SECURITY_AUDIT.md
+
+# Docker
+Old_App_Code_(Obsolete)/.dockerignore
+Old_App_Code_(Obsolete)/Dockerfile
+
+!.github/
